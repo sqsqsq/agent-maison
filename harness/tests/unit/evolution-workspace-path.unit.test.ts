@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // evolution-workspace-path.unit.test.ts — M5A t4 机械证明主套件（plan e2a7c4b9 §7）
 // ============================================================================
@@ -54,7 +55,6 @@ import { resolveFactsAbsPath } from '../../scripts/utils/context-facts';
 import { casAcquireRunOwner, releaseRunOwner } from '../../scripts/utils/goal-run-control';
 import { appendGoalEventFenced } from '../../scripts/utils/goal-in-session-evidence';
 import { prepareGoalModeRun } from '../../scripts/goal-mode-entry';
-import { resolveWorkflowSpec } from '../../workflow-loader';
 import { loadEventsJsonl } from '../../scripts/utils/goal-runner-phase';
 import checker from '../../scripts/check-catalog';
 import type { CheckContext } from '../../scripts/utils/types';
@@ -81,12 +81,14 @@ const COMPONENT_ID = 'ledger';
 const UNIT_IDS = ['ledger-consumer', 'ledger-recovery', 'ledger-refresh', 'ledger-summary'];
 
 function executeCase(name: string, body: () => void): UnitCaseResult {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return discoveryResult(name);
   try {
     body();
     return { name, ok: true };
   } catch (error) {
     return { name, ok: false, error: (error as Error).stack ?? (error as Error).message };
-  }
+  } finally { endUnitCase(); }
 }
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -94,12 +96,14 @@ function assert(condition: unknown, message: string): asserts condition {
 }
 
 async function executeAsyncCase(name: string, body: () => Promise<void>): Promise<UnitCaseResult> {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return discoveryResult(name);
   try {
     await body();
     return { name, ok: true };
   } catch (error) {
     return { name, ok: false, error: (error as Error).stack ?? (error as Error).message };
-  }
+  } finally { endUnitCase(); }
 }
 
 /** 复制（可含第二工作区）为临时工程；返回 root。 */
@@ -257,10 +261,10 @@ function withCompleteProject(
   }
 }
 
-export async function runAll(selector?: string): Promise<UnitCaseResult[]> {
+export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
-  const test = (name: string, body: () => void) => matchesUnitCase(name, selector) ? executeCase(name, body) : { name, ok: true };
-  const asyncTest = (name: string, body: () => Promise<void>) => matchesUnitCase(name, selector) ? executeAsyncCase(name, body) : Promise.resolve({ name, ok: true });
+  const test = (name: string, body: () => void) => executeCase(name, body);
+  const asyncTest = (name: string, body: () => Promise<void>) => executeAsyncCase(name, body);
   const temp = buildWorkspaceProject();
   try {
     results.push(test('生产入口 1：resolveChangeUnitRef 在新布局下零 BLOCKER 且 binding=matched', () => {
@@ -919,7 +923,7 @@ export async function runAll(selector?: string): Promise<UnitCaseResult[]> {
 
       // ── Goal Mode attach ──────────────────────────────────────────────
       // 3.0.0 起 GoalPhaseRuntime 是唯一生命周期 owner，旧 in-session driver 的「blocker →
-      // waiting → 恢复」两轮编排已退役：park/resume 语义由 goal-park-resume 覆盖；CU Feature +
+      // waiting → 恢复」两轮编排已退役。CU Feature +
       // 自定义 features_dir 经生产 host bridge 真实 attach（prepare → runGoalModeHostBridge →
       // 执行 phase）由 goal-in-session-driver「goal path matrix」用例覆盖。本证明保留路径真值。
       // ── 真实产物落盘（review 三轮收尾）────────────────────────────
@@ -963,8 +967,6 @@ export async function runAll(selector?: string): Promise<UnitCaseResult[]> {
     }
   }));
 
-  return results.filter(result => matchesUnitCase(result.name, selector));
+  return results;
 }
-
-export async function runSelectedCases(selector?: string) { return selectedUnitCases(await runAll(selector), selector, []); }
-import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
+import { resolveWorkflowSpec } from '../../workflow-loader';

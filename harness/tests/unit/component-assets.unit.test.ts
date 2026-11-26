@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -27,7 +28,6 @@ import { validateEvolutionDecisions } from '../../scripts/utils/blueprint-evolut
 import { validateBlueprintProviders } from '../../scripts/utils/blueprint-provider-boundary';
 import { validateBlueprintAdmission } from '../../scripts/utils/blueprint-admission';
 import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRef } from '../../scripts/utils/component-blueprint-path';
-import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 import { loadBlueprintReviewSource } from '../../scripts/utils/blueprint-review-materialization';
 import { reconcileChangeUnitBlueprintRefs, deriveDesignPreparationReadiness, reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-preparation';
 import { validateChangeUnitCandidate } from '../../scripts/utils/change-unit-provider-boundary';
@@ -40,10 +40,11 @@ import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-e
 import { checkCanonicalComponentBlueprint, checkHostSeamMaterials } from '../../scripts/check-component-blueprint';
 import { loadCanonicalChangeUnit, createChangeUnitRef, deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { loadResolvedProfile } from '../../profile-loader';
-import { resolveModulePathPrefixes } from '../../scripts/utils/diff-scope';
 import { resolveMaterializedBuiltinSkillEntryRel } from '../../scripts/utils/instance-skill-bridge';
 import { resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 import { validateChangeUnitDesign, deriveClosure } from '../../scripts/utils/change-unit-design-gate';
+import { resolveModulePathPrefixes } from '../../scripts/utils/diff-scope';
+import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 
 const FRAMEWORK = DEFAULT_LAYOUT.frameworkRoot;
 const ID = 'SharedUi/src/SettingRow.ets#SettingRow';
@@ -796,10 +797,4 @@ if (process.platform === 'win32') test('R7 Windows fallback 与 Git 大小写一
   assert(!checks.some(c => c.id === 'component_new_static_checks' && c.details?.includes('#Legacy')));
 }));
 
-export function runSelectedCases(selector?: string) {
-  const results = cases.filter(test => selector === undefined || test.name.includes(selector)).map(({ name, run }) => {
-    try { run(); return { name, ok: true }; } catch (error) { return { name, ok: false, error: (error as Error).stack }; }
-  });
-  return { results, matchedCaseCount: results.length, executionTimings: [] };
-}
-export function runAll() { return runSelectedCases().results; }
+export const runAll = () => runUnitCases(cases);

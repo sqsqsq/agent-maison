@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // verifier-evidence.unit.test.ts — 报告即真源（plan d2f7a9c4）
 // ============================================================================
@@ -749,12 +750,14 @@ const CASES: Array<{ name: string; fn: () => void }> = [
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   for (const c of CASES) {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       c.fn();
       results.push({ name: c.name, ok: true });
     } catch (e) {
       results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return results;
 }

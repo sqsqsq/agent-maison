@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // ============================================================================
 // visual-debt.unit.test.ts — blind-visual-hardening d4/d5 / P0-D
 // ============================================================================
@@ -1236,15 +1237,6 @@ cases.push({
 
 export function runAll(): Promise<UnitCaseResult[]> {
   return (async () => {
-    const out: UnitCaseResult[] = [];
-    for (const c of cases) {
-      try {
-        await c.run();
-        out.push({ name: c.name, ok: true });
-      } catch (err) {
-        out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-      }
-    }
-    return out;
-  })();
+  return runUnitCasesAsync(cases);
+})();
 }

@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // adjudication.unit.test.ts — 统一裁决内核契约与元门禁（plan a5f9c3e2 t4）
 // ----------------------------------------------------------------------------
@@ -1546,11 +1547,13 @@ const cases: TestCase[] = [
 
 export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
   return cases.map((testCase) => {
+    const endUnitCase = beginUnitCase(testCase.name);
+    if (!endUnitCase) return discoveryResult(testCase.name);
     try {
       testCase.run();
       return { name: testCase.name, ok: true };
     } catch (error) {
       return { name: testCase.name, ok: false, error: (error as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import { bindControlledProcess } from '../utils/controlled-model-process';
 // ============================================================================
 // codex-terminal-closure.unit.test.ts — Codex terminal 收口（plan e6b3f8d2 t1）
@@ -38,24 +39,28 @@ import { resolvePhaseHarnessVerdict } from '../../scripts/utils/goal-runner-phas
 import type { UnitCaseResult } from '../run-unit';
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 async function runAsync(
   results: UnitCaseResult[],
   name: string,
   fn: () => Promise<void>,
 ): Promise<void> {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     await fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

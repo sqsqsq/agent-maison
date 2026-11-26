@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // blocker-actionability.unit.test.ts — P0-4（plan 7c4f2e9b）
 // 注册表三链优先级 / 聚合谓词 / timeout 四步分流 / 签名剔除 / 回喂过滤 / e2e 回放 B
@@ -149,8 +150,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    // plan 2f8a6d40 V4：D2 的纯函数护栏。端到端由 V3（goal-runner-testing-integrity 的
-    // 真实 gate → 真实 writer → 真实 classifier）承担；这里只锁归类落位与"三个集合零改动"。
+    // plan 2f8a6d40 V4：直接校验归类落位与三个停机集合。
     name: 'B04-V4 classify: ui_spec_fidelity_gate → spec_capture_gap（不入三个 halt 集合、actionability 不变）',
     run: () => {
       const kind = classifyFailureKind(S([{ id: 'ui_spec_fidelity_gate' }]));
@@ -193,16 +193,7 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }
 
 if (require.main === module) {

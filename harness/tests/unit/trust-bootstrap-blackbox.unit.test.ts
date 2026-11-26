@@ -1,107 +1,35 @@
-// ============================================================================
-// trust-bootstrap-blackbox.unit.test.ts — sentinel 黑盒回归（b7e4d2a9 Todo 1）
-// ----------------------------------------------------------------------------
-// 受控 sentinel 目录作外部 MAISON_GOAL_CHECKPOINT_DIR 起**子进程**真实 run-unit
-// --filter trust-isolation-probe：
-//   ① sentinel 目录内容 hash 完全不变（bootstrap 无条件覆写外部 env——probe 主动写
-//      marker，若覆写缺位 sentinel 必被污染，不存在"suite 恰好没写"的空跑假绿）；
-//   ② 子进程输出只出现 probe suite（suite id 无子串重叠的防递归断言）；
-//   ③ 子进程的临时 trust 根在退出后已被严格清理（cleanup 双语义的黑盒面）。
-// 不读取真实 ~/.maison、不扫全局 %TEMP%。
-// ============================================================================
+import assert from 'node:assert/strict';
+import * as fs from 'node:fs/promises';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import { discoverCases, runDiscoveredSuite } from '../utils/unit-suite-processes';
+import { runUnitCasesAsync } from '../utils/unit-cases';
 
-import * as crypto from 'crypto';
-import * as fs from 'fs';
-import * as os from 'os';
-import * as path from 'path';
-import { spawnSync } from 'child_process';
-import type { UnitCaseResult } from '../run-unit';
-
-const HARNESS = path.resolve(__dirname, '..', '..');
-const TSNODE = path.join(HARNESS, 'node_modules', 'ts-node', 'dist', 'bin.js');
-
-function hashDir(dir: string): string {
-  const h = crypto.createHash('sha256');
-  const walk = (p: string): void => {
-    for (const name of fs.readdirSync(p).sort()) {
-      const abs = path.join(p, name);
-      const st = fs.statSync(abs);
-      h.update(path.relative(dir, abs).replace(/\\/g, '/'));
-      if (st.isDirectory()) walk(abs);
-      else h.update(fs.readFileSync(abs));
-    }
-  };
-  walk(dir);
-  return h.digest('hex');
-}
-
-function runProbe(mode: 'serial' | 'workers'): UnitCaseResult[] {
-  const name = 'sentinel 黑盒：外部 env 被无条件覆写（sentinel 不变）+ 子进程只跑 probe + 临时根退出即清'
-    + (mode === 'workers' ? '（默认 worker）' : '');
-  try {
-    const testRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-sentinel-'));
-    const sentinelDir = path.join(testRoot, 'sentinel');
-    const resultsPath = path.join(testRoot, 'reports', 'results.json');
-    fs.mkdirSync(sentinelDir);
-    fs.writeFileSync(path.join(sentinelDir, 'sentinel.txt'), 'DO-NOT-TOUCH', 'utf-8');
-    const before = hashDir(sentinelDir);
-    try {
-      const r = spawnSync(
-        process.execPath,
-        [TSNODE, '--transpile-only', 'tests/run-unit.ts', ...(mode === 'serial' ? ['--serial'] : []), '--filter', 'trust-isolation-probe', '--results-out', resultsPath],
-        {
-          cwd: HARNESS,
-          encoding: 'utf-8',
-          shell: false,
-          timeout: 300_000,
-          env: { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: sentinelDir },
-        },
-      );
-      const out = `${r.stdout ?? ''}\n${r.stderr ?? ''}`;
-      if (r.status !== 0) throw new Error(`子进程非零退出（${r.status}）：\n${out.slice(-1200)}`);
-
-      // ① sentinel 完全不变
-      const after = hashDir(sentinelDir);
-      if (before !== after) {
-        throw new Error(`sentinel 目录被污染——bootstrap 未无条件覆写外部 env：\n${fs.readdirSync(sentinelDir).join(',')}`);
+export function runAll() {
+  return runUnitCasesAsync([
+    { name: 'test worker isolates inherited trust and cleans its own temporary roots', async run() {
+      const root = await fs.mkdtemp(path.join(os.tmpdir(), 'trust-blackbox-'));
+      const previous = process.env.MAISON_GOAL_CHECKPOINT_DIR;
+      try {
+        const sentinel = path.join(root, 'sentinel');
+        await fs.mkdir(sentinel);
+        await fs.writeFile(path.join(sentinel, 'sentinel.txt'), 'DO-NOT-TOUCH');
+        process.env.MAISON_GOAL_CHECKPOINT_DIR = sentinel;
+        const modulePath = path.resolve(__dirname, 'trust-isolation-probe.unit.test.ts');
+        const suite = { id: 'trust-isolation-probe', modulePath, kind: 'unit' as const };
+        const supervisor = { root, signal: new AbortController().signal };
+        const expected = await discoverCases(suite, supervisor);
+        const result = await runDiscoveredSuite(suite, supervisor, expected);
+        assert.equal(result.error, undefined);
+        assert.equal(result.passed, expected.length);
+        assert.deepEqual(await fs.readdir(root), ['sentinel']);
+        assert.deepEqual(await fs.readdir(sentinel), ['sentinel.txt']);
+        assert.equal(await fs.readFile(path.join(sentinel, 'sentinel.txt'), 'utf8'), 'DO-NOT-TOUCH');
+      } finally {
+        if (previous === undefined) delete process.env.MAISON_GOAL_CHECKPOINT_DIR;
+        else process.env.MAISON_GOAL_CHECKPOINT_DIR = previous;
+        await fs.rm(root, { recursive: true, force: true });
       }
-      // ② 只出现 probe suite（防子串重叠递归）
-      const suites = [...out.matchAll(/Suite \[([^\]]+)\]/g)].map(m => m[1]);
-      if (suites.length !== 1 || suites[0] !== 'trust-isolation-probe') {
-        throw new Error(`子进程 suite 集须恰为 probe：[${suites.join(', ')}]`);
-      }
-      // ③ 子进程临时根退出即清（严格 cleanup 的黑盒面）
-      const m = out.match(/TRUST_PROBE_ROOT=(.+)/);
-      if (!m) throw new Error('未捕获 TRUST_PROBE_ROOT 行——probe 未真执行（空跑假绿防线）');
-      const probeRoot = m[1].trim();
-      if (path.resolve(probeRoot) === path.resolve(sentinelDir)) {
-        throw new Error('probe 竟写进 sentinel——覆写缺位');
-      }
-      if (fs.existsSync(probeRoot)) {
-        throw new Error(`子进程临时 trust 根未被清理：${probeRoot}`);
-      }
-      const doc = JSON.parse(fs.readFileSync(resultsPath, 'utf-8'));
-      const suite = doc.suites?.[0];
-      if (doc.mode !== mode || doc.ok !== true || doc.scope?.filter !== 'trust-isolation-probe'
-        || doc.scope.release !== false || doc.scope.caseNameFilter !== null
-        || doc.scope.suiteIds?.join(',') !== 'trust-isolation-probe'
-        || doc.suites?.length !== 1 || suite.id !== 'trust-isolation-probe'
-        || suite.status !== 'completed' || suite.ok !== true || suite.releaseOnly !== false
-        || !suite.results?.length || !suite.results.every((c: UnitCaseResult) => c.ok && typeof c.name === 'string')
-        || ![suite.loadMs, suite.executionMs, suite.totalMs, doc.wallMs].every(v => Number.isFinite(v) && v >= 0)
-        || suite.totalMs < suite.loadMs + suite.executionMs || doc.wallMs < suite.totalMs
-        || !out.includes('最慢套件 Top 20') || !out.includes('整轮墙钟：')) {
-        throw new Error(`${mode} 计时/完整结果不符合契约：${JSON.stringify(doc)}`);
-      }
-      return [{ name, ok: true }];
-    } finally {
-      fs.rmSync(testRoot, { recursive: true, force: true });
-    }
-  } catch (err) {
-    return [{ name, ok: false, error: (err as Error).stack ?? (err as Error).message }];
-  }
-}
-
-export function runAll(): UnitCaseResult[] {
-  return [...runProbe('serial'), ...runProbe('workers')];
+    } },
+  ]);
 }

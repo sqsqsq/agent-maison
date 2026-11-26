@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // adapter-catalog-consistency.unit.test.ts — adapter catalog lib + 锚点门禁单测
 
 import * as fs from 'fs';
@@ -260,16 +261,7 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }
 
 if (require.main === module) {

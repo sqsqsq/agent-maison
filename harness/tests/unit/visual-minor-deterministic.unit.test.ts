@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -114,7 +115,11 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     }) },
   ];
   const results: UnitCaseResult[] = [];
-  for (const test of cases) try { await test.run(); results.push({ name: test.name, ok: true }); }
-  catch (error) { results.push({ name: test.name, ok: false, error: String((error as Error).message) }); }
+  for (const test of cases) {
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) continue;
+    try { await test.run(); results.push({ name: test.name, ok: true }); }
+  catch (error) { results.push({ name: test.name, ok: false, error: String((error as Error).message) }); } finally { endUnitCase(); }
+  }
   return results;
 }

@@ -1,10 +1,10 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // device-runtime-recovery.unit.test.ts — 运行期再次锁屏的恢复语义
 //                                        （openspec ... t6）
 // ============================================================================
 
 import * as fs from 'fs';
-import * as os from 'os';
 import * as path from 'path';
 import {
   ensureDeviceReadyAtRuntime,
@@ -14,15 +14,17 @@ import { credentialRefOf } from '../../scripts/utils/device-credential-store';
 import { FakeCredentialProvider } from '../helpers/fake-credential-provider';
 import type { UnlockDeps } from '../../scripts/utils/device-unlock-helper';
 import type { UnitCaseResult } from '../run-unit';
-
+import * as os from 'os';
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

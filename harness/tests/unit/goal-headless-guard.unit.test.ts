@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // goal-headless-guard.unit.test.ts — failure classifier, sentinel, no-progress guard
 
 import * as fs from 'fs';
@@ -64,7 +65,6 @@ import { clearFrameworkConfigCache } from '../../config';
 import { loadResolvedProfile } from '../../profile-loader';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import type { UnitCaseResult } from '../run-unit';
-import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
 import { resolveCurrentDisposition, type CurrentDispositionProblem } from '../../scripts/utils/check-disposition';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
@@ -150,7 +150,7 @@ function loadTestResolvedProfile(root: string) {
   return loadResolvedProfile(root, fw);
 }
 
-function runCases(selector?: string): UnitCaseResult[] {
+function runCases(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   const cases: Array<{ name: string; run: () => void }> = [
     {
@@ -769,7 +769,6 @@ function runCases(selector?: string): UnitCaseResult[] {
     },
     {
       // plan 2f8a6d40 V2：D1 的纯函数护栏——"本轮有 summary"不等于"本轮有失败"。
-      // 端到端由 V1（goal-runner-testing-integrity）承担；这里只锁投影函数的四组入参。
       name: 'B04-V2 无失败事实的 PASS 轮不产出归因；失败事实的任一来源仍产出',
       run: () => {
         const passNoBlockers = { verdict: 'PASS' as const, blockers: [] };
@@ -2993,7 +2992,6 @@ function runCases(selector?: string): UnitCaseResult[] {
       },
     },
 
-
 {
       name: 'P2 unknown relevant targets preserve their diagnostic without a fabricated no-progress conclusion',
       run: () => {
@@ -3047,18 +3045,16 @@ function runCases(selector?: string): UnitCaseResult[] {
 ];
 
   for (const c of cases) {
-    if (!matchesUnitCase(c.name, selector)) continue;
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       c.run();
       results.push({ name: c.name, ok: true });
     } catch (e) {
       results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return results;
 }
 
 export function runAll(): UnitCaseResult[] { return runCases(); }
-export function runSelectedCases(selector?: string) {
-  return selectedUnitCases(runCases(selector), selector, []);
-}

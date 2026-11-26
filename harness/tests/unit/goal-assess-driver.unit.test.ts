@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import * as fs from 'fs';
 import * as path from 'path';
 import { checkAssessDrivenRunnerSource } from '../../scripts/utils/goal-assess-driver';
@@ -51,6 +52,7 @@ const cases = [{
   },
 }];
 export function runAll(): UnitCaseResult[] {
-  return cases.map(test => { try { test.run(); return { name: test.name, ok: true }; }
-    catch (error) { return { name: test.name, ok: false, error: (error as Error).message }; } });
+  return cases.map(test => { const endUnitCase = beginUnitCase(test.name);
+                             if (!endUnitCase) return discoveryResult(test.name); try { test.run(); return { name: test.name, ok: true }; }
+    catch (error) { return { name: test.name, ok: false, error: (error as Error).message }; } finally { endUnitCase(); } });
 }

@@ -1,9 +1,9 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // trust-lifecycle.unit.test.ts — per-run 场外状态回收契约（b7e4d2a9 Todo 2）
 // ----------------------------------------------------------------------------
 // deleteRunTrustState 的路径安全契约：runId 严格 basename / resolve 域内 / 拒 symlink /
-// 逻辑删除单元（flat checkpoint + run 目录）/ 不动 vision-heads。封卷与 supersede 的
-// 集成面见 goal-runner-testing-integrity 套件。
+// 逻辑删除单元（flat checkpoint + run 目录）/ 不动 vision-heads。
 // ============================================================================
 
 import * as fs from 'fs';
@@ -20,12 +20,14 @@ import type { UnitCaseResult } from '../run-unit';
 const FEATURE = 'bc-openCard';
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

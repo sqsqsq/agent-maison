@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // single-writer-predicate.unit.test.ts — 无状态视觉反证回归
 
 import * as fs from 'fs';
@@ -88,7 +89,9 @@ test('agent 子进程仍剥离 runner 权限与场外信任变量', () => {
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try { c.run(); return { name: c.name, ok: true }; }
-    catch (error) { return { name: c.name, ok: false, error: (error as Error).stack ?? String(error) }; }
+    catch (error) { return { name: c.name, ok: false, error: (error as Error).stack ?? String(error) }; } finally { endUnitCase(); }
   });
 }

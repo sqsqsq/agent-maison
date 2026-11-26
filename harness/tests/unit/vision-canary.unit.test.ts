@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // vision-canary.unit.test.ts — E1（多模态降级阶梯 plan d4a8f3c6）：视觉能力金丝雀
 
 import * as fs from 'fs';
@@ -332,16 +333,7 @@ export function runAll(): Promise<UnitCaseResult[]> {
 }
 
 async function runVisionCanaryUnitTests(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }
 
 if (require.main === module) {

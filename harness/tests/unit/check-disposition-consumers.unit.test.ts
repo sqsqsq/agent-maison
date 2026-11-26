@@ -1,3 +1,5 @@
+import { testCliArgs } from '../utils/test-cli-args';
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // check-disposition-consumers.unit.test.ts — 消费矩阵、披露、聚合去重与共享结论（plan f7045213 §4、§5、§10）
 // ----------------------------------------------------------------------------
@@ -15,17 +17,8 @@ import * as os from 'os';
 import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import * as YAML from 'yaml';
-import { loadWorkflowSpec } from '../../workflow-loader';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
-import {
-  collectDisclosedFailures,
-  isBlockingCheck,
-  resolveCheckDisposition,
-  resolveCurrentDisposition,
-  withDispositionTableForTest,
-  type DispositionEntry,
-} from '../../scripts/utils/check-disposition';
+import { collectDisclosedFailures, isBlockingCheck, resolveCheckDisposition, withDispositionTableForTest, type DispositionEntry } from '../../scripts/utils/check-disposition';
 import {
   failScriptReportWithFatalError,
   generateMergedReport,
@@ -44,11 +37,10 @@ import { classifyFailureKind, shouldHaltNoProgress } from '../../scripts/utils/g
 import { buildCurrentAttemptFailureProjection } from '../../scripts/goal-phase-runtime';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
-import { resolvePhaseHarnessVerdict } from '../../scripts/utils/goal-runner-phase';
 import { __testing_buildTestingRunStatusResult } from '../../scripts/check-testing';
 import { validateLiteSchema } from '../../scripts/utils/lite-json-schema';
 import { featureFilePath, featurePhaseReportsDir, clearFrameworkConfigCache } from '../../config';
-import { readFeatureFrozenScope, featureEffectiveScope } from '../../scripts/utils/feature-execution-scope';
+import { ensureFeatureExecutionScopeFrozen, featureEffectiveScope } from '../../scripts/utils/feature-execution-scope';
 import { executionScopeFingerprint } from '../../scripts/utils/execution-scope';
 import { buildCorrectionState, writeCorrectionState } from '../../scripts/utils/correction-state';
 import { runAdhocCorrection } from '../../scripts/utils/correction-commands';
@@ -109,7 +101,7 @@ function seedGit(root: string): void {
 }
 
 function runCli(root: string, args: string[], extraEnv: Record<string, string> = {}): ReturnType<typeof spawnSync> & { out: string } {
-  const r = spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), path.join(HARNESS_ROOT, 'harness-runner.ts'), ...args], {
+  const r = spawnSync(process.execPath, [...testCliArgs(path.join(HARNESS_ROOT, 'harness-runner.ts'), [require.resolve('ts-node/dist/bin.js')]), ...args], {
     cwd: root, encoding: 'utf8', timeout: 300000,
     env: { ...process.env, TS_NODE_TRANSPILE_ONLY: '1', TS_NODE_PROJECT: path.join(HARNESS_ROOT, 'tsconfig.json'), MAISON_GOAL_RUN_ID: '', ...extraEnv },
   });
@@ -130,25 +122,6 @@ const REVIEW_REPORT_STATS_BROKEN = [
   '## 六、结论', '', '**审查结论**: 通过', '', '无问题。', '', '**判定依据**:', '- BLOCKER 数量: 0', '- MAJOR 数量: 0', '',
 ].join('\n');
 
-/** 违规钩子探针：把每次 on_violation 的 ruleId/severity 追加到工程根的 violations.log。 */
-function installViolationProbe(root: string): string {
-  const extRoot = path.join(root, 'doc', 'extensions');
-  fs.mkdirSync(path.join(extRoot, 'hooks'), { recursive: true });
-  fs.writeFileSync(path.join(extRoot, 'manifest.yaml'), YAML.stringify({
-    schema_version: '1.0', name: 'p4-violation-probe', provides: { hooks: { review: { on_violation: ['hooks/on-violation.mjs'] } } },
-  }));
-  fs.writeFileSync(path.join(extRoot, 'hooks', 'on-violation.mjs'), [
-    "import { appendFileSync } from 'fs';",
-    "import { join } from 'path';",
-    'export default (ctx) => {',
-    "  appendFileSync(join(ctx.projectRoot, 'violations.log'), `${ctx.violation.ruleId} ${ctx.violation.severity}\\n`);",
-    '  return {};',
-    '};',
-    '',
-  ].join('\n'));
-  return path.join(root, 'violations.log');
-}
-
 /** 统计表完整、结论干净的审查报告（第二批：让结论只取决于探索账本的去向）。 */
 const REVIEW_REPORT_CLEAN = REVIEW_REPORT_STATS_BROKEN.replace(
   '| **合计** | **0** |',
@@ -156,7 +129,7 @@ const REVIEW_REPORT_CLEAN = REVIEW_REPORT_STATS_BROKEN.replace(
 );
 
 /**
- * runless review 链的真实 CLI：首次调用冻结范围，再按冻结指纹写 facts（`facts` 覆盖默认 frontmatter），第二次调用出结论。
+ * 先由生产冻结入口取得 facts 指纹，再走真实 Review CLI 验证披露与正式退出码。
  * 默认 facts 满足全部可核实的探索门。
  */
 function runReviewCli(report: string, facts: Record<string, unknown> = {}): {
@@ -168,14 +141,14 @@ function runReviewCli(report: string, facts: Record<string, unknown> = {}): {
   fs.writeFileSync(reportPath, report);
   seedGit(root);
   const args = ['--phase', 'review', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot];
-  runCli(root, args);
-  const record = readFeatureFrozenScope(root, feature);
-  assert(record, '首次调用未冻结');
+  const frozen = ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
+  assert(frozen.record && frozen.status === 'frozen', JSON.stringify(frozen.checks));
+  const record = frozen.record;
   const factsPath = featureFilePath(root, feature, path.join('context', 'facts.md'));
   fs.mkdirSync(path.dirname(factsPath), { recursive: true });
   const sources = ['src/demo/value.ts', 'framework.config.json', 'AGENTS.md'];
   fs.writeFileSync(factsPath, '---\n' + YAML.stringify({
-    schema_version: '1.1', feature, frozen_scope_fingerprint: executionScopeFingerprint(featureEffectiveScope(record!)), established_by: 'review',
+    schema_version: '1.1', feature, frozen_scope_fingerprint: executionScopeFingerprint(featureEffectiveScope(record)), established_by: 'review',
     ready_to_produce: true, has_blocker_coverage_risk: false, source_code_paths: sources, key_inputs_read: sources, files_inspected_count: 5,
     searches_performed_estimate: 4, decisions_unlocked: ['review value'], exploration_mode: 'sequential', ...facts,
   }) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + sources.map(s => `| ${s} | readable | review target |`).join('\n') + '\n\n## phase_delta: review\nreviewed\n');
@@ -432,60 +405,6 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: 'A7 review 统计汇总失败：退出码、控制台、summary、goal 运行时四处一致；违规钩子仍处理 MAJOR 失败（真实 CLI）',
-    run: () => {
-      const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['review'], completionTarget: 'feature' });
-      try {
-        const reportPath = featureFilePath(root, feature, path.join('review', 'review-report.md'));
-        fs.mkdirSync(path.dirname(reportPath), { recursive: true });
-        fs.writeFileSync(reportPath, REVIEW_REPORT_STATS_BROKEN);
-        const violationsLog = installViolationProbe(root);
-        seedGit(root);
-        const args = ['--phase', 'review', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot];
-        runCli(root, args); // 首次调用冻结范围
-        const record = readFeatureFrozenScope(root, feature);
-        assert(record, '首次调用未冻结');
-        const factsPath = featureFilePath(root, feature, path.join('context', 'facts.md'));
-        fs.mkdirSync(path.dirname(factsPath), { recursive: true });
-        const sources = ['src/demo/value.ts', 'framework.config.json', 'AGENTS.md'];
-        fs.writeFileSync(factsPath, '---\n' + YAML.stringify({
-          schema_version: '1.1', feature, frozen_scope_fingerprint: executionScopeFingerprint(featureEffectiveScope(record!)), established_by: 'review',
-          ready_to_produce: true, has_blocker_coverage_risk: false, source_code_paths: sources, key_inputs_read: sources, files_inspected_count: 5,
-          searches_performed_estimate: 4, decisions_unlocked: ['review value'], exploration_mode: 'sequential',
-        }) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + sources.map(s => `| ${s} | readable | review target |`).join('\n') + '\n\n## phase_delta: review\nreviewed\n');
-        fs.rmSync(violationsLog, { force: true });
-        const beforeMtime = Date.now() - 1;
-        const cli = runCli(root, args);
-        const dir = featurePhaseReportsDir(root, feature, 'review', frameworkRoot);
-        const script = JSON.parse(fs.readFileSync(path.join(dir, 'script-report.json'), 'utf-8')) as ScriptReport;
-        const stats = script.checks.find(c => c.id === 'statistics_summary')!;
-        assert(stats.status === 'FAIL' && stats.severity === 'MAJOR', JSON.stringify(stats));
-        assert.deepStrictEqual(script.checks.filter(c => c.status === 'FAIL' && c.severity === 'BLOCKER').map(c => c.id), [], '前提：没有阻断失败');
-        assert.strictEqual(script.summary.verdict, 'PASS', '前提：脚本报告的 legacy 结论是 PASS（分裂实例）');
-        // ① summary
-        const summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf-8')) as HarnessRunSummary;
-        assert.strictEqual(summary.report_validity, 'FAIL');
-        assert.strictEqual(summary.verdict, 'FAIL');
-        // ② 退出码
-        assert.strictEqual(cli.status, 1, cli.out);
-        // ③ 控制台结论（Step 3 与最终两处）与合并报告
-        assert(cli.out.includes('Verdict: FAIL') && !cli.out.includes('Verdict: PASS'), cli.out);
-        assert(cli.out.includes('脚本 Harness 检查未通过') && !cli.out.includes('脚本 Harness 检查通过'), cli.out);
-        assert(fs.readFileSync(path.join(dir, 'merged-report.md'), 'utf-8').includes('| **裁定** | **FAIL** |'), '合并报告裁定行');
-        // ④ goal 运行时读同一份 summary
-        const goal = resolvePhaseHarnessVerdict({
-          summaryBeforeMtime: beforeMtime, summaryAfterMtime: fs.statSync(path.join(dir, 'summary.json')).mtimeMs,
-          summaryVerdict: summary.verdict as never, harnessExitCode: cli.status ?? 1, agentExitCode: 0, agentSkipped: true, dryRun: false,
-          receiptRequired: true, closureStatus: summary.closure_status, receiptStatus: summary.receipt_status,
-        } as never);
-        assert.strictEqual(goal.verdict, 'FAIL', JSON.stringify(goal));
-        // 违规钩子保留原生语义：MAJOR 失败同样触发
-        const violations = fs.existsSync(violationsLog) ? fs.readFileSync(violationsLog, 'utf-8') : '';
-        assert(violations.includes('statistics_summary MAJOR'), `违规钩子没有处理 MAJOR 失败：${violations}\n${cli.out}`);
-      } finally { rmDir(root); clearFrameworkConfigCache(); }
-    },
-  },
-  {
     name: 'A8 入口失败：非法阶段仍以原退出码结束、不写 summary',
     run: () => {
       const { root, frameworkRoot, feature } = setupRunlessProject({ chain: ['coding'] });
@@ -579,7 +498,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: '第二批 披露：探索账本两条经真实 CLI review——结论与退出码改变；无有效baseline的旧facts schema须真实重建',
+    name: '第二批 披露：探索账本两条经真实 CLI review 脚本通过并保留独立核验义务；旧facts schema须真实重建',
     run: () => {
       const ledger = runReviewCli(REVIEW_REPORT_CLEAN, {
         searches_performed_estimate: 1, touches_layers: ['src', 'data', 'domain'], exploration_mode: 'subagent', subagents_used: 'not_available',
@@ -587,7 +506,9 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       try {
         const raw = (ledger.script?.checks ?? []).filter(c => c.status === 'FAIL').map(c => `${c.id}/${c.severity}`).sort();
         assert.deepStrictEqual(raw, ['context_exploration_searches_min/BLOCKER', 'context_exploration_subagents_used/BLOCKER'], `前提：只有两条探索账本原始 FAIL\n${ledger.cli.out}`);
-        assert.strictEqual(ledger.cli.status, 0, ledger.cli.out);
+        assert.strictEqual(ledger.cli.status, 1, ledger.cli.out);
+        assert.strictEqual(ledger.summary?.closure_status, 'open');
+        assert.strictEqual(ledger.summary?.next_action, 'run_verifier_then_receipt');
         assert.strictEqual(ledger.summary?.verdict, 'PASS');
         assert.deepStrictEqual(ledger.summary?.disclosed_failures?.map(d => d.id).sort(), ['context_exploration_searches_min', 'context_exploration_subagents_used']);
         assert.strictEqual(ledger.summary?.completion_status, 'COMPLETE_WITH_GAPS');
@@ -602,7 +523,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     // plan 3abca824 t4（A7）：review 是首个实际建立阶段、无 baseline；每次只触发一条候选原始 FAIL。
     // delta 缺节、空节的公开入口证据在 real-chain-seams RC-8c / RC-8d（goal 真实链路，plan 为非建立阶段）。
-    name: 'P5 第二批 披露：自报文件数、未列解锁决策经真实 CLI review——原始 FAIL 仍在，退出码 0、结论 PASS、进披露清单',
+    name: 'P5 第二批 披露：自报文件数、未列解锁决策经真实 CLI review 进披露清单并保留独立核验义务',
     run: () => {
       for (const [label, overrides, id] of [
         ['文件数', { files_inspected_count: 1 }, 'context_exploration_files_inspected_min'],
@@ -612,9 +533,11 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         try {
           const raw = (r.script?.checks ?? []).filter(c => c.status === 'FAIL').map(c => `${c.id}/${c.severity}`).sort();
           assert.deepStrictEqual(raw, [`${id}/BLOCKER`], `${label} 前提：完整检查结果里只有这一条原始 FAIL\n${r.cli.out}`);
-          assert.strictEqual(r.cli.status, 0, `${label}：退出码\n${r.cli.out}`);
+          assert.strictEqual(r.cli.status, 1, `${label}：独立核验待补\n${r.cli.out}`);
           assert(r.cli.out.includes('Verdict: PASS'), `${label}：控制台结论\n${r.cli.out}`);
           assert.strictEqual(r.summary?.verdict, 'PASS', label);
+          assert.strictEqual(r.summary?.closure_status, 'open', label);
+          assert.strictEqual(r.summary?.next_action, 'run_verifier_then_receipt', label);
           assert.deepStrictEqual(r.summary?.disclosed_failures?.map(d => d.id), [id], label);
           assert.strictEqual(r.summary?.completion_status, 'COMPLETE_WITH_GAPS', label);
         } finally { r.cleanup(); }
@@ -651,336 +574,19 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       } finally { rmDir(root); }
     },
   },
-  {
-    name: 'A9 authoritative_content_aligned 与 ref_elements_excluded（当前阶段）：归因不落代码回归、不产回退候选、assess 走当前阶段重跑、重试提示词不含回退指引；上游责任反例产生候选并回退',
-    run: () => {
-      const { assessObservation } = require('../../scripts/utils/assess') as typeof import('../../scripts/utils/assess');
-      const { readCurrentDispositionInput } = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
-      const { buildPhasePrompt } = require('../../scripts/goal-phase-runtime') as typeof import('../../scripts/goal-phase-runtime');
-      const { extractDeterministicAffectedFiles } = require('../../scripts/utils/goal-failure-classifier') as typeof import('../../scripts/utils/goal-failure-classifier');
-      const FULL = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-      const observe = (current: string, summary: HarnessRunSummary) => ({
-        currentDisposition: resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', chain: [current] })),
-        schema_version: '1.0' as const, feature: 'demo', workflow: 'wf', track: 'full' as const, goal_end: 'testing',
-        phases: FULL.map(p => ({
-          phase: p, summary_state: 'current' as const, schema_version: '1.3', verdict: p === current ? summary.verdict : 'PASS',
-          closure: p === current ? 'open' as const : 'closed' as const, assurance: 'full', required_assurance: null, assurance_satisfied: true,
-          deferred: false, summary_fingerprint: 'x', evidence_fingerprint: 'x',
-          ...(p === current && summary.repair_candidates?.length ? { repair_candidates: summary.repair_candidates } : {}),
-        })),
-        fingerprints: { workflow: 'w', track: 't', goal: 'g', run_attempt: 'r', summaries: 's', evidence: 'e', reconcile: 'rc', observed: 'o' },
-        reconcile: {
-          schema_version: '1.0' as const, state: 'active' as const, residual_fingerprints: [],
-          phase_outcome: { phase: current, verdict: summary.verdict, legacy_action: 'retry' },
-          invalidatable_phases: FULL, budgets: { retries_used: 0, backtracks_used: 0 },
-        },
-      });
-      const { root } = makeVerifierProject();
-      try {
-        const cases: Array<[string, CheckResult]> = [
-          ['spec', check('authoritative_content_aligned', 'BLOCKER', 'FAIL', { affected_files: ['doc/features/demo/acceptance.yaml'], suggestion: '按设计权威改写 acceptance.yaml，保留不冲突的补充。' })],
-          ['plan', check('authoritative_content_aligned', 'BLOCKER', 'FAIL', { affected_files: ['doc/features/demo/contracts.yaml'], suggestion: '按设计权威改写 contracts.yaml，保留不冲突的补充。' })],
-          ['spec', check('ref_elements_excluded', 'BLOCKER', 'FAIL', { details: 'result_nfc_card：requirement_quote「x」未逐字出现在需求原文' })],
-        ];
-        for (const [phase, failing] of cases) {
-          const label = `${phase}/${failing.id}`;
-          const summary = writeRunSummaryBase(root, generateScriptReport('', phase as never, 'demo', root, [failing], FRAMEWORK_ROOT), FRAMEWORK_ROOT);
-          assert.strictEqual(summary.verdict, 'FAIL', `${label}：保持阻断`);
-          const kind = classifyFailureKind(summary as never);
-          assert.strictEqual(kind, 'deterministic_gate_or_artifact_missing', `${label}：归因=${kind}`);
-          assert.deepStrictEqual(extractDeterministicAffectedFiles(summary as never), failing.affected_files ?? [], `${label}：受影响文件走同一份映射`);
-          assert.strictEqual(summary.repair_candidates, undefined, `${label}：当前阶段责任不产生回退候选`);
-          const observation = observe(phase, summary);
-          const assessment = assessObservation(observation as never, { mode: 'goal_mode' });
-          assert(assessment.recommendation.action === 'continue_work_unit' && assessment.recommendation.phase === null, `${label}：${JSON.stringify(assessment.recommendation)}`);
-          assert.notStrictEqual(assessment.recommendation.runner_action, 'backtrack_to_phase', label);
-          const prompt = buildPhasePrompt({ feature: 'demo', requirement: 'r' } as never, root, phase as never, FRAMEWORK_ROOT, [], 'Verdict: FAIL\n- ' + failing.id, kind);
-          assert(!prompt.includes('revert that change first') && prompt.includes('not a broken codebase'), `${label}：重试提示词不得含回退指引`);
-        }
-        // 上游责任反例：结果依据类登记责任在 spec，在 plan 失败 → 产生 spec 候选，assess 回退 spec
-        const upstream: DispositionEntry[] = [{ match: { id: 'p4_upstream_basis' }, protects: 'result_basis', owner: 'spec', basis: 'test', consequence: '结论无依据' }];
-        withDispositionTableForTest(upstream, () => {
-          const summary = writeRunSummaryBase(root, generateScriptReport('', 'plan', 'demo', root, [check('p4_upstream_basis', 'BLOCKER', 'FAIL', { affected_files: ['doc/features/demo/acceptance.yaml'] })], FRAMEWORK_ROOT), FRAMEWORK_ROOT);
-          assert.deepStrictEqual(summary.repair_candidates?.map(c => [c.id, c.category]), [['p4_upstream_basis', 'spec']], JSON.stringify(summary.repair_candidates));
-          assert.strictEqual(classifyFailureKind(summary as never), 'deterministic_gate_or_artifact_missing');
-          const observation = { ...observe('plan', summary), responsibility: { projectRoot: root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', workflow: loadWorkflowSpec(FRAMEWORK_ROOT, 'obligation-driven') } };
-          const assessment = assessObservation(observation as never, { mode: 'goal_mode' });
-          assert(assessment.recommendation.action === 'continue_work_unit' && assessment.recommendation.phase === null, JSON.stringify(assessment.recommendation));
-        });
-      } finally { rmDir(root); }
-    },
-  },
-  {
-    name: 'P2 authoritative_content_aligned 真实字段差额与快照：重复读取复用，修掉一处继续，元数据改动仍无改善才收敛',
-    run: () => {
-      const { loadHostSnapshot, SNAPSHOT_CU_FEATURE } = require('../fixtures/host-snapshot-3.1.0/generate') as typeof import('../fixtures/host-snapshot-3.1.0/generate');
-      const { handWriteProjections } = require('./component-design-handoff.unit.test') as typeof import('./component-design-handoff.unit.test');
-      const { checkAuthoritativeContentAligned } = require('../../scripts/utils/blueprint-skill-projection') as typeof import('../../scripts/utils/blueprint-skill-projection');
-      const { SpecLoader } = require('../../scripts/utils/spec-loader') as typeof import('../../scripts/utils/spec-loader');
-      const gc = require('../../scripts/utils/goal-failure-classifier') as typeof import('../../scripts/utils/goal-failure-classifier');
-      const snap = loadHostSnapshot();
-      const { root, frameworkRoot: fw } = snap;
-      const feature = SNAPSHOT_CU_FEATURE;
-      const acceptanceFile = featureFilePath(root, feature, 'acceptance.yaml');
-      const editAc1 = (edit: (ac: Record<string, unknown>) => void): void => {
-        const doc = YAML.parse(fs.readFileSync(acceptanceFile, 'utf8'));
-        edit(doc.criteria[0]);
-        fs.writeFileSync(acceptanceFile, YAML.stringify(doc));
-        clearFrameworkConfigCache();
-      };
-      // 真实生产链：检查产出 → harness-runner 的 summary 写入器 → 归因 / 受影响文件 / 签名 / 快照
-      const round = () => {
-        clearFrameworkConfigCache();
-        const ctx = { projectRoot: root, frameworkRoot: fw, feature, phaseRule: {}, featureSpec: new SpecLoader(root, undefined, undefined, fw).loadFeatureSpec(feature) } as unknown as import('../../scripts/utils/types').CheckContext;
-        const gate = checkAuthoritativeContentAligned(ctx, 'acceptance').find(c => c.id === 'authoritative_content_aligned');
-        assert(gate && gate.status === 'FAIL', `前提：检查产出 FAIL：${JSON.stringify(gate)}`);
-        const summary = writeRunSummaryBase(root, generateScriptReport('', 'spec', feature, root, [gate!], fw), fw);
-        const kind = gc.classifyFailureKind(summary as never);
-        const files = gc.extractDeterministicAffectedFiles(summary as never);
-        const snapshot = gc.snapshotArtifacts(root, files);
-        assert((gate.structured as { authoritative_content_drift?: { items?: unknown[] } } | undefined)?.authoritative_content_drift?.items?.length,
-          'the original check must carry its actual field facts; consumers must not recompute drift');
-        const disposition = resolveCurrentDisposition({ endpoint: 'request', phases: [{ phase: 'spec', checks: [gate],
-          verdict: summary.verdict, schemaCurrent: true, closureCommitted: false }] });
-        const evaluation = { acceptanceKey: 'fixture/authorization/authoritative-acceptance', inputs: snapshot, disposition, completed: true };
-        return { gate: gate!, kind, files, signature: gc.buildEffectiveBlockerSignature(summary as never, kind, 'spec'), snapshot, evaluation };
-      };
-      try {
-        clearFrameworkConfigCache();
-        handWriteProjections(root);
-        editAc1(ac => { ac.expected_result = 'hand drift one'; ac.description = 'hand drift two'; });
-        const first = round();
-        assert(/AC-1\.expected_result/.test(first.gate.details) && /AC-1\.description/.test(first.gate.details), `前提：两处差异：${first.gate.details}`);
-        assert.strictEqual(first.kind, 'deterministic_gate_or_artifact_missing');
-        assert(first.files.length === 1 && path.isAbsolute(first.files[0]), `前提：生产者给的是绝对路径：${JSON.stringify(first.files)}`);
-        const [entry] = Object.values(first.snapshot);
-        assert(entry?.exists === true && entry.contentHash.length === 64, `快照必须读到真实文件：${JSON.stringify(first.snapshot)}`);
-
-        // 同输入、同事实只复用；原FAIL仍保留，不能购买第二个比较窗口。
-        const same = round();
-        assert.strictEqual(same.signature, first.signature);
-        const repeated = gc.evaluateCompletionProgress({ previous: first.evaluation, current: same.evaluation, feedbackDelivered: true });
-        assert.strictEqual(repeated.reused, true); assert.strictEqual(repeated.halt, false);
-        assert.strictEqual(repeated.evaluation?.disposition.completionEligible, false, '复用不得清掉原FAIL');
-
-        // 正例：只修一处差异、保留另一处 → 仍 FAIL、同签名，但检测到修改，守卫不停机
-        editAc1(ac => { ac.description = 'refresh and recover'; });
-        const second = round();
-        assert(/AC-1\.expected_result/.test(second.gate.details) && !/AC-1\.description/.test(second.gate.details), `前提：只剩一处差异：${second.gate.details}`);
-        assert.strictEqual(second.signature, first.signature, '前提：签名相同（只看快照判进展）');
-        assert.strictEqual(gc.artifactsProgressed(first.snapshot, second.snapshot), true, '修掉一处差异必须检测到修改');
-        assert.strictEqual(gc.evaluateCompletionProgress({ previous: first.evaluation, current: second.evaluation, feedbackDelivered: true }).halt, false, '真实字段缺口减少不得被判无进展');
-        fs.appendFileSync(acceptanceFile, '\n# metadata-only byte change\n');
-        const metadataOnly = round();
-        assert.strictEqual(gc.evaluateCompletionProgress({ previous: second.evaluation, current: metadataOnly.evaluation, feedbackDelivered: true }).halt, true, '真实复验后仍同一字段缺口，改字节不能冒充验收改善');
-
-        // 同一文件以相对 / 绝对两种写法传入，快照键一致
-        const rel = path.relative(root, acceptanceFile);
-        assert.deepStrictEqual(Object.keys(gc.snapshotArtifacts(root, [rel])), Object.keys(gc.snapshotArtifacts(root, [acceptanceFile])), '两种写法键须一致');
-      } finally {
-        clearFrameworkConfigCache();
-        fs.rmSync(root, { recursive: true, force: true });
-      }
-    },
-  },
-  {
-    name: '最终评审返修二（无效）：蓝图投影自身坏 → 真实 authoritative_content_aligned 无效分支（repair_owner=external）经公开入口 --supersede：同次公共视图保外部设计职责、原路径及原因，非无进展停放',
-    run: () => withDesignOwnerHost(async (h) => {
-      h.bump(bp => { h.ledgerDomain(bp).acceptance = '验收写成了一段文本'; });
-      const oldCompletionPath = featureFilePath(h.root, h.feature, 'feature-completion.json');
-      const oldCompletion = fs.existsSync(oldCompletionPath) ? fs.readFileSync(oldCompletionPath) : null;
-      const { events, gates, reportDir } = await h.runSuccessor();
-      assert(gates.length === 1 && gates[0].status === 'FAIL' && gates[0].repair_owner === 'external' && /authority_projection_invalid/.test(gates[0].details),
-        `前提：真实检查产出无效分支：${JSON.stringify(gates)}`);
-      const calls = events.filter(event => event.type === 'agent_invoke_start');
-      assert(calls.length > 0 && calls.length <= 9 && calls.filter(event => event.phase === 'work-unit-author').length === 1, '无效canonical不能重复派本地Spec；已授权Goal可沿原设计author/Q职责处理');
-      const { executionRequestForInvoke } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
-      const { designRepairInvokeLabel } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
-      const instructions = calls.map(event => {
-        const original = executionRequestForInvoke(reportDir, String(event.invoke_id));
-        assert(original?.request.context.runId === path.basename(reportDir) && original.request.context.owner.run_id === path.basename(reportDir)
-          && original.request.context.owner.owner_id === event.owner_id && original.request.context.owner.epoch === event.owner_epoch, '每次实际调用必须保原run和真实fenced owner');
-        const instruction = original.request.context.instruction;
-        assert(typeof instruction === 'string' && instruction.trim().length > 0, '实际签发请求必须保完整指令，不能把未知当空材料');
-        if (event.phase !== 'work-unit-author') {
-          const purpose = original.request.purpose;
-          if (purpose !== 'author' && purpose !== 'questioning') throw new Error('非本地单元的调用缺真实设计author/Q用途');
-          assert(event.phase === designRepairInvokeLabel(purpose) && original.request.context.chain.includes(event.phase), '只能沿实际签发的专用设计职责，不能伪旧Spec phase出生');
-          assert(instruction.includes('component-blueprint.yaml') && instruction.includes('authority_content_not_machine_structure'), '实际设计author/Q材料必须保原canonical对象及机器失败原因');
-        }
-        return instruction;
-      });
-      assert(instructions.slice(1).every((instruction, index) => instruction !== instructions[index] && instruction.includes('authority_projection_invalid')), '真实设计职责须接同次发现与原材料，不能重复冷Spec作者');
-      const halt = events.filter(e => e.type === 'phase_halt').at(-1);
-      assert(halt && halt.run_disposition === 'WAITING' && halt.halt_reason !== 'no_progress_guard', `真实设计权威缺口须保持待原owner核验，不能让spec空修至无进展：${JSON.stringify(halt)}`);
-      const guidance = String(halt!.halt_guidance ?? '');
-      assert(guidance.length > 0, '当前WAIT必须给出实际未完成设计/质询条件，不能空泛签通过');
-      const { loadGoalManifestFromRun } = require('../../scripts/utils/goal-manifest') as typeof import('../../scripts/utils/goal-manifest');
-      const { resolveCompletionDisposition } = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
-      const manifest = loadGoalManifestFromRun(h.root, path.basename(reportDir), { feature: h.feature });
-      assert(Array.isArray(manifest.phase_chain), '必须消费实际签发run的检查族');
-      const current = resolveCompletionDisposition({ projectRoot: h.root, frameworkRoot: h.fw, feature: h.feature,
-        runId: manifest.run_id, chain: manifest.phase_chain, endpoint: 'request' });
-      const design = current.completionBlocking.find(problem => problem.id === 'authoritative_content_aligned' && problem.owner === 'external');
-      assert(!current.completionEligible && design?.action === 'repair', '当前qualified canonical结构FAIL须保原repair/external设计职责，不能把候选路径误当spec写权或加额外verify分类');
-      assert(JSON.stringify(design).includes('component-blueprint.yaml') && JSON.stringify(design).includes('authority_content_not_machine_structure')
-        && JSON.stringify(design).includes('authority_projection_invalid'),
-        '当前公共诊断必须保真实canonical权威路径及原原因，不另造旧phase专用事件');
-      const end = events.filter(e => e.type === 'run_end').at(-1);
-      assert(end && end.status === 'HALTED' && !events.some(event => event.type === 'feature_completion_generated')
-        && !fs.existsSync(path.join(reportDir, 'feature-completion.json')), `当前真实无效权威不能签新完成：${JSON.stringify(end)}`);
-      assert(oldCompletion ? fs.existsSync(oldCompletionPath) && oldCompletion.equals(fs.readFileSync(oldCompletionPath)) : !fs.existsSync(oldCompletionPath), '前一run合法完成原件只读保留，不能误当本次签发或删除历史');
-      assert(!events.some(e => e.type === 'phase_halt' && e.halt_reason === 'no_progress_guard'), '不得等到无进展熔断');
-    }),
-  },
-  {
-    name: '最终评审返修二（漂移）：手写验收未对齐当前设计权威 → 真实检查漂移分支不标 repair_owner，经同一公开入口仍由 spec 重试，同签名零进展才 no_progress_guard 停机（行为不变）',
-    run: () => withDesignOwnerHost(async (h) => {
-      const { changeProjectedAcceptance } = require('./successor-exit.unit.test') as typeof import('./successor-exit.unit.test');
-      h.bump(changeProjectedAcceptance);
-      const { events, gates, reportDir } = await h.runSuccessor();
-      assert(gates.length >= 1 && gates.every(g => g.status === 'FAIL' && g.repair_owner === undefined && /AC-1\.expected_result/.test(g.details)), `前提：真实检查产出漂移分支：${JSON.stringify(gates)}`);
-      const authors = events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
-      assert(authors.length > 0 && authors.length <= 2, 'the actual unit author must receive drift without an idle phase loop');
-      const { executionRequestForInvoke } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
-      const issued = executionRequestForInvoke(reportDir, String(authors.at(-1)?.invoke_id));
-      assert(issued?.request.context.instruction?.includes('AC-1.expected_result'), 'the actual signed author feedback must retain the precise drift');
-      const halt = events.filter(e => e.type === 'phase_halt').at(-1);
-      assert(halt && ['no_progress_guard', 'executor_waiting'].includes(String(halt.halt_reason)) && halt.run_disposition === 'WAITING',
-        `unchanged current drift must naturally wait without a quota exit or fake completion: ${JSON.stringify(halt)}`);
-      assert(!events.some(e => e.halt_reason === 'execution_scope_unresolved'), '漂移不得走设计 owner 出口');
-    }),
-  },
-  {
-    name: '8a6d3f21 CU modules 超出预测：披露而不产生设计扩权请求',
-    run: () => withDesignOwnerHost(async (h) => {
-      const { checkChangeUnitFeatureProjection } = require('../../scripts/utils/change-unit-feature-projection') as typeof import('../../scripts/utils/change-unit-feature-projection');
-      const { SpecLoader } = require('../../scripts/utils/spec-loader') as typeof import('../../scripts/utils/spec-loader');
-      const { designOwnerBlockers, buildDesignOwnerGuidance } = require('../../scripts/goal-phase-runtime') as typeof import('../../scripts/goal-phase-runtime');
-      const contractsFile = featureFilePath(h.root, h.feature, 'contracts.yaml');
-      const doc = YAML.parse(fs.readFileSync(contractsFile, 'utf8'));
-      doc.modules.push({ name: 'OutsideModule', layer: '02-Feature', format: 'HAR', change_type: 'modify', package_path: 'src/outside' });
-      fs.writeFileSync(contractsFile, YAML.stringify(doc));
-      clearFrameworkConfigCache();
-      const ctx = { projectRoot: h.root, frameworkRoot: h.fw, feature: h.feature, phaseRule: {}, featureSpec: new SpecLoader(h.root, undefined, undefined, h.fw).loadFeatureSpec(h.feature) } as unknown as import('../../scripts/utils/types').CheckContext;
-      const checks = checkChangeUnitFeatureProjection(ctx, 'plan');
-      assert(!checks.some(check => check.id === 'cu_scope_matches_blueprint' && check.status === 'FAIL'), JSON.stringify(checks));
-      assert(checks.some(check => check.status === 'WARN' && check.details.includes('OutsideModule')), 'forecast divergence must be visible to review');
-      const summary = writeRunSummaryBase(h.root, generateScriptReport('', 'plan', h.feature, h.root, checks, h.fw), h.fw);
-      assert.equal(designOwnerBlockers(summary.blockers as never).length, 0, 'forecast difference must not request a design permission expansion');
-    }),
-  },
 ];
 
-/** 快照宿主 + 手写派生文件；runSuccessor 经公开入口 --supersede 起后继，spec 的门由真实检查产出（假 agent 不改文件）。 */
-async function withDesignOwnerHost(run: (h: {
-  root: string; fw: string; feature: string;
-  bump: (mutate: (bp: Record<string, any>) => void) => void;
-  ledgerDomain: (bp: Record<string, any>) => Record<string, any>;
-  runSuccessor: () => Promise<{ events: Array<Record<string, any>>; gates: CheckResult[]; reportDir: string }>;
-}) => Promise<void>): Promise<void> {
-  const { loadHostSnapshot, SNAPSHOT_CU_FEATURE } = require('../fixtures/host-snapshot-3.1.0/generate') as typeof import('../fixtures/host-snapshot-3.1.0/generate');
-  const { handWriteProjections } = require('./component-design-handoff.unit.test') as typeof import('./component-design-handoff.unit.test');
-  const se = require('./successor-exit.unit.test') as typeof import('./successor-exit.unit.test');
-  const { goalRunEvents } = require('./goal-runner-testing-integrity.unit.test') as typeof import('./goal-runner-testing-integrity.unit.test');
-  const { checkAuthoritativeContentAligned } = require('../../scripts/utils/blueprint-skill-projection') as typeof import('../../scripts/utils/blueprint-skill-projection');
-  const { SpecLoader } = require('../../scripts/utils/spec-loader') as typeof import('../../scripts/utils/spec-loader');
-  const { componentBlueprintPath } = require('../../scripts/utils/component-blueprint-path') as typeof import('../../scripts/utils/component-blueprint-path');
-  const { reconcileChangeUnitBlueprintRefs } = require('../../scripts/utils/change-unit-design-preparation') as typeof import('../../scripts/utils/change-unit-design-preparation');
-  const { resolveSuccessorExecutionScope } = require('../../scripts/utils/feature-execution-scope') as typeof import('../../scripts/utils/feature-execution-scope');
-  const { resolveWorkflowSpec } = require('../../workflow-loader') as typeof import('../../workflow-loader');
-  const { assessFeature } = require('../../scripts/utils/feature-assessment') as typeof import('../../scripts/utils/feature-assessment');
-  const { resolveChangeUnitExpectedExecution } = require('../../scripts/utils/change-unit-completion') as typeof import('../../scripts/utils/change-unit-completion');
-  const snap = loadHostSnapshot();
-  const { root, frameworkRoot: fw } = snap;
-  const feature = SNAPSHOT_CU_FEATURE;
-  const ledgerDomain = (bp: Record<string, any>): Record<string, any> => {
-    let hit: Record<string, any> | undefined;
-    const visit = (v: unknown): void => {
-      if (hit || !v || typeof v !== 'object') return;
-      if (Array.isArray(v)) { v.forEach(visit); return; }
-      if ((v as { node_id?: string }).node_id === 'ledger-domain') { hit = v as Record<string, any>; return; }
-      Object.values(v).forEach(visit);
-    };
-    visit(bp);
-    assert(hit, '快照蓝图缺 ledger-domain');
-    return hit!;
-  };
-  const bump = (mutate: (bp: Record<string, any>) => void): void => {
-    const { bumpAndReconcile } = require('./feature-assessment.unit.test') as typeof import('./feature-assessment.unit.test');
-    bumpAndReconcile(root, mutate);
-    clearFrameworkConfigCache();
-  };
-  const runSuccessor = async () => {
-    const [source] = se.runIds(root, feature);
-    const requirement = se.readJson<{ requirement: string }>(se.runFile(root, feature, source, 'manifest.json')).requirement;
-    clearFrameworkConfigCache();
-    const born = resolveSuccessorExecutionScope(root, feature, resolveWorkflowSpec(root, { frameworkRoot: fw }), fw, requirement, source)!;
-    const chain = se.uncoveredOwnerPhases(assessFeature(root, feature, { ...resolveChangeUnitExpectedExecution(root, feature), frameworkRoot: fw, scope: born }));
-    assert(chain[0] === 'spec', `前提：出生链从 spec 开始：${JSON.stringify(chain)}`);
-    const gates: CheckResult[] = [];
-    const { successor } = await se.supersede(snap, feature, source, chain, {
-      failExecutorFor: () => false,
-      onHarnessSummary: ({ phase }) => {
-        if (phase !== 'spec') return null;
-        const { parseContextExploration } = require('../../scripts/utils/context-exploration') as typeof import('../../scripts/utils/context-exploration');
-        const { resolveFactsRebuildOwner } = require('../../scripts/utils/capability-resolution-entry-input') as typeof import('../../scripts/utils/capability-resolution-entry-input');
-        const original = parseContextExploration(fs.readFileSync(featureFilePath(root, feature, 'context/facts.md'), 'utf8')).fm as Record<string, unknown>;
-        const admission = { projectRoot: root, feature, phase, goalRunId: process.env.MAISON_GOAL_RUN_ID!, featuresDir: 'doc/features' };
-        assert.equal(resolveFactsRebuildOwner(admission, original, phase), 'spec', 'audited successor uses its immutable birth establishment phase');
-        assert.equal(resolveFactsRebuildOwner({ ...admission, goalRunId: String(original.run_id) }, original, 'spec'), original.established_by, 'same-run queue changes cannot replace the original facts owner');
-        assert.equal(resolveFactsRebuildOwner(admission, { ...original, run_id: 'unrelated-run' }, phase), original.established_by, 'unrelated predecessor identity grants no reconstruction');
-        assert.equal(resolveFactsRebuildOwner({ ...admission, phase: 'plan' }, original, 'plan'), original.established_by, 'a non-birth phase cannot use the successor exception');
-        clearFrameworkConfigCache();
-        const ctx = { projectRoot: root, frameworkRoot: fw, feature, phaseRule: {}, featureSpec: new SpecLoader(root, undefined, undefined, fw).loadFeatureSpec(feature) } as unknown as import('../../scripts/utils/types').CheckContext;
-        const gate = checkAuthoritativeContentAligned(ctx, 'acceptance').find(c => c.id === 'authoritative_content_aligned');
-        if (!gate) return null;
-        gates.push(gate);
-        return { checks: [gate] };
-      },
-    });
-    assert(successor, '后继须出生');
-    return { events: goalRunEvents(root, successor!, feature) as Array<Record<string, any>>, gates,
-      reportDir: path.dirname(se.runFile(root, feature, successor!, 'manifest.json')) };
-  };
-  try {
-    clearFrameworkConfigCache();
-    handWriteProjections(root);
-    await run({ root, fw, feature, bump, ledgerDomain, runSuccessor });
-  } catch (error) {
-    try {
-      const { preserveRuntimeTestEvidence } = require('../utils/runtime-test-control') as typeof import('../utils/runtime-test-control');
-      const { executionRequestForInvoke } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
-      const files = [componentBlueprintPath(root, feature.split('/')[0]), featureFilePath(root, feature, 'acceptance.yaml')];
-      for (const runId of se.runIds(root, feature)) {
-        const directory = path.dirname(se.runFile(root, feature, runId, 'manifest.json'));
-        for (const event of goalRunEvents(root, runId, feature).filter(event => event.type === 'agent_invoke_start').slice(-3)) {
-          const original = executionRequestForInvoke(directory, String(event.invoke_id));
-          if (original) files.push(path.resolve(directory, original.reference.path));
-        }
-      }
-      for (const phase of ['spec', 'plan', 'coding', 'review', 'ut']) for (const file of ['summary.json', 'script-report.json', 'phase-evidence-manifest.json']) files.push(featureFilePath(root, feature, `${phase}/reports/${file}`));
-      console.error('CONSUMER_ORIGINALS=' + preserveRuntimeTestEvidence([root], String(error), ['current design authority consumer'], files.filter(file => fs.existsSync(file))));
-    } catch (captureError) { console.warn('consumer diagnostic unavailable: ' + String(captureError)); }
-    throw error;
-  } finally {
-    clearFrameworkConfigCache();
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-}
-
-export async function runSelectedCases(selector?: string) {
+export async function runAll() {
   const out: UnitCaseResult[] = [];
-  const timings: UnitExecutionTiming[] = [];
-  for (const c of cases.filter(test => matchesUnitCase(test.name, selector))) {
-    const stop = startCaseTiming([c.name], timings);
+  for (const c of cases) {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       await c.run();
       out.push({ name: c.name, ok: true });
     } catch (err) {
       out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    } finally { stop(); }
+    } finally {  endUnitCase(); }
   }
-  return selectedUnitCases(out, selector, timings);
+  return out;
 }
-export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }

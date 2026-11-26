@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 /**
  * round6 子批A 反伪造单测（plan c9e2a7f4 · P0-7③ 伪签物证扫描）：
  *   夹具＝宿主 homepage 2026-07-05 伪签事故真实脚本（fixtures/round6/tamper-scripts/——
@@ -126,14 +127,5 @@ test('tamper_scan_respects_custom_features_dir', () => {
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

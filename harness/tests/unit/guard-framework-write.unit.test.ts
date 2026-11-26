@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // ============================================================================
 // guard-framework-write.unit.test.ts — G1a framework 写时守卫（plan e8f5a2c7）
 // ============================================================================
@@ -15,9 +16,9 @@ import { spawnSync } from 'child_process';
 import { pathToFileURL } from 'url';
 
 import { detectRepoLayout, frameworkAbs } from '../../repo-layout';
-import { AUTOMATION_SIGNER_IDS } from '../../scripts/utils/fidelity-shared';
 import { loadRuntimeArtifactPolicy } from '../../scripts/utils/runtime-artifact-policy';
 import type { UnitCaseResult } from '../run-unit';
+import { AUTOMATION_SIGNER_IDS } from '../../scripts/utils/fidelity-shared';
 
 const LAYOUT = detectRepoLayout(__dirname);
 const HOOK_ABS = frameworkAbs(LAYOUT, 'agents/claude/templates/hooks/guard-framework-write.mjs');
@@ -507,14 +508,5 @@ export function runAll(): Promise<UnitCaseResult[]> {
 }
 
 async function run(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }

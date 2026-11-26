@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 /**
  * gate-fingerprint 单测（回执 stale 治理，2026-07-03）：
  *   背景＝round6 Checkpoint-2 实锤：framework 升级后旧 spec 回执"启动前已闭环"整体豁免 P0-D 新门禁。
@@ -90,14 +91,5 @@ test('freshness_uncomputable_is_stale_not_pass', () => {
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

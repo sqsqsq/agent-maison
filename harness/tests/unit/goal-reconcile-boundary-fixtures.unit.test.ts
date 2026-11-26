@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import {
   deriveReconcileObservation,
   preserveLegacyAction,
@@ -45,6 +46,8 @@ const fixtures = [
 
 export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
   return fixtures.map((fixture) => {
+    const endUnitCase = beginUnitCase(`boundary fixture: ${fixture.name}`);
+    if (!endUnitCase) return discoveryResult(`boundary fixture: ${fixture.name}`);
     try {
       const before = fixture.events.map((event) => event.action);
       const after = fixture.events.map((event, index) => {
@@ -64,6 +67,6 @@ export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
       return { name: `boundary fixture: ${fixture.name}`, ok: true };
     } catch (error) {
       return { name: `boundary fixture: ${fixture.name}`, ok: false, error: (error as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

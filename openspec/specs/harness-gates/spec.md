@@ -5,57 +5,37 @@
 Define the acceptance gates that MUST pass when AgentMaison publishable content
 (`skills/`, `specs/`, `harness/`, etc.) is modified.
 ## Requirements
-### Requirement: Daily and formal tests use distinct execution scopes
+### Requirement: Source repository uses one complete test gate
 
-Ordinary development SHALL use `test:changed` to execute the necessary daily groups.
-Ordinary plan closure and candidate builds SHALL use `test:daily` and the directly
-required validations. Both commands MUST retain unresolved daily failures and MUST
-NOT automatically select formal-only combinations. Missing or invalid selection
-history MAY expand changed selection only to the daily universe.
+Development acceptance, candidate build and formal release SHALL use the source
+repository root `npm test` without selection. It MUST typecheck once, discover
+every valid unit, profile, fixture and root tool test, and execute every
+registered case in one global worker budget. A parent watchdog MUST enforce
+30,000 ms for each case, including its preparation and cleanup. A full run MUST
+fail at 30 minutes if work remains.
 
-`test:daily` MUST execute every effective daily unit/profile group and every valid
-fixture, plus typecheck. Effective group membership SHALL reuse `releaseOnly`,
-with the suite value as the default and a group override where needed. An
-overlapping execution block containing daily protection MUST remain daily.
+#### Scenario: Full report requires complete execution
+- **WHEN** an unfiltered root `npm test` runs
+- **THEN** it SHALL match registered and completed identities by name and count
+- **AND** loading and worker errors, missing, duplicate, skipped, failed or timed-out cases SHALL preclude a passing report
+- **AND** a passing report requires equal start and end input snapshots
 
-`npm test` MUST execute the full union of daily and formal groups and all valid
-fixtures without cache subtraction. Only a stable, genuinely full execution with
-every group actually completed and passed MAY write a passing `completeRun`.
-Daily or changed execution MUST NOT be reported as formal full execution.
+#### Scenario: Filter selects suites for local diagnosis
+- **WHEN** `npm test -- --filter <suite-name>` runs
+- **THEN** it SHALL run all cases in suites whose names contain that literal string
+- **AND** no matches SHALL fail and filtered runs MUST leave the full report untouched
 
-#### Scenario: Ordinary closure executes the daily universe
-- **WHEN** `test:daily` runs for an ordinary plan closure
-- **THEN** all daily groups, discovered profile groups and valid fixtures execute
-- **AND** formal-only groups remain explicitly unexecuted and no formal full proof is created
-
-#### Scenario: Formal release executes both domains
-- **WHEN** `npm test` runs from the source repository root or `harness/`
-- **THEN** every valid daily and formal group and fixture MUST execute and pass
-- **AND** a passing formal completion proof requires stable tested inputs
-
-#### Scenario: Published prose has focused consumers
-- **WHEN** known Skill or published documentation changes only prose
-- **THEN** changed selection SHALL include its text/projection consumers and one exact normal representative
-- **AND** structural declarations, actual source dependencies and unresolved daily failures remain in the required union
-
-#### Scenario: Explicit formal additions remain visibly scoped
-- **WHEN** a developer explicitly adds a formal group to daily or changed selection
-- **THEN** that group SHALL execute and no longer appear in the unexecuted list
-- **AND** the execution MUST retain its original scope and other unexecuted formal failures
-
-> **Enforced by:** `AGENTS.md`, `harness/package.json`, `harness/tests/`
+> **Enforced by:** `AGENTS.md`, `package.json`, `harness/package.json`, `harness/tests/`
 
 ### Requirement: Consumer release npm test uses check global phases
 
 The consumer `npm test` script MUST be redefined to `check:global` (catalog + glossary + docs),
 matching S3 `run-global-phases` behavior. In the release zip, `harness/tests/` is excluded
-from the artifact. Source repo `npm test` remains the full formal gate; `test:daily`
-and `test:changed` are developer-only commands and MUST NOT enter the release package.
+from the artifact. The release package MUST leave the source repository's test runner out.
 
 #### Scenario: Release harness package has consumer test semantics
 - **WHEN** `npm run release:verify` inspects the staged or extracted release artifact
-- **THEN** `harness/package.json` MUST NOT contain `test:unit` or `test:fixtures`,
-  MUST contain `check:global`, and `scripts.test` MUST equal `npm run check:global`
+- **THEN** `harness/package.json` MUST contain `check:global`, and `scripts.test` MUST equal `npm run check:global`
 
 > **Enforced by:** `scripts/release-pack-rules.mjs`, `scripts/verify-release-pack.mjs`
 

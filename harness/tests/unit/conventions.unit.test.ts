@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -18,11 +19,11 @@ import { currentScopeItems } from '../../scripts/utils/blueprint-requirement-tra
 import { asRecord, asRecords } from '../../scripts/utils/component-blueprint-model';
 import { componentBlueprintPath } from '../../scripts/utils/component-blueprint-path';
 import { loadCanonicalChangeUnit, createChangeUnitRef, deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
-import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 import { loadBlueprintReviewSource } from '../../scripts/utils/blueprint-review-materialization';
 import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
 import { validateComponentBlueprint } from '../../scripts/utils/component-blueprint-validator';
 import { checkCanonicalComponentBlueprint, checkHostSeamMaterials } from '../../scripts/check-component-blueprint';
+import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
 
 const FRAMEWORK_ROOT = DEFAULT_LAYOUT.frameworkRoot;
 const ASSET = '# 工程惯例\n\n## repository-fields\n\n规则：MUST 复用 Repository 字段。\n范例：`src/repository.ts#load`\n';
@@ -224,4 +225,5 @@ test('same convention id traverses canonical blueprint/projection/CU contracts/r
   result = checkConventionsCoverage(context(root, normalized), ledger('| repository-fields | NOT_APPLICABLE | 此 CU 不消费该 DTO |'))[0]; assert.equal(result.status, 'PASS', result.details);
 }));
 
-export function runAll() { return cases.map(({ name, run }) => { try { run(); return { name, ok: true }; } catch (error) { return { name, ok: false, error: (error as Error).stack }; } }); }
+export function runAll() { return cases.map(({ name, run }) => { const endUnitCase = beginUnitCase(name);
+                                                                 if (!endUnitCase) return discoveryResult(name); try { run(); return { name, ok: true }; } catch (error) { return { name, ok: false, error: (error as Error).stack }; } finally { endUnitCase(); } }); }

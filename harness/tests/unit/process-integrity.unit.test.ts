@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 /**
  * process-integrity 单测（P0-7 进程注入自净，plan c9e2a7f4）：
  *   背景＝2026-07-05 伪签事故：agent 以 NODE_OPTIONS 预加载 hook（.cjs --require / .mjs --import）
@@ -140,14 +141,5 @@ test('preflight_blocks_on_env_injection_and_bypass_file', () => {
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

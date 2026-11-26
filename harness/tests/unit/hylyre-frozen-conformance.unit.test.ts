@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // hylyre-frozen-conformance.unit.test.ts
 //   plan a6c4e9f2 T4 返修：**用冻结包自己的 golden 全集**判生产 parse boundary。
@@ -156,19 +157,6 @@ test('信封合法但内容为空/仍是 0.3 flat 的伪装体一律被拒', () 
   assert.strictEqual(hybrid.ok, false, '0.3 flat 步骤套 v1 信封必须被拒');
 });
 
-export function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const testCase of CASES) {
-    try {
-      testCase.run();
-      results.push({ name: testCase.name, ok: true });
-    } catch (e) {
-      results.push({
-        name: testCase.name,
-        ok: false,
-        error: e instanceof Error ? (e.stack ?? e.message) : String(e),
-      });
-    }
-  }
-  return Promise.resolve(results);
+export async function runAll(): Promise<UnitCaseResult[]> {
+  return runUnitCases(CASES);
 }

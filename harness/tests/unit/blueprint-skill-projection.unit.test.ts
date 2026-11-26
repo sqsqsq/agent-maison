@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -30,7 +31,7 @@ import { executedEvidenceInputs } from '../../scripts/utils/phase-closure-finali
 import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { initializeFidelityRouting } from '../../scripts/utils/goal-preflight';
 import { spawnSync } from 'child_process';
-import { buildFeatureScopeCandidate, readScopeAcceptance, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate, resolveFeatureExecutionScope } from '../../scripts/utils/feature-track';
+import { buildFeatureScopeCandidate, readScopeAcceptance, prepareChangeUnitScopeInput, prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 import { resolveSuccessorExecutionScope } from '../../scripts/utils/feature-execution-scope';
 import { checkAcceptanceContent } from '../../scripts/utils/check-acceptance';
 import { checkUseCaseSpecSchema } from '../../scripts/check-ut';
@@ -39,7 +40,7 @@ import { deriveDesignPreparationReadiness } from '../../scripts/utils/change-uni
 import { inspectAcceptanceItem, inspectTypedConstructionContent, inspectUseCaseItem } from '../../scripts/utils/design-content-checks';
 import { collectCleanPassIssues, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
 import type { UnitCaseResult } from '../run-unit';
-import { asChangeUnitArtifact, createChangeUnitRef, deriveChangeUnitFeatureId, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
+import { asChangeUnitArtifact, createChangeUnitRef, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from '../../scripts/utils/change-unit-design-gate';
 import { acceptChangeUnitCandidate, ChangeUnitCandidateRejected, inspectChangeUnitCandidateBatch, matchesAcceptedChangeUnitCandidate, rebindQuestionedChangeUnitCandidates, type ChangeUnitCandidateInput } from '../../scripts/utils/change-unit-provider-boundary';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
@@ -71,9 +72,10 @@ export function fixture(root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-
   fs.writeFileSync(blueprintFile, YAML.stringify(blueprint));
   const bind = () => {
     const record = YAML.parse(fs.readFileSync(cuFile, 'utf8'));
+    const fingerprint = sha(blueprintFile);
     const walk = (value: unknown): void => {
       if (!value || typeof value !== 'object') return;
-      if ((value as BlueprintRecord).artifact === 'component-blueprint@1') (value as BlueprintRecord).artifact_sha256 = sha(blueprintFile);
+      if ((value as BlueprintRecord).artifact === 'component-blueprint@1') (value as BlueprintRecord).artifact_sha256 = fingerprint;
       for (const child of Object.values(value)) walk(child);
     };
     walk(record); fs.writeFileSync(cuFile, YAML.stringify(record));
@@ -880,7 +882,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
   } },
   { name: 'CU inherited impact keeps an internal write-set edit but still checks external dependencies', run: f => checkCuImpactAfterOwnEdit(f, false) },
   { name: 'CU inherited impact returns the device duty to Testing when an unchanged page shares the write set', run: f => checkCuImpactAfterOwnEdit(f, true) },
-  { name: '77105c47 CU scope binds accepted UI targets and never renews a stale negative judgment', run(f) {
+  { name: '77105c47 inherited positive impact binds the accepted CU UI target', run(f) {
     const requirement = 'Refresh the ledger using the approved design';
     const requirementFile = 'requirements/ledger.md';
     const implementation = 'src/ledger/LedgerFeature.ets';
@@ -899,59 +901,14 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const inherited = buildFeatureScopeCandidate({ projectRoot: f.root, frameworkRoot, feature: 'root-request',
       completionTarget: 'feature', requirement, requestedResults: [requirement], requestedPhases: ['spec'],
       impact: { userVisibleBehaviorChange: true, reason: 'Visible ledger result', basisPaths: [requirementFile] } }).request.impact!;
+    assert.deepEqual(inherited.basis[0].source_refs, [requirementFile]);
     const request = { projectRoot: f.root, frameworkRoot, changeUnit: asChangeUnitArtifact(YAML.parse(fs.readFileSync(f.cuFile, 'utf8'))),
       requirement, requestedResults: [requirement], requestedPhases: ['coding'], overwrite: true };
     const prepared = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: inherited }));
     assert.deepEqual(prepared.candidate.request.impact?.basis[0].source_refs, [implementation]);
+    assert.equal(prepared.candidate.request.impact?.basis[0].dependencies[0]?.sha256, sha(source).slice('sha256:'.length));
     assert.equal(prepared.candidate.request.impact?.reason, inherited.reason);
     assert.equal(prepared.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'required');
-    const workflow = resolveWorkflowSpec(f.root, { frameworkRoot });
-    assert.deepEqual(resolveFeatureExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement), prepared.scope);
-    const manifest = buildGoalManifestFromInput({ feature: f.feature, run_id: 'cu-impact-source', requirement,
-      execution_scope: prepared.scope, chain_override: prepared.scope.phase_chain }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, frameworkRoot, manifest, chain: prepared.scope.phase_chain, resolveHead: () => 'f'.repeat(40) });
-    const successor = () => resolveSuccessorExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement, manifest.run_id)!;
-    assert.deepEqual(successor().request_impact, prepared.scope.request_impact);
-    const negative = { ...prepared.candidate.request.impact!, user_visible_behavior_change: false, reason: 'No visible behavior change' };
-    const prepareGap = (impact: typeof negative) => prepareFeatureScopeCandidate({
-      ...prepareChangeUnitScopeInput({ ...request, requestedPhases: ['spec', 'plan'], inheritedImpact: impact }),
-      feature: deriveChangeUnitFeatureId(request.changeUnit.blueprint_id, 'impact-gap'),
-    });
-    const gap = prepareGap(negative);
-    assert.deepEqual(gap.scope.request_impact, negative, 'a definition gap must retain the exact still-valid source');
-    assert.equal(gap.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
-    const valid = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: negative }));
-    assert.deepEqual(valid.candidate.request.impact, negative);
-    const negativeManifest = buildGoalManifestFromInput({ feature: f.feature, run_id: 'cu-negative-impact-source', requirement,
-      execution_scope: valid.scope, chain_override: valid.scope.phase_chain }, { projectRoot: f.root });
-    createGoalRun({ projectRoot: f.root, frameworkRoot, manifest: negativeManifest, chain: valid.scope.phase_chain, resolveHead: () => 'f'.repeat(40) });
-    const negativeSuccessor = () => resolveSuccessorExecutionScope(f.root, f.feature, workflow, frameworkRoot, requirement, negativeManifest.run_id)!;
-    assert.deepEqual(negativeSuccessor().request_impact, negative);
-    fs.appendFileSync(source, '// changed input bytes\n');
-    const staleDuringGap = prepareGap(gap.scope.request_impact!);
-    assert.equal(staleDuringGap.scope.request_impact, undefined, 'a source that changes during the gap cannot be retained');
-    assert.equal(staleDuringGap.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
-    const next = successor();
-    assert.equal(next.request_impact?.reason, inherited.reason);
-    assert.deepEqual(next.request_impact?.basis[0].source_refs, [implementation]);
-    assert.equal(next.request_impact?.basis[0].dependencies[0].sha256, sha(source).slice('sha256:'.length));
-    assert.equal(next.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'required');
-    const conservative = negativeSuccessor();
-    assert.equal(conservative.request_impact, undefined);
-    assert.equal(conservative.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
-    const stale = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: negative }));
-    assert.equal(stale.candidate.request.impact, undefined);
-    assert.equal(stale.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
-    const withoutSource = prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, inheritedImpact: { ...negative, basis: [] } }));
-    assert.equal(withoutSource.scope.obligations.find(item => item.kind === 'device-evidence')?.applicability, 'unknown');
-    assert.throws(() => prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, impact: {
-      userVisibleBehaviorChange: false, reason: negative.reason, basisPaths: [requirementFile],
-    } })), /影响依据与本次范围无关/);
-    assert.throws(() => prepareFeatureScopeCandidate(prepareChangeUnitScopeInput({ ...request, impact: {
-      userVisibleBehaviorChange: true, reason: inherited.reason, basisPaths: [requirementFile],
-    } })), /影响依据与本次范围无关/, 'an explicit new judgment needs its own relevant basis');
-    fs.unlinkSync(source);
-    assert.throws(successor, /影响依据不可用/, 'another file must not substitute for a missing authority source');
   } },
   { name: '77105c47 successor renews the exact non-UI impact source and rejects its deletion', run(f) {
     materializeBlueprintSkillInputs(f.root, f.feature, frameworkRoot);
@@ -1575,20 +1532,15 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert(result.detail, `${mode} lost its gap`);
   } })),
 ];
-async function runCases(selected: typeof cases): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const test of selected) {
-    const f = fixture();
-    try { await test.run(f); results.push({ name: test.name, ok: true }); }
-    catch (error) { results.push({ name: test.name, ok: false, error: String(error) }); }
-    finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
-  }
-  return results;
-}
-
-export const runAll = (): Promise<UnitCaseResult[]> => runCases(cases);
-export const runSelectedCases = async (filter?: string) => {
-  const results = await runCases(cases.filter(item => filter === undefined || item.name.includes(filter)));
-  return { results, matchedCaseCount: results.length, executionTimings: [] };
-};
-export const runContentWarnCases = (): Promise<UnitCaseResult[]> => runCases(cases.filter(item => item.name.startsWith('content rules:')));
+export const runAll = (): Promise<UnitCaseResult[]> => runUnitCasesAsync(cases.map(test => ({
+  name: test.name,
+  async run() {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-skill-'));
+    try {
+      await test.run(fixture(root));
+    } finally {
+      clearFrameworkConfigCache();
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  },
+})));

@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // headless-binary-resolve.unit.test.ts
 
 import assert from 'assert';
@@ -258,16 +259,7 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }
 
 if (require.main === module) {

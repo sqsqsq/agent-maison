@@ -1,4 +1,4 @@
-import { selectExecutionBlock, timeExecutionBlock, selectedExecutionBlocks } from '../utils/unit-case-selection';
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import * as fs from 'fs';
 import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
@@ -7,7 +7,6 @@ import * as YAML from 'yaml';
 import { featureFilePath, featuresDirPath } from '../../config';
 import * as closureEvidenceChecks from '../fixtures/component-blueprint/valid/test/ledger/closure.test';
 import { BlueprintRecord, asRecord, asRecords, asStrings } from '../../scripts/utils/component-blueprint-model';
-import { blueprintRefAddress } from '../../scripts/utils/change-unit-model';
 import {
   asChangeUnitArtifact,
   createChangeUnitRef,
@@ -45,6 +44,7 @@ import { deriveBlueprintDesignObligations } from '../../scripts/utils/component-
 import { assembleKnowledge, renderKnowledge } from '../../scripts/utils/knowledge-context';
 import { prepareFeatureScopeCandidate, featureScopeCandidateFingerprint } from '../../scripts/utils/feature-track';
 import { freezeFeatureExecutionScope } from '../../scripts/utils/feature-execution-scope';
+import { blueprintRefAddress } from '../../scripts/utils/change-unit-model';
 
 interface UnitCaseResult { name: string; ok: boolean; error?: string }
 
@@ -61,11 +61,11 @@ function clone<T>(value: T): T {
 
 function test(name: string, run: () => void): UnitCaseResult {
   const displayName = name;
-  if (!selectExecutionBlock(displayName)) return { name: displayName, ok: true };
-  const finish = timeExecutionBlock(displayName);
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return discoveryResult(name);
   try { run(); return { name, ok: true }; }
   catch (error) { return { name, ok: false, error: (error as Error).stack ?? (error as Error).message }; }
-  finally { finish(); }
+  finally {  endUnitCase(); }
 }
 
 function withProject(run: (projectRoot: string) => void, mutateBlueprint?: (blueprint: BlueprintRecord) => void): void {
@@ -1178,6 +1178,3 @@ export function runAll(): UnitCaseResult[] {
 
   return results;
 }
-
-export const listCaseGroups = async () => (await selectedExecutionBlocks(runAll, undefined, true)).groups;
-export const runSelectedCases = (selector?: string) => selectedExecutionBlocks(runAll, selector);

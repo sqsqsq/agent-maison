@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../../../../../harness/tests/utils/unit-cases';
 // ============================================================================
 // layout-oracle.unit.test.ts — plan c6d8f2b4：T8 几何不变量 / M1 自报退化 /
 // schema 1.1（reported_*、region_attest、evaluation_invalidated）白盒回归
@@ -772,12 +773,14 @@ cases.push({
 export function runAll(): UnitCaseResult[] {
   const out: UnitCaseResult[] = [];
   for (const c of cases) {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       c.fn();
       out.push({ name: c.name, ok: true });
     } catch (e) {
       out.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return out;
 }

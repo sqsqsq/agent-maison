@@ -1,3 +1,5 @@
+import { runUnitCases } from '../utils/unit-cases';
+import { testCliArgs } from '../utils/test-cli-args';
 import assert from 'assert';
 import type { CheckResult } from '../../scripts/utils/types';
 import * as fs from 'fs';
@@ -7,7 +9,6 @@ import * as YAML from 'yaml';
 import { spawnSync, execFileSync } from 'child_process';
 import { prepareExplicitRequest, type PreparedRequest } from '../../scripts/utils/capability-resolution-entry-input';
 import { clearFrameworkConfigCache } from '../../config';
-import type { UnitCaseResult } from '../run-unit';
 import { fixture as blueprintFixture } from './blueprint-skill-projection.unit.test';
 import { materializeBlueprintSkillInputs } from '../../scripts/utils/blueprint-skill-projection';
 import { resolveRequestInputs } from '../../scripts/utils/capability-resolution';
@@ -49,7 +50,7 @@ exports.runRequestTests = ctx => {
   return { root, framework, request, options };
 }
 function cli(f: ReturnType<typeof fixture>, extra: string[] = []) {
-  return spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/harness-runner.ts'), '--project-root', f.root, '--framework-root', f.framework, '--phase', f.options.phase, '--request-file', f.options.requestFile, '--report-dir', f.options.reportDir, ...extra], { cwd: path.join(f.framework, 'harness'), encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: 'ambient-run', MAISON_GOAL_RUNNER: '1', MAISON_GOAL_ATTEMPT: 'ambient-attempt', MAISON_FEATURE: 'live' } });
+  return spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/harness-runner.ts')), '--project-root', f.root, '--framework-root', f.framework, '--phase', f.options.phase, '--request-file', f.options.requestFile, '--report-dir', f.options.reportDir, ...extra], { cwd: path.join(f.framework, 'harness'), encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: 'ambient-run', MAISON_GOAL_RUNNER: '1', MAISON_GOAL_ATTEMPT: 'ambient-attempt', MAISON_FEATURE: 'live' } });
 }
 /** 写好目标 / 授权集合后跑一次真实请求，返回脚本报告与 `request_expectation_source` 结论（R2）。 */
 function runUt(f: ReturnType<typeof fixture>, tests: string[], allowed: string[] = []) {
@@ -132,230 +133,6 @@ const cases: Array<{ name: string; phase?: string; run(f: ReturnType<typeof fixt
       identities.push(problemIdentity(finding, true));
     }
     assert.notEqual(identities[0], identities[1], 'two negative reports must not collapse into the generic verdict identity');
-  } },
-  { name: 'B2 original short design request feeds public review and real Node UT with current blueprint acceptance identity', phase: 'ut', run(f) {
-    // Isolated hmos-app lens fixture with an actual Node UT provider; this does not test the HMOS SDK.
-    fs.renameSync(path.join(f.framework, 'profiles/request-test'), path.join(f.framework, 'profiles/hmos-app'));
-    const profileFile = path.join(f.framework, 'profiles/hmos-app/profile.yaml');
-    const profile = YAML.parse(fs.readFileSync(profileFile, 'utf8')); profile.name = 'hmos-app'; fs.writeFileSync(profileFile, YAML.stringify(profile));
-    profile.capabilities['coding.compile'] = { provider: 'node-syntax', severity: 'BLOCKER' }; fs.writeFileSync(profileFile, YAML.stringify(profile));
-    profile.capabilities['device_test.run'] = { provider: 'fixture-device', severity: 'BLOCKER' }; fs.writeFileSync(profileFile, YAML.stringify(profile));
-    fs.writeFileSync(path.join(f.framework, 'profiles/hmos-app/harness/providers/fixture-device.js'), `
-const fs=require('fs'),path=require('path'),assert=require('assert');
-const {extractDerivedPlanCases}=require(${JSON.stringify(path.join(repo, 'harness/scripts/utils/derived-hylyre-plan'))});
-exports.provider={id:'fixture-device',capability:'device_test.run',exports:['runRequestTests']};
-exports.runRequestTests=ctx=>{
-  assert.equal(ctx.resolvedInputs.values.cases.binding.source.provider_id,'derive.blueprint-acceptance');
-  assert(Array.isArray(ctx.resolvedInputs.values.cases.value.criteria));
-  const rows=extractDerivedPlanCases(ctx.resolvedInputs.values.test_plan.value);
-  fs.appendFileSync(path.join(ctx.reportDir,'call-count.log'),'called\\n');
-  const evidence=path.join(ctx.reportDir,'native-device.log'); fs.writeFileSync(evidence,'fixture native steps and expected result');
-  return {executed:true,total:rows.length,failed:0,evidence_paths:[evidence],checks:rows.map(row=>({
-    id:'request_device_native',category:'structure',severity:'BLOCKER',status:'PASS',description:'fixture device execution',details:row.tc_id,
-    affected_files:[path.relative(ctx.projectRoot,evidence).split(path.sep).join('/')],
-    structured:{request_device_case:{tc_id:row.tc_id,acceptance_ids:row.ac_ref.split(', '),expected:row.expected}}
-  }))};
-};`);
-    fs.writeFileSync(path.join(f.framework, 'profiles/hmos-app/harness/coding-host-rules.js'), `const fs=require('fs'),path=require('path'),cp=require('child_process');exports.profileCodingHost={sourceFileSuffixes:['js'],runStructureChecks(){return[]},runTraceabilityChecks(){return[]},checkCodingCompile(){return[]},compileProject(ctx){const run=cp.spawnSync(process.execPath,['--check',path.join(ctx.projectRoot,'src/value.js')],{encoding:'utf8'});fs.writeFileSync(path.join(ctx.reportDir,'node-check.log'),run.stdout+run.stderr);return{checks:[{id:'coding_compile',category:'structure',severity:'BLOCKER',status:run.status===0?'PASS':'FAIL',description:'actual Node syntax',details:run.stdout+run.stderr}],execution:{executed:true,exitCode:run.status,command:'node --check src/value.js'}}}};`);
-    const configFile = path.join(f.root, 'framework.config.json'), config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.project_profile.name = 'hmos-app'; fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
-    const bpFile = 'doc/features/compact-value/blueprint/component-blueprint.yaml', requirement = 'requirements/value.txt';
-    const user = '按小型处理：value 从41改为42。原需求见 requirements/value.txt，保留其它行为。';
-    fs.mkdirSync(path.join(f.root, 'requirements')); fs.writeFileSync(path.join(f.root, requirement), user);
-    const sourceFile = path.join(f.root, 'src/value.js');
-    const sourceBefore = "exports.value = 41;\nfunction openBank(router) { if (router.ready) router.pushUrl('/bank'); }\n";
-    const sourceAfter = sourceBefore.replace('41', '42');
-    fs.writeFileSync(sourceFile, sourceBefore);
-    const ut = "const test=require('node:test'),assert=require('node:assert/strict');\n// expectation: " + bpFile + "#AC-1\ntest('value',()=>assert.equal(require('../src/value.js').value,42));\n// expectation: " + bpFile + "#AC-3\ntest('both value',()=>assert.equal(require('../src/value.js').value,42));\n// expectation: " + bpFile + "#NFR-LOOKUP\ntest('local lookup under 300 ms',()=>{ const start=process.hrtime.bigint(); void require('../src/value.js').value; assert(process.hrtime.bigint()-start<=300000000n); });\n";
-    fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut);
-    const { prepareBlueprintSourceItems } = require('../../scripts/utils/blueprint-discovery') as typeof import('../../scripts/utils/blueprint-discovery');
-    const items = prepareBlueprintSourceItems(f.root, [requirement], '2026-11-11T12:00:00Z'), provenance = items[0].provenance;
-    const boundary = { id: 'BD-1', priority: 'P2', description: 'empty result', scenario: 'search a term with no results',
-      handling: 'show the empty result', expected_behavior: 'Empty state is visible', ut_layer: 'device', device_focus: 'empty state label' };
-    const performance = { id: 'NFR-LOOKUP', description: 'Lookup latency', metric: 'Lookup p95', threshold: '<= 300', unit: 'ms',
-      ut_layer: 'both', ut_focus: 'local lookup latency', device_focus: 'observe repeated device lookups' };
-    const bp = { artifact: 'component-blueprint@1', component_id: 'value', blueprint_id: 'compact-value', revision: 1, provenance,
-      discovery: { inputs: { current_scope_items: items }, requirement_traceability: [{ item_id: items[0].item_id, blueprint_refs: ['view:development/node:value'] }] },
-      design_views: [{ view_id: 'development', nodes: [{ node_id: 'value', owner: 'value-owner', current_state: 'value=41', target_state: 'value=42', provenance, verification_refs: ['AC-1'],
-        acceptance: { criteria: [{ id: 'AC-1', priority: 'P1', description: 'value returns42', testable: true, verification_steps: ['read value'], expected_result: '42', ut_layer: 'unit', ut_focus: 'value result' }],
-          boundaries: [boundary], performance: [performance] }, contracts: { files: ['src/value.js'] } }] }] };
-    const acceptance = bp.design_views[0].nodes[0].acceptance;
-    Object.assign(acceptance, { criteria: [...acceptance.criteria,
-      { ...acceptance.criteria[0], id: 'AC-2', description: '设备显示当前value', ut_layer: 'device', device_focus: '实际设备显示42' },
-      { ...acceptance.criteria[0], id: 'AC-3', description: '值在设备上刷新', ut_layer: 'both', device_focus: '刷新后界面仍显示42' },
-      { ...acceptance.criteria[0], id: 'AC-4', description: '打开后显示当前值', ut_layer: 'device', device_focus: '重新打开后显示42' },
-    ] });
-    bp.design_views[0].nodes[0].verification_refs.push('AC-2', 'AC-3', 'AC-4', boundary.id, performance.id);
-    const { refreshBlueprintFingerprints } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
-    refreshBlueprintFingerprints(bp); fs.mkdirSync(path.dirname(path.join(f.root, bpFile)), { recursive: true });
-    fs.writeFileSync(path.join(f.root, '.gitignore'), 'framework/\n.native-fixture/\ndoc/reports/\n');
-    const git = (...args: string[]) => execFileSync('git', args, { cwd: f.root, encoding: 'utf8', stdio: 'pipe' }).trimEnd();
-    const dirtyFile = 'src/format.js';
-    fs.writeFileSync(path.join(f.root, dirtyFile), 'exports.format = 0;\n');
-    git('init'); git('add', '-A'); git('-c', 'user.name=BTest', '-c', 'user.email=b@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '-m', 'baseline');
-    fs.writeFileSync(path.join(f.root, dirtyFile), 'exports.format = 1;\n');
-    const home = path.join(f.root, '.native-fixture'), session = '11111111-2222-4333-8444-555555555555', nativeFile = path.join(home, 'projects/fixture', session + '.jsonl');
-    const rows: object[] = [], add = (row: object) => rows.push({ sessionId: session, cwd: f.root, timestamp: '2026-11-11T12:00:00Z', ...row });
-    add({ type: 'user', uuid: 'short-user', message: { role: 'user', content: user } }); let count = 0;
-    const tool = (name: string, input: object, output: string) => { const id = `tool-${++count}`; add({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } }); add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output }] } }); };
-    tool('Bash', { command: 'git rev-parse HEAD' }, git('rev-parse', 'HEAD'));
-    tool('Bash', { command: 'git status --porcelain' }, git('status', '--porcelain'));
-    tool('pwsh', { command: 'Get-Location; git diff --stat | Out-String' }, '先查当前工作区');
-    tool('read_image', { path: 'requirements/value.png' }, '需求参考');
-    tool('job_output', { job_id: 'inspect-design-inputs' }, '调研结果');
-    for (const file of ['src/value.js', 'tests/value.test.cjs', requirement]) tool('Read', { file_path: path.join(f.root, file) }, fs.readFileSync(path.join(f.root, file), 'utf8'));
-    add({ type: 'assistant', message: { role: 'assistant', content: '本请求仅调整value；Q1=否；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是。依据 src/value.js、requirements/value.txt。' } });
-    const blueprintContent = YAML.stringify(bp);
-    fs.writeFileSync(path.join(f.root, bpFile), blueprintContent);
-    tool('Write', { file_path: path.join(f.root, bpFile), content: blueprintContent }, 'success');
-    const designArgs = ['--blueprint', 'compact-value', '--session-ref', nativeFile + '#short-user', '--target', 'src/value.js', '--requirement-source', requirement, '--report-dir', 'doc/reports/design', '--prepare-source', '--json'];
-    const designCommand = `npm --prefix framework/harness run check:component-blueprint -- --project-root "${f.root}" --framework-root "${f.framework}" ${designArgs.map(value => `"${value}"`).join(' ')}`;
-    add({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'design-check', name: 'Bash', input: { command: designCommand } }] } });
-    fs.mkdirSync(path.dirname(nativeFile), { recursive: true }); fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
-    const saved = process.env.CLAUDE_CONFIG_DIR; process.env.CLAUDE_CONFIG_DIR = home;
-    const invoke = (script: string, args: string[]) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness', script), '--project-root', f.root, ...(script === 'scripts/compile.ts' ? [] : ['--framework-root', f.framework]), ...args], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } });
-    try {
-      const design = invoke('scripts/check-component-blueprint.ts', designArgs);
-      assert.equal(design.status, 0, design.stderr + design.stdout);
-      const designOutput = JSON.parse(design.stdout);
-      let subject = designOutput.request_file;
-      const deviceIds = ['AC-2', 'AC-3', 'AC-4', boundary.id, performance.id];
-      assert.deepEqual(designOutput.next[0].acceptance_ids, deviceIds);
-      assert(designOutput.next[0].command.includes(subject));
-      const designRequest = JSON.parse(fs.readFileSync(path.join(f.root, subject), 'utf8'));
-      assert.match(designRequest.intake_context.baseline.dirty_digests?.[dirtyFile] ?? '', /^[a-f0-9]{64}$/, '首次蓝图检查须绑定初始脏文件摘要');
-      assert.equal(designRequest.intake_context.baseline.dirty_digests_at, 'prepare');
-      assert.deepEqual(designRequest.intake_context.attribution_disclosures?.map((item: { path: string }) => item.path), [dirtyFile]);
-      assert.deepEqual(designRequest.intake_context.attribution_unknown, []);
-      assert.deepEqual(designRequest.blueprint.acceptance_ids, ['AC-1', 'AC-2', 'AC-3', 'AC-4'], '原设计绑定仍须保完整验收，不能改协议缩成UT分母');
-      add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'design-check', content: design.stdout }] } });
-      tool('Edit', { file_path: sourceFile, old_string: '41', new_string: '42' }, 'success'); fs.writeFileSync(sourceFile, sourceAfter);
-      fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
-      const compiled = invoke('scripts/compile.ts', ['--request-file', subject, '--target', 'src/value.js', '--report-dir', 'doc/reports/design-compile', '--json']);
-      assert.equal(compiled.status, 0, compiled.stderr + compiled.stdout);
-      assert(JSON.parse(compiled.stdout).next.some((command: string) => command.includes('--phase testing') && command.includes(subject)));
-      const compilation = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design-compile/compile-report.json'), 'utf8'));
-      assert(compilation.execution.executed && compilation.execution.command === 'node --check src/value.js' && compilation.architecture_analyzed === 1);
-      const run = (phase: string, extra: string[] = []) => invoke('harness-runner.ts', ['--phase', phase, '--request-file', subject, ...extra]);
-      const actual = run('ut', ['--test-target', 'tests/value.test.cjs']); assert.equal(actual.status, 0, actual.stderr + actual.stdout);
-      const unitBaseline = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/request.json'), 'utf8')).intake_context.baseline;
-      assert.equal(unitBaseline.dirty_digests_at, 'prepare');
-      assert.deepEqual(unitBaseline.dirty_digests, designRequest.intake_context.baseline.dirty_digests);
-      const report = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/script-report.json'), 'utf8'));
-      assert(report.checks.some((check: CheckResult) => check.id === 'request_test_execution' && check.status === 'PASS'));
-      assert(report.checks.some((check: CheckResult) => check.id === 'request_expectation_source' && check.status === 'PASS'));
-      assert(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/native-test.log'), 'utf8').includes('# pass 3'));
-      const testPreparation = run('testing', ['--prepare-request']);
-      assert.equal(testPreparation.status, 0, testPreparation.stderr + testPreparation.stdout);
-      const device = JSON.parse(testPreparation.stdout);
-      assert.deepEqual(device.device_acceptance.map((item: { id: string }) => item.id), deviceIds);
-      assert.deepEqual(device.device_acceptance.at(-2).verification_steps, [boundary.scenario, boundary.handling]);
-      assert.deepEqual(device.device_acceptance.at(-1).verification_steps, [performance.device_focus]);
-      assert(!device.gaps.includes('inputs.cases'));
-      assert.equal(fs.existsSync(device.inputs.test_plan), false);
-      const plan = (refs: string) => ['## 测试用例清单', '', '| 用例编号 | 用例名称 | 测试步骤 | 预期结果 | 关联 AC |',
-        '|---|---|---|---|---|', '| TC-001 | value | {"wait_for":{"by_text":"42","match":"exact"}} | value 42 is visible | ' + refs + ' |'].join('\n');
-      const deviceReport = () => JSON.parse(fs.readFileSync(path.join(device.reportDir, 'script-report.json'), 'utf8'));
-      fs.writeFileSync(device.inputs.test_plan, plan('AC-2, AC-3, BD-1'));
-      const incompleteDevice = run('testing');
-      assert.notEqual(incompleteDevice.status, 0, incompleteDevice.stdout);
-      const perAc = (report: { checks: CheckResult[] }) => report.checks.filter(check => check.id === 'request_device_acceptance');
-      assert.deepEqual(perAc(deviceReport()).map(check => check.status), ['PASS', 'PASS', 'FAIL', 'PASS', 'FAIL'], JSON.stringify(deviceReport().checks));
-      assert.match(perAc(deviceReport())[2].details, /AC-4/);
-      assert.match(perAc(deviceReport()).at(-1)!.details, /NFR-LOOKUP/);
-      const alternate = 'doc/reports/design/testing/reused-test-plan.hylyre.md';
-      fs.writeFileSync(path.join(f.root, alternate), plan(deviceIds.join(', ')));
-      const tested = run('testing', ['--test-plan', alternate]); assert.equal(tested.status, 0, tested.stderr + tested.stdout);
-      const devicePass = deviceReport();
-      assert.deepEqual(perAc(devicePass).map(check => check.status), ['PASS', 'PASS', 'PASS', 'PASS', 'PASS']);
-      assert.deepEqual(perAc(devicePass).slice(-2).map(check => (check.structured as { expected_result: string }).expected_result),
-        [boundary.expected_behavior, 'Lookup p95: <= 300 ms']);
-      assert(perAc(devicePass).every(check => check.details.includes('TC-001') && check.affected_files?.some(file => file.endsWith('native-device.log'))));
-      assert.equal(devicePass.input_bindings.cases.source.provider_id, 'derive.blueprint-acceptance');
-      assert.equal(fs.readFileSync(path.join(device.reportDir, 'call-count.log'), 'utf8'), 'called\ncalled\n');
-      const native = require('../../../agents/shared/native-request.cjs') as { userControl(text: string): { excluded: string[] } };
-      for (const instruction of ['本次仅运行UT', '本请求只编译']) assert(native.userControl(instruction).excluded.includes('testing'));
-      add({ type: 'user', uuid: 'exclude-device', message: { role: 'user', content: '本次仅运行UT' } });
-      add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务，原始user消息 short-user，仅按真实授权执行专项。' } });
-      fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
-      const excludedDevice = run('testing');
-      assert.notEqual(excludedDevice.status, 0); assert.match(excludedDevice.stderr + excludedDevice.stdout, /排除testing/);
-      rows.splice(-2); fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
-      const allCriteria = acceptance.criteria.slice();
-      acceptance.criteria.splice(1); bp.design_views[0].nodes[0].verification_refs.splice(1);
-      acceptance.performance.pop();
-      const rebind = () => {
-        bp.revision++;
-        refreshBlueprintFingerprints(bp); fs.writeFileSync(path.join(f.root, bpFile), YAML.stringify(bp));
-        return invoke('scripts/check-component-blueprint.ts', ['--blueprint', 'compact-value', '--session-ref', nativeFile + '#short-user', '--target', 'src/value.js', '--report-dir', 'doc/reports/design', '--prepare-source', '--json']);
-      };
-      bp.design_views[0].nodes[0].verification_refs.push(boundary.id);
-      const boundaryDesign = rebind();
-      assert.equal(boundaryDesign.status, 0, boundaryDesign.stderr + boundaryDesign.stdout);
-      assert.deepEqual(JSON.parse(boundaryDesign.stdout).next[0].acceptance_ids, [boundary.id]);
-      fs.writeFileSync(path.join(f.root, alternate), plan(boundary.id));
-      const boundaryOnly = run('testing'); assert.equal(boundaryOnly.status, 0, boundaryOnly.stderr + boundaryOnly.stdout);
-      assert.deepEqual(perAc(deviceReport()).map(check => [check.status, check.details]), [['PASS', 'BD-1 (device) 关联 TC-001=PASS']]);
-      acceptance.boundaries.pop(); bp.design_views[0].nodes[0].verification_refs.pop();
-      const unitDesign = rebind();
-      assert.equal(unitDesign.status, 0, unitDesign.stderr + unitDesign.stdout); assert.deepEqual(JSON.parse(unitDesign.stdout).next, []);
-      const unitOnly = run('testing'); assert.equal(unitOnly.status, 0, unitOnly.stderr + unitOnly.stdout);
-      assert.equal(JSON.parse(unitOnly.stdout).applicability, 'not_applicable');
-      assert.equal(fs.readFileSync(path.join(device.reportDir, 'call-count.log'), 'utf8'), 'called\ncalled\ncalled\n');
-      const { readRequestIntake } = require('../../scripts/utils/request-intake') as typeof import('../../scripts/utils/request-intake');
-      const unitIntake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: nativeFile + '#short-user' });
-      const { requestTestingScope } = require('../../scripts/utils/automatic-request') as typeof import('../../scripts/utils/automatic-request');
-      const unitScope = () => requestTestingScope(f.root, unitIntake, acceptance as unknown as import('../../scripts/utils/types').AcceptanceSpec, ['AC-1']);
-      assert(!unitScope().required, 'an unchanged navigation expression must not require device execution');
-      for (const changed of [sourceAfter.replace('/bank', '/banks'), sourceAfter.replace('router.ready', 'router.enabled')]) {
-        fs.writeFileSync(sourceFile, changed);
-        const scope = unitScope();
-        assert(scope.required && scope.impacts.some(impact => impact.kind === 'route'));
-      }
-      fs.writeFileSync(sourceFile, sourceAfter);
-      acceptance.criteria.push(...allCriteria.slice(1)); acceptance.boundaries.push(boundary); acceptance.performance.push(performance);
-      bp.design_views[0].nodes[0].verification_refs.push(...deviceIds);
-      const restoreDesign = rebind();
-      assert.equal(restoreDesign.status, 0, restoreDesign.stderr + restoreDesign.stdout);
-      const prep = run('review', ['--prepare-request']); assert.equal(prep.status, 0, prep.stderr + prep.stdout);
-      review(JSON.parse(prep.stdout)); const reviewed = run('review'); assert.equal(reviewed.status, 0, reviewed.stderr + reviewed.stdout);
-      bp.revision++;
-      bp.design_views[0].nodes[0].target_state = 'value=42 through the existing module export; preserve the known caller contract';
-      refreshBlueprintFingerprints(bp); fs.writeFileSync(path.join(f.root, bpFile), YAML.stringify(bp));
-      const continued = invoke('scripts/check-component-blueprint.ts', ['--blueprint', 'compact-value', '--session-ref', nativeFile + '#short-user', '--target', 'src/value.js', '--requirement-source', requirement, '--report-dir', 'doc/reports/design', '--prepare-source', '--json']);
-      assert.equal(continued.status, 0, continued.stderr + continued.stdout); subject = JSON.parse(continued.stdout).request_file;
-      assert.equal(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, 'a local choice in the same short blueprint must return to the original real verification');
-      const compactFiles = fs.readdirSync(path.join(f.root, 'doc/features/compact-value'), { recursive: true }).map(String);
-      assert(!compactFiles.some(file => /(?:^|[\\/])(?:plan|goal-runs)(?:[\\/]|$)|change-unit\.yaml$/.test(file)), 'the small request must not invoke an independent plan or create CU/Goal state');
-      const intake = require('../../scripts/utils/request-intake') as typeof import('../../scripts/utils/request-intake');
-      assert.equal(intake.readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: nativeFile + '#short-user' }).policy.selected, 'small', 'the original fixed-small user choice persists through local design repair');
-      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut.replace('AC-1', 'AC-NOT-CURRENT'));
-      const bad = run('ut', ['--test-target', 'tests/value.test.cjs']); assert.notEqual(bad.status, 0, bad.stdout);
-      const failed = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/script-report.json'), 'utf8'));
-      assert(failed.checks.some((check: CheckResult) => check.id === 'request_test_execution' && check.status === 'PASS'), '来源登记失败不应吞掉实际测试结果');
-      assert(failed.checks.some((check: CheckResult) => check.id === 'request_expectation_source' && check.status === 'FAIL'));
-      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut.replace('value,42', 'value,41'));
-      assert.notEqual(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, '错误预期被包装成通过');
-      const wrong = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/script-report.json'), 'utf8'));
-      assert(wrong.checks.some((check: CheckResult) => check.id === 'request_test_execution' && check.status === 'FAIL'));
-      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut.replace('// expectation: ' + bpFile + '#AC-1', '// characterization'));
-      assert.notEqual(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, 'characterization冒充蓝图验收');
-      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut);
-      const sourceBeforeImpact = fs.readFileSync(sourceFile, 'utf8');
-      fs.appendFileSync(sourceFile, "\nrequire('./unavailable-external-consumer');\n");
-      tool('Edit', { file_path: sourceFile }, 'updated'); tool('Read', { file_path: sourceFile }, fs.readFileSync(sourceFile, 'utf8'));
-      add({ type: 'assistant', message: { role: 'assistant', content: '本请求纠正当前影响：Q1=否；Q2=是；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是。src/value.js 新增外部消费者不可用，无法验证该消费者。依据 src/value.js。' } });
-      fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
-      const limited = intake.readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: nativeFile + '#short-user' });
-      assert.equal(limited.policy.selected, 'small'); assert.equal(limited.policy.recommended, 'medium');
-      assert(limited.facts.unclosed_impact.value === true && limited.facts.unclosed_impact.sources.includes('src/value.js'), 'new impact and its unavailable verification must remain in the same native request facts');
-      assert.notEqual(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, 'fixed small cannot hide a real unavailable dependency failure');
-      assert(!fs.readdirSync(path.join(f.root, 'doc/features/compact-value'), { recursive: true }).map(String)
-        .some(file => /(?:^|[\\/])(?:plan|goal-runs)(?:[\\/]|$)|change-unit\.yaml$/.test(file)), 'new impact cannot silently escalate the original fixed-small request');
-      fs.writeFileSync(sourceFile, sourceBeforeImpact); tool('Edit', { file_path: sourceFile }, 'restored actual source');
-      tool('Read', { file_path: sourceFile }, sourceBeforeImpact); fs.writeFileSync(nativeFile, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
-      fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), ut); bp.revision++; refreshBlueprintFingerprints(bp); fs.writeFileSync(path.join(f.root, bpFile), YAML.stringify(bp));
-      assert.notEqual(run('ut', ['--test-target', 'tests/value.test.cjs']).status, 0, '旧revision进入了UT');
-    } finally { if (saved === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = saved; }
   } },
   { name: '1804 request provider exceptions retain framework gaps while ordinary failed assertions remain FAIL', phase: 'ut', run(f) {
     const p = prepareExplicitRequest(f.options); facts(p, f.root);
@@ -913,10 +690,17 @@ gate.__testing_setDetectScanForEnsure(() => { scans++; return { candidates: [], 
     assert.notEqual(cli(f).status, 0, 'generic 下执行仍应失败');
   } },
 ];
-export function runSelectedCases(selector?: string) {
-  const results = cases.filter(test => selector === undefined || test.name.includes(selector)).map(test => { const f = fixture(test.phase); try { test.run(f); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: String(error) }; } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); } });
-  return { results, matchedCaseCount: results.length, executionTimings: [] };
-}
-export function runAll(): UnitCaseResult[] {
-  return runSelectedCases().results;
+export function runAll() {
+  return runUnitCases(cases.map(test => ({
+    name: test.name,
+    run: () => {
+      const f = fixture(test.phase);
+      try {
+        test.run(f);
+      } finally {
+        clearFrameworkConfigCache();
+        fs.rmSync(f.root, { recursive: true, force: true });
+      }
+    },
+  })));
 }

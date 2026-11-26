@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // goal-monitor-stale.unit.test.ts — monitor stale 误报的 replay fixture
 // （plan d6b1a8e3 t2；依赖 t5 的统一 disposition 状态面）
@@ -163,11 +164,13 @@ const cases: TestCase[] = [
 
 export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
   return cases.map((testCase) => {
+    const endUnitCase = beginUnitCase(testCase.name);
+    if (!endUnitCase) return discoveryResult(testCase.name);
     try {
       testCase.run();
       return { name: testCase.name, ok: true };
     } catch (error) {
       return { name: testCase.name, ok: false, error: (error as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

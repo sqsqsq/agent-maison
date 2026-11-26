@@ -1,3 +1,5 @@
+import { testCliArgs } from '../utils/test-cli-args';
+import { beginUnitCase } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -5,7 +7,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import { fixture, facts, review } from './request-entry.unit.test';
 import { resolveDeliveryPolicy, readScopeUserControlSource, type DeliveryFacts } from '../../scripts/utils/execution-scope';
 import { readRequestIntake, requestStartFromReflog } from '../../scripts/utils/request-intake';
-import { automaticRequestChecks, prepareAutomaticRequest, prepareDesignRequest } from '../../scripts/utils/automatic-request';
+import { automaticRequestChecks, prepareAutomaticRequest, prepareDesignRequest, retainRequestFailures } from '../../scripts/utils/automatic-request';
 import { prepareExplicitRequest } from '../../scripts/utils/capability-resolution-entry-input';
 import { deriveContentImpact } from '../../scripts/utils/content-impact';
 import { extractExportSurface } from '../../scripts/utils/export-surface';
@@ -56,7 +58,7 @@ function setup(f: ReturnType<typeof fixture>, dirty = false) {
   return { file, ref: `${file}#user-1`, rows, add, tool, flush, head };
 }
 function cli(f: ReturnType<typeof fixture>, args: string[]) {
-  return spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/harness-runner.ts'), '--project-root', f.root, '--framework-root', f.framework, ...args], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 90000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } });
+  return spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/harness-runner.ts')), '--project-root', f.root, '--framework-root', f.framework, ...args], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 90000, env: { ...process.env, TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json') } });
 }
 function installNodeCompiler(f: ReturnType<typeof fixture>): void {
   fs.writeFileSync(path.join(f.framework, 'profiles/request-test/harness/coding-host-rules.js'), `
@@ -65,7 +67,7 @@ exports.profileCodingHost={sourceFileSuffixes:['.js'],runStructureChecks:()=>[],
 compileProject(ctx){const run=cp.spawnSync(process.execPath,['--check',path.join(ctx.projectRoot,'src/value.js')],{encoding:'utf8'});fs.writeFileSync(path.join(ctx.reportDir,'node-check.log'),run.stdout+run.stderr);return{checks:[{id:'coding_compile',category:'structure',severity:'BLOCKER',status:run.status===0?'PASS':'FAIL',description:'Node syntax',details:run.stdout+run.stderr}],execution:{executed:true,exitCode:run.status,command:'node --check src/value.js'}}}};`);
 }
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
-  { name: 'Review discloses unrelated initial dirt and keeps explicit target and full diff attribution gaps', run(f) {
+  { name: 'Review rejects initial dirt bound by acceptance and intake retains explicit target and full diff attribution gaps', run(f) {
     const file = 'src/format.js', absolute = path.join(f.root, file);
     fs.writeFileSync(absolute, 'exports.format = 0;\n');
     const s = setup(f);
@@ -73,43 +75,36 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     status.message.content[0].content = ` M ${file}\n`;
     fs.writeFileSync(absolute, 'exports.format = 1;\n');
     s.flush();
-    function runReview(name: string, targets: string[], acceptance?: string) {
-      const generated = prepareAutomaticRequest(f.root, f.framework, { phase: 'review', 'session-ref': s.ref, target: targets, 'report-dir': `doc/reports/${name}` });
-      if (acceptance) {
-        const request = path.join(f.root, generated.requestFile), raw = JSON.parse(fs.readFileSync(request, 'utf8'));
-        raw.inputs.acceptance = acceptance;
-        fs.writeFileSync(request, JSON.stringify(raw));
-      }
-      const prepared = prepareExplicitRequest({ projectRoot: f.root, frameworkRoot: f.framework, phase: 'review', ...generated });
-      review(prepared);
-      if (targets.includes(file)) {
-        const report = prepared.inputs.review_report;
-        fs.writeFileSync(report, fs.readFileSync(report, 'utf8').replace('src/value.js\n', `src/value.js\n${file}\n`));
-      }
-      const result = cli(f, ['--phase', 'review', '--request-file', generated.requestFile, '--report-dir', generated.reportDir]);
-      const report = JSON.parse(fs.readFileSync(path.join(prepared.reportDir, 'script-report.json'), 'utf8')) as { checks: Array<{ id: string; details: string; status: string }> };
-      return { result, report, inputGap: report.checks.find(check => check.id === 'request_input_unresolved') };
-    }
-    const local = runReview('review-local', ['src/value.js']);
-    assert.equal(local.result.status, 0, local.result.stderr + JSON.stringify(local.report.checks));
-    assert.equal(local.inputGap, undefined);
-    assert(local.report.checks.some(check => check.id === 'request_intake_reconciliation' && check.status === 'WARN' && check.details.includes(file)));
-    const explicit = runReview('review-target', ['src/value.js', file]);
-    assert.equal(explicit.result.status, 1);
-    assert.match(explicit.inputGap?.details ?? '', /src\/format\.js.*缺少可信写前/);
+    const openIntake = (explicitTargets: string[]) => readRequestIntake({
+      projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref, explicitTargets,
+    });
+    assert(openIntake(['src/value.js', file]).attribution_unknown.includes(file));
+
     const acceptance = 'doc/acceptance-source.yaml';
     fs.writeFileSync(path.join(f.root, acceptance), JSON.stringify({ feature: 'value', source: 'native user', version: '1',
       criteria: [{ id: 'AC-1', prd_function: null, priority: 'P0', description: '保持用户可见格式', testable: true, verification_steps: ['检查格式'],
         expected_result: '保留已核格式', ut_layer: 'device', device_focus: '显示格式', requirement_ref: { source_path: file, snippet: 'exports.format = 1;' } }], boundaries: [] }));
-    const bound = runReview('review-acceptance', ['src/value.js'], acceptance);
-    assert.equal(bound.result.status, 1, bound.result.stderr + JSON.stringify(bound.report.checks));
-    assert.match(bound.inputGap?.details ?? '', /src\/format\.js.*缺少可信写前/);
+    const generated = prepareAutomaticRequest(f.root, f.framework, {
+      phase: 'review', 'session-ref': s.ref, target: ['src/value.js'], 'report-dir': 'doc/reports/review-acceptance',
+    });
+    const request = path.join(f.root, generated.requestFile);
+    const raw = JSON.parse(fs.readFileSync(request, 'utf8'));
+    raw.inputs.acceptance = acceptance;
+    fs.writeFileSync(request, JSON.stringify(raw));
+    const prepared = prepareExplicitRequest({ projectRoot: f.root, frameworkRoot: f.framework, phase: 'review', ...generated });
+    review(prepared);
+    const result = cli(f, ['--phase', 'review', '--request-file', generated.requestFile, '--report-dir', generated.reportDir]);
+    const report = JSON.parse(fs.readFileSync(path.join(prepared.reportDir, 'script-report.json'), 'utf8')) as { checks: Array<{ id: string; details: string; status: string }> };
+    const inputGap = report.checks.find(check => check.id === 'request_input_unresolved');
+    assert.equal(result.status, 1, result.stderr + JSON.stringify(report.checks));
+    assert.match(inputGap?.details ?? '', /src\/format\.js.*缺少可信写前/);
+
     s.add({ type: 'user', uuid: 'review-full-user', message: { role: 'user', content: '本次要求核清完整 diff 归属。' } });
     s.add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务，原始user消息定位 user-1，本请求仍核验 value。' } });
     s.flush();
-    const full = runReview('review-full', ['src/value.js']);
-    assert.equal(full.result.status, 1);
-    assert.match(full.inputGap?.details ?? '', /src\/format\.js.*缺少可信写前/);
+    const full = openIntake(['src/value.js']);
+    assert.equal(full.control.full_diff_attribution, true);
+    assert.match(full.attribution_disclosures?.find(item => item.path === file)?.reason ?? '', /缺少可信写前/);
   } },
   { name: 'Dirty shell attribution follows exact before bytes, exposes unbound paths, and ignores unchanged preimages', run(f) {
     const file = 'src/format.js', absolute = path.join(f.root, file);
@@ -489,7 +484,7 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     const before = snapshot();
     for (const [script, flags] of [['goal-mode-entry', ['--prepare-scope', '--completion-target', 'feature', '--requested-results', options.requirement, '--requested-phases', 'spec,plan,coding,review,ut,testing']],
       ['goal-runner', ['--dry-run']], ['goal-runner', ['--dry-run', '--detach']]] as Array<[string, string[]]>) {
-      const result = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts', script + '.ts'),
+      const result = spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/scripts', script + '.ts')),
         '--project-root', f.root, '--framework-root', repo, '--feature', options.feature, '--adapter', 'codex', '--requirement', options.requirement, '--session-ref', s.ref, ...flags],
       { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000, windowsHide: true });
       assert.equal(result.status, 0, result.stdout + result.stderr); const output = JSON.parse(result.stdout);
@@ -714,7 +709,7 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     assert.equal(designDeliveryNextStep(options)?.type, 'design_preparation_required', '已有受管初始run保留设计投影，不能被自动trivial抢占');
     const declaration = featureTrackDeclPath(f.root, options.feature);
     const before = fs.existsSync(declaration) ? fs.readFileSync(declaration) : undefined;
-    const prepared = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts/goal-mode-entry.ts'),
+    const prepared = spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/scripts/goal-mode-entry.ts')),
       '--project-root', f.root, '--framework-root', repo, '--prepare-scope', '--feature', options.feature,
       '--completion-target', 'feature', '--requested-results', options.requirement, '--requested-phases', 'spec,plan,coding,review,ut,testing',
       '--requirement', options.requirement, '--session-ref', s.ref], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000 });
@@ -732,7 +727,7 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     assert(noDevice.some(item => item.kind === 'route' && item.excluded_by_user));
     assert(noDevice.some(item => item.kind === 'behavior' && !item.excluded_by_user));
     installNodeCompiler(f);
-    const compileCli = () => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts/compile.ts'), '--project-root', f.root, '--session-ref', s.ref, '--target', 'src/routes.json', '--json'], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000 });
+    const compileCli = () => spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/scripts/compile.ts')), '--project-root', f.root, '--session-ref', s.ref, '--target', 'src/routes.json', '--json'], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000 });
     s.add({ type: 'user', uuid: 'no-ut', message: { role: 'user', content: '本请求不跑UT' } });
     s.add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务，原始user消息 user-1，保留其余验证。' } }); s.flush();
     const routed = compileCli(); assert.equal(routed.status, 0, routed.stdout + routed.stderr);
@@ -791,41 +786,59 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     assert(!deriveContentImpact(f.root, { ...intake, targets: ['src/value.js'] }).length);
   } },
   { name: 'A6 actual automatic UT CLI consumes generated request, native source and original expectation file', run(f) {
-    const caller = path.join(f.root, 'src/caller.js');
+    const caller = path.join(f.root, 'src/caller.js'), testFile = 'tests/value.test.cjs';
     fs.writeFileSync(caller, "exports.value = require('./value').oldValue;\n");
     const s = setup(f);
-    (s.rows[0] as { message: { content: string } }).message.content = '本请求修复 src/value.js 的 value=42，并按已定 value 接口修复仓内漏改调用方 src/caller.js，运行针对性UT。';
-    s.tool('Read', { file_path: caller }, fs.readFileSync(caller, 'utf8')); s.flush();
-    const args = ['--phase', 'ut', '--session-ref', s.ref, '--target', 'src/value.js', '--target', 'src/caller.js', '--test-target', 'tests/value.test.cjs', '--prepare-request'];
-    const prepare = cli(f, args); assert.equal(prepare.status, 0, prepare.stderr + prepare.stdout);
-    const output = JSON.parse(prepare.stdout); assert(output.requestFile.endsWith('request.json')); assert(!output.intake_context.gaps.length, JSON.stringify(output.intake_context));
-    const requestPath = path.relative(f.root, output.requestFile).replace(/\\/g, '/');
-    fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), `const test=require('node:test'),assert=require('node:assert/strict');\n// expectation: ${requestPath}\ntest('value equals requested 42 through its existing caller',()=>assert.equal(require('../src/caller.js').value,42));\n`);
-    s.tool('Write', { file_path: path.join(f.root, 'tests/value.test.cjs') }, 'File written');
-    s.tool('Read', { file_path: path.join(f.root, 'tests/value.test.cjs') }, fs.readFileSync(path.join(f.root, 'tests/value.test.cjs'), 'utf8')); s.flush();
-    assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref }).policy.selected, 'trivial');
-    const missed = cli(f, [...args.slice(0, -1), '--allow-test-write', 'tests/value.test.cjs']);
-    assert.equal(missed.status, 1, 'the real request must retain the missed caller failure');
+    const user = (s.rows[0] as { message: { content: string } }).message;
+    user.content = '本请求修复 src/value.js 的 value=42，并按已定 value 接口修复仓内漏改调用方 src/caller.js，运行针对性UT。';
+    s.tool('Read', { file_path: caller }, fs.readFileSync(caller, 'utf8'));
+    s.flush();
+
+    const generated = prepareAutomaticRequest(f.root, f.framework, {
+      phase: 'ut', 'session-ref': s.ref, target: ['src/value.js', 'src/caller.js'],
+      'test-target': testFile, 'allow-test-write': testFile,
+    });
+    const original = JSON.parse(fs.readFileSync(path.join(f.root, generated.requestFile), 'utf8'));
+    assert.equal(original.requested_result, user.content);
+    assert.deepEqual(original.intake_context.gaps, []);
+    assert.equal(original.intake_context.policy.selected, 'trivial');
+
+    const testPath = path.join(f.root, testFile);
+    fs.writeFileSync(testPath, [
+      "const test=require('node:test'),assert=require('node:assert/strict');",
+      '// expectation: ' + generated.requestFile,
+      "test('value equals requested 42 through its existing caller',()=>assert.equal(require('../src/caller.js').value,42));",
+      '',
+    ].join('\n'));
+    s.tool('Write', { file_path: testPath }, 'File written');
+    s.tool('Read', { file_path: testPath }, fs.readFileSync(testPath, 'utf8'));
     fs.writeFileSync(caller, "exports.value = require('./value').value;\n");
     s.tool('Edit', { file_path: caller, old_string: '.oldValue', new_string: '.value' }, 'updated');
-    s.tool('Read', { file_path: caller }, fs.readFileSync(caller, 'utf8')); s.flush();
-    const result = cli(f, [...args.slice(0, -1), '--allow-test-write', 'tests/value.test.cjs']);
+    s.tool('Read', { file_path: caller }, fs.readFileSync(caller, 'utf8'));
+    s.flush();
+
+    const result = cli(f, ['--phase', 'ut', '--request-file', generated.requestFile, '--report-dir', generated.reportDir]);
     assert.equal(result.status, 0, result.stderr + result.stdout);
-    const report = JSON.parse(fs.readFileSync(path.join(output.reportDir, 'script-report.json'), 'utf8'));
+    const reportDir = path.join(f.root, generated.reportDir);
+    const report = JSON.parse(fs.readFileSync(path.join(reportDir, 'script-report.json'), 'utf8')) as {
+      requested_result: string;
+      summary: { verdict: string };
+      checks: Array<{ id: string; status: string; details: string; structured?: { expectation_classes?: Array<{ file: string; ref?: string; ref_kind?: string; ref_sha256?: string }> } }>;
+    };
     assert.equal(report.summary.verdict, 'PASS', JSON.stringify(report.checks));
-    assert(report.checks.some((check: { id: string; status: string }) => check.id === 'request_test_execution' && check.status === 'PASS'));
-    assert(report.checks.some((check: { id: string; status: string }) => check.id === 'request_expectation_source' && check.status === 'PASS'));
-    assert(!fs.existsSync(path.join(f.root, 'doc/features/user-1')));
+    assert.equal(report.requested_result, user.content);
+    const execution = report.checks.find(check => check.id === 'request_test_execution');
+    assert(execution?.status === 'PASS');
+    assert.match(execution.details, /total=1, failed=0/);
+    const expectation = report.checks.find(check => check.id === 'request_expectation_source');
+    assert(expectation?.status === 'PASS');
+    const sources = expectation.structured?.expectation_classes;
+    assert(sources && sources.length === 1);
+    assert.equal(sources[0].file, testFile);
+    assert.equal(sources[0].ref_kind, 'path');
+    assert.equal(sources[0].ref, generated.requestFile);
+    assert.match(sources[0].ref_sha256 ?? '', /^[a-f0-9]{64}$/);
     assert.deepEqual(fs.readdirSync(path.join(f.root, 'doc/features')), ['live'], 'the direct request cannot create a blueprint, plan, CU or Goal');
-    const generated = JSON.parse(fs.readFileSync(output.requestFile, 'utf8')); assert.equal(generated.intake_context.user.text, report.requested_result ?? generated.requested_result);
-    const testFile = path.join(f.root, 'tests/value.test.cjs');
-    const valid = fs.readFileSync(testFile, 'utf8');
-    fs.writeFileSync(testFile, valid.replace('.value,42)', '.value,43)'));
-    const failed = cli(f, [...args.slice(0, -1), '--allow-test-write', 'tests/value.test.cjs']); assert.equal(failed.status, 1, failed.stdout);
-    assert.equal(JSON.parse(fs.readFileSync(path.join(output.reportDir, 'summary.json'), 'utf8')).verdict, 'FAIL');
-    fs.writeFileSync(testFile, valid);
-    const repaired = cli(f, [...args.slice(0, -1), '--allow-test-write', 'tests/value.test.cjs']); assert.equal(repaired.status, 0, repaired.stdout + repaired.stderr);
-    assert(fs.readdirSync(output.reportDir).filter(file => /^summary\.[a-f0-9]+\.json$/.test(file)).some(file => JSON.parse(fs.readFileSync(path.join(output.reportDir, file), 'utf8')).verdict === 'FAIL'), '真实FAIL原件必须保留，不能被同request的返修覆盖');
   } },
   { name: 'A6 automatic writer preserves original selection, report failures and blocks forged baseline/source', run(f) {
     const s = setup(f);
@@ -834,6 +847,16 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     const raw = JSON.parse(fs.readFileSync(p.requestFile, 'utf8'));
     raw.intake_context.user.text = 'forged'; fs.writeFileSync(p.requestFile, JSON.stringify(raw));
     assert.throws(() => prepareExplicitRequest({ projectRoot: f.root, frameworkRoot: f.framework, phase: 'review', ...generated }), /原文/);
+
+    const summaryPath = path.join(p.reportDir, 'summary.json');
+    const priorFailure = Buffer.from('{"verdict":"FAIL"}\n');
+    fs.writeFileSync(summaryPath, priorFailure);
+    retainRequestFailures(p.reportDir);
+    const archives = fs.readdirSync(p.reportDir).filter(file => /^summary\.[a-f0-9]{64}\.json$/.test(file));
+    assert.equal(archives.length, 1);
+    fs.writeFileSync(summaryPath, '{"verdict":"PASS"}\n');
+    retainRequestFailures(p.reportDir);
+    assert(fs.readFileSync(path.join(p.reportDir, archives[0])).equals(priorFailure), 'a subsequent PASS must keep the original FAIL bytes');
   } },
   { name: 'A6 compile really executes Node syntax checking and direct architecture uses original layer predicate', run(f) {
     const s = setup(f);
@@ -849,7 +872,7 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     assert.equal(architecture.execution?.executed, false);
     assert(architecture.checks.some(check => check.id === 'layer_compliance' && check.status === 'FAIL'), JSON.stringify(architecture.checks));
     fs.writeFileSync(path.join(f.root, 'src/probe.txt'), 'plain text');
-    const empty = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts/compile.ts'), '--project-root', f.root, '--architecture-only', '--target', 'src/probe.txt', '--json'], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000 });
+    const empty = spawnSync(process.execPath, [...testCliArgs(path.join(repo, 'harness/scripts/compile.ts')), '--project-root', f.root, '--architecture-only', '--target', 'src/probe.txt', '--json'], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000 });
     assert.equal(empty.status, 1, empty.stdout + empty.stderr); assert.equal(JSON.parse(empty.stdout).executed, false);
   } },
   { name: 'A8 missing native source still executes explicit local tests without claiming a complete request PASS', run(f) {
@@ -865,6 +888,8 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const test of cases) {
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) continue;
     const f = fixture('ut');
     const envKeys = ['CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_SESSION_ID', 'CODEAGENT3_CONFIG_DIR', 'CODEX_HOME', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'DSH_HOME', 'DSH_SESSION_ID', 'OPENCODE_PID', 'MAISON_OPENCODE_SESSION_ID', 'MAISON_OPENCODE_CALL_ID'] as const;
     const previousEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
@@ -872,7 +897,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     for (const key of ['CLAUDE_CODE_SESSION_ID', 'CODEX_THREAD_ID', 'CODEX_SESSION_ID', 'DSH_SESSION_ID', 'OPENCODE_PID', 'MAISON_OPENCODE_SESSION_ID', 'MAISON_OPENCODE_CALL_ID']) delete process.env[key];
     try { clearFrameworkConfigCache(); await test.run(f); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack }); }
-    finally { for (const key of envKeys) { if (previousEnv[key] === undefined) delete process.env[key]; else process.env[key] = previousEnv[key]; } fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    finally { for (const key of envKeys) { if (previousEnv[key] === undefined) delete process.env[key]; else process.env[key] = previousEnv[key]; } fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache();  endUnitCase(); }
   }
   return results;
 }

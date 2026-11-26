@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // goal-canary-hard-cli-d7f3a9c4.unit.test.ts — plan d7f3a9c4 t4
 // 金丝雀 CLI 硬失败前置 BLOCKER（child spawn race / CLI/config 参数不兼容）
@@ -22,13 +23,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import type { UnitCaseResult } from '../run-unit';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type SelectedUnitCases, type UnitExecutionTiming } from '../utils/unit-case-selection';
-import {
-  resolveCanaryHardCliFailure,
-  resolveInvokeHardCliFailure,
-  resolveCanaryCacheDecision,
-  VISION_CANARY_PROBE_VERSION,
-} from '../../scripts/utils/vision-canary';
+import { resolveCanaryHardCliFailure, resolveInvokeHardCliFailure, VISION_CANARY_PROBE_VERSION } from '../../scripts/utils/vision-canary';
 import {
   decideVisionCanaryProbe,
   runVisionCanaryProbe,
@@ -53,10 +48,10 @@ import {
 } from '../../scripts/goal-runner';
 import { loadAuthoritativeEvents, resolveResumedBudget } from '../../scripts/utils/goal-runner-phase';
 import * as goalRunnerMod from '../../scripts/goal-runner';
-import { setupMinimalHost } from '../helpers/goal-run-driver';
+import { setupMinimalHost } from '../utils/existing-goal-delivery-fixture';
 import { inferRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache } from '../../config';
-import { withRuntimeTest, preserveRuntimeTestEvidence } from '../utils/runtime-test-control';
+import { withRuntimeTest } from '../utils/runtime-test-control';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 
@@ -905,20 +900,8 @@ function modelHost(feature: string, approved: string[] | undefined, ui: boolean)
   return root;
 }
 
-/** 最近一条 run_end 连同它的会话起点一起往前平移（只为过恢复冷却，不改该段时长）。 */
-function shiftLastRunEnd(reportDir: string, byMs: number): void {
-  const p = path.join(reportDir, 'events.jsonl');
-  const events = readEvents(reportDir);
-  const i = events.map(e => e.type).lastIndexOf('run_end');
-  const shift = (v: unknown): string => new Date(Date.parse(String(v)) - byMs).toISOString();
-  events[i].ts = shift(events[i].ts);
-  if (typeof events[i].session_started_at === 'string') events[i].session_started_at = shift(events[i].session_started_at);
-  fs.writeFileSync(p, events.map(e => JSON.stringify(e)).join('\n') + '\n', 'utf-8');
-}
-
 const UNSUPPORTED = (): Record<string, unknown> => codexTurnFailedInvoke(HOST_400_MESSAGE, 400, 'invalid_request_error');
 const REQ_ARGS = (req: string): string[] => ['--requirement', req, '--start', 'spec', '--end', 'spec', '--force'];
-const NON_UI_REQ = '整理后端对账脚本的日志格式。';
 
 /** 回拨一个已结束 run 的会话：活跃时长 = consumedMs，run_end 早于现在 10 分钟（过恢复冷却）。 */
 function backdateSession(reportDir: string, consumedMs: number): void {
@@ -1049,22 +1032,20 @@ cases.push(
   },
 );
 
-export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
+export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
-  const timings: UnitExecutionTiming[] = [];
-  for (const c of cases.filter(c => matchesUnitCase(c.name, selector))) {
-    const endTiming = startCaseTiming([c.name], timings);
+  for (const c of cases) {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       await c.run();
       results.push({ name: c.name, ok: true });
     } catch (e) {
       results.push({ name: c.name, ok: false, error: (e as Error).message });
-    } finally { endTiming(); }
+    } finally {  endUnitCase(); }
   }
-  return selectedUnitCases(results, selector, timings);
+  return results;
 }
-
-export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
 
 if (require.main === module) {
   void runAll().then((results) => {

@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 /**
  * P0-9 判定持久化单测（plan e7a91b3c）：
  *   病灶＝mergeCapturedScreenEntry 以像素恒等作证据新鲜度键——真机状态栏时钟/轮播必漂移，
@@ -319,14 +320,5 @@ test('p0_9a_build_fingerprint_source_rules', () => {
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // ui-spec.unit.test.ts — ui-spec 结构守门 + CIEDE2000 回归
 // ============================================================================
@@ -117,12 +118,14 @@ function mkProject(): string {
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   const run = (name: string, fn: () => void) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       fn();
       results.push({ name, ok: true });
     } catch (e) {
       results.push({ name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   };
 
   run('ui_spec_missing_warn_when_reachable', () => {

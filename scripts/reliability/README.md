@@ -24,7 +24,7 @@ node scripts/reliability-metrics.mjs --project <工程根> --feature <feature id
 # 只有若干 run 目录（每个目录含 events.jsonl 与 manifest.json）
 node scripts/reliability-metrics.mjs --runs-dir <目录> [--runs <id,id>] [--observations <json>]
 
-# 场景套件的实测结果
+# 历史场景套件的实测结果
 node scripts/reliability-metrics.mjs --scenario-results <json> --format md
 ```
 
@@ -35,7 +35,7 @@ node scripts/reliability-metrics.mjs --scenario-results <json> --format md
 | `--runs-dir` | 直接给 run 目录的父目录。只有 events 与 manifest，记录与当前义务标"无法评估" |
 | `--runs` | 逗号分隔的 run id。给了就把这些 run 合成一个任务；不给则按交付周期内的 supersede 血缘自动分组 |
 | `--observations` | 一份观察记录（JSON）。不给时所有任务的操作者动作都是"未知" |
-| `--scenario-results` | 一份场景套件结果文件（见第 3 节） |
+| `--scenario-results` | 一份历史场景套件结果文件（见第 3 节） |
 | `--format` | `json`（默认）或 `md` |
 
 读表时注意：
@@ -93,23 +93,9 @@ plan c3f8a2d7 对同一轮的 §5 观察成本追加在同一文件的 `plan_c3f
 plan 8d4e6a21 的 10-08 授权 provider 切换事故追加为 `plan_8d4e6a21_metrics`：两次零 executor gate、约 40 秒与一次假停机；不重复计算 c3f8a2d7 成本，自动回放与真实宿主 H1 分开登记。
 2026-10-09 的完整候选验证与旧证据只读回放追加在同键的 `candidate_validation_20261009`：一次 candidate:build 全绿、实测 121.62 分钟、同一 zip 身份与 consumer smoke 已核；真实宿主旧证据 fresh 只证明读取兼容，H1 仍 pending，未集成宿主或续跑原 run。
 
-## 3. 确定性层：场景套件
+## 3. 确定性场景的历史结果
 
-十三个场景的确定性重放在 `harness/tests/unit/reliability-scenarios.unit.test.ts`，场景登记表在
-`harness/tests/fixtures/reliability-scenarios/registry.json`。套件是 release-only：日常 `npm test` 只检查文件存在；
-`release:all` 会执行它。整套约 10 分钟，本机需要 PATH 里有 `claude` CLI（S2 用）。
-
-单跑并出表（Git Bash）：
-
-```bash
-cd harness
-RELIABILITY_RESULTS_OUT=../dist/reliability-scenarios.json npm run test:unit -- --filter reliability-scenarios
-cd ..
-node scripts/reliability-metrics.mjs --scenario-results dist/reliability-scenarios.json --format md
-```
-
-PowerShell 下先 `$env:RELIABILITY_RESULTS_OUT = "..\dist\reliability-scenarios.json"` 再跑同一条 npm 命令。
-不设 `RELIABILITY_RESULTS_OUT` 时套件不写任何文件。结果文件每个分支一条任务，带 `scenario_meta.branch`。
+仓库已退役完整剧本重放。十三个场景仍可按既有场景登记表识别，过去运行产生的结果文件可用 `--scenario-results` 查看。宿主能否自主完成、发生的恢复与人工介入，按真实宿主任务的观察记录统计。
 
 ## 4. 真实 agent 层：旧包宿主执行程序（历史）
 

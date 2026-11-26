@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // ============================================================================
 // goal-canary-pin-binding-d7f3a9c4.unit.test.ts — plan d7f3a9c4 t3
 // pin 与金丝雀身份绑定 + telemetry 复用（warning-only）
@@ -859,16 +860,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }
 
 if (require.main === module) {

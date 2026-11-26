@@ -1,23 +1,6 @@
 #!/usr/bin/env node
-// candidate-release.mjs — candidate 发布模式（plan c4e8b1d3 Todo 4）
-//
-// candidate = **持久化 zip + sidecar manifest + zip sha256**（不是可变 staging 目录）。
-// 现状不能原样复用的三条已核实：--stage-only 只建目录无 zip/hash；正常 pack 打完 zip 即删
-// staging；release:all 第一步就是 check-plan-version --release（被在研 plan 拦截）且 verify
-// 通过立即 promote。
-//
-// 两个子命令：
-//   build   日常全集 + pack + 同 zip verify/smoke；正式全量与最终 plan 门禁留给 promote。
-//           产出持久化 candidate zip 到
-//           dist/candidates/，宿主装这个 zip（非可变目录）。
-//   promote 对**已有 zip**补最终发布门禁并移动**同一字节对象**到 dist/ 正式名——禁止
-//           重新 pack。前置：consumer golden evaluator 报告 verdict=PASS 且 manifest 绑定
-//           一致（evaluator 属于发布内容，随 candidate zip 运行）。发布 plan 门禁被其他
-//           在研 plan 拦截时：只标记 candidate eligible，**不绕过全局发布门禁**。
-//
-// 用法（仓库根）：
-//   node scripts/candidate-release.mjs build
-//   node scripts/candidate-release.mjs promote --evaluator-report <consumer-golden-report.json>
+// 候选构建先通过根全量，再打包并用同一 zip 校验及冒烟。
+// 晋升只核查原构建证据、同一 zip、consumer golden 和当前版本的发布 plan 门禁。
 import { spawnSync } from 'child_process';
 import crypto from 'crypto';
 import fs from 'fs';
@@ -61,42 +44,38 @@ function candidatePaths(version, root = REPO_ROOT) {
 }
 
 const npmCli = () => process.env.npm_execpath ?? path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
-const reportPath = (root, scope) => path.join(root, 'harness', 'reports', 'test-run', `${scope}.json`);
+const fullReportPath = root => path.join(root, 'harness', 'reports', 'test-run', 'full.json');
+const isSha256 = value => typeof value === 'string' && /^[0-9a-f]{64}$/.test(value);
 
-// 使用 runner 自己的 InputSnapshot 算法，不维护第二份输入排除或哈希规则。
 function readInputSnapshot(root, runCommand) {
-  const loader = path.join(root, 'harness', 'node_modules', 'ts-node', 'dist', 'bin.js');
-  const code = "process.stdout.write(JSON.stringify(require('./tests/utils/test-impact').snapshotTestInputs()))";
-  return JSON.parse(runCommand(process.execPath, [loader, '--transpile-only', '-e', code], path.join(root, 'harness'), { capture: true }));
+  const harness = path.join(root, 'harness');
+  const loader = path.join(harness, 'node_modules', 'ts-node', 'dist', 'bin.js');
+  const code = "process.stdout.write(JSON.stringify(require('./tests/utils/test-input-snapshot').snapshotTestInputs()))";
+  return JSON.parse(runCommand(process.execPath, [loader, '--transpile-only', '-e', code], harness, { capture: true }));
 }
 
-function readPassingRun(root, scope, snapshot, runCommand) {
-  const file = reportPath(root, scope);
-  const result = JSON.parse(fs.readFileSync(file, 'utf8'));
-  const selected = result.plan?.selected?.map(item => item.group.id);
-  const actual = result.groups;
-  if (result.scope !== scope || result.full !== (scope === 'full') || result.ok !== true
-    || result.inputSnapshot?.id !== snapshot.id || result.endingSnapshotId !== snapshot.id
-    || result.plan?.scope !== scope || result.plan?.full !== (scope === 'full')
-    || !Array.isArray(selected) || selected.length === 0 || !Array.isArray(result.plan?.reused) || result.plan.reused.length
-    || !Array.isArray(actual) || actual.length !== selected.length
-    || new Set(selected).size !== selected.length
-    || actual.some(group => !selected.includes(group.id) || group.ok !== true || group.status !== 'completed')
-    || new Set(actual.map(group => group.id)).size !== actual.length
-    || result.inputSnapshot?.head !== snapshot.head
-    || JSON.stringify(Object.entries(result.inputSnapshot?.files ?? {}).sort()) !== JSON.stringify(Object.entries(snapshot.files).sort())) {
-    throw new Error(`${scope} 测试证明无效：需要本次同一稳定输入、完整执行且通过的 ${scope} 结果（${file}）`);
+function hasPassingCounts(run) {
+  return run?.ok === true && Number.isSafeInteger(run.registered) && run.registered > 0
+    && run.executed === run.registered && run.passed === run.registered
+    && [run.failed, run.missed, run.skipped, run.timedOut, run.infrastructureFailed].every(count => count === 0);
+}
+
+function readPassingRun(file) {
+  let result;
+  try { result = JSON.parse(fs.readFileSync(file, 'utf8')); }
+  catch { throw new Error(`候选构建缺少本次根全量报告（${file}）`); }
+  if (!hasPassingCounts(result) || !isSha256(result.inputSnapshot?.id)
+    || result.endingSnapshot?.id !== result.inputSnapshot.id
+    || !result.inputSnapshot.files || !result.endingSnapshot.files) {
+    throw new Error(`根全量证明无效：需要本次完整通过且开始、结束输入一致的报告（${file}）`);
   }
-  if (scope === 'full') {
-    let state;
-    try { state = JSON.parse(fs.readFileSync(path.join(root, 'harness/reports/test-run/results.json'), 'utf8')); }
-    catch { throw new Error('正式全量缺少可读取的 results.json completeRun 通过事实，daily/changed 不能升级为 full'); }
-    if (state.completeRun?.snapshotId !== snapshot.id || state.completeRun?.ok !== true) {
-      throw new Error('正式全量缺少同一 InputSnapshot 的 completeRun 通过事实，daily/changed 不能升级为 full');
-    }
+  return result;
+}
+
+function assertSnapshotUnchanged(root, snapshot, phase, runCommand) {
+  if (readInputSnapshot(root, runCommand).id !== snapshot.id) {
+    throw new Error(`候选${phase}期间测试输入改变，需重新构建`);
   }
-  const branch = runCommand('git', ['branch', '--show-current'], root, { capture: true }).trim();
-  return { scope, snapshot_id: snapshot.id, source_root: root, source_commit: snapshot.head, source_branch: branch || '(detached)', result_path: file };
 }
 
 function assertReleaseInputs(snapshot, root, files) {
@@ -104,12 +83,11 @@ function assertReleaseInputs(snapshot, root, files) {
   if (missing.length) throw new Error(`发布源文件未被受测 InputSnapshot 覆盖：${missing.slice(0, 5).join(', ')}`);
 }
 
-function assertFrozenSource(root, snapshot, cand, zipSha, runCommand) {
-  if (readInputSnapshot(root, runCommand).id !== snapshot.id) throw new Error('正式测试后来源输入已改变，不得晋升');
-  if (sha256File(cand.zip) !== zipSha) throw new Error('正式测试期间 candidate zip 已改变，不得晋升');
+function assertZipUnchanged(file, zipSha) {
+  if (sha256File(file) !== zipSha) throw new Error('候选 zip 字节身份失配，需重新构建');
 }
 
-async function assertMatchingReleaseSource(root, cand, manifest, snapshot, runCommand) {
+async function assertMatchingReleaseSource(root, cand, manifest, runCommand) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-candidate-source-'));
   try {
     const extracted = path.join(tmp, 'candidate');
@@ -125,7 +103,9 @@ async function assertMatchingReleaseSource(root, cand, manifest, snapshot, runCo
     if (packaged.version !== manifest.version || source.version !== packaged.version || files(source) !== files(packaged)) {
       throw new Error('受测来源的实际发布集合与 candidate 不一致（含 sanitize/LF）；同 HEAD 不能替代内容一致，需回到候选构建');
     }
-    assertReleaseInputs(snapshot, root, source.files.map(entry => entry.path));
+    if (manifest.candidate.full_test.source_commit !== packaged.source_commit) {
+      throw new Error('候选构建的全量证明与包内源码身份不匹配，需重新构建');
+    }
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -147,16 +127,25 @@ export function buildCandidate({ root = REPO_ROOT, runCommand = run } = {}) {
   const stagedManifest = path.join(stagingDir, `framework-${version}.manifest.json`);
   const finalPaths = candidatePaths(version, root);
 
-  console.log(`[candidate] build version=${version}（日常全集；正式全量与发布 plan 门禁由 promote 补齐）`);
+  console.log(`[candidate] build version=${version}（根全量、打包和同 zip 校验及冒烟）`);
 
-  runCommand(process.execPath, [npmCli(), 'run', 'test:daily'], harness);
-  const testedSnapshot = readInputSnapshot(root, runCommand);
-  const daily = readPassingRun(root, 'daily', testedSnapshot, runCommand);
+  const reportPath = fullReportPath(root);
+  fs.rmSync(reportPath, { force: true });
+  runCommand(process.execPath, [npmCli(), 'test'], root);
+  const result = readPassingRun(reportPath);
+  const testedSnapshot = result.inputSnapshot;
+  assertSnapshotUnchanged(root, testedSnapshot, '全量结束至打包', runCommand);
+  if (readVersion(root) !== version) throw new Error('测试期间候选版本改变，需重新构建');
 
   // 2–4. pack → verify（跳过发布 plan 门禁）→ 持久化 candidate（staging 生命周期 try/finally 兜住）
   fs.rmSync(stagingDir, { recursive: true, force: true });
   try {
     runCommand(process.execPath, ['scripts/pack-release.mjs', '--out', stagingDir], root);
+    const manifest = JSON.parse(fs.readFileSync(stagedManifest, 'utf8'));
+    assertReleaseInputs(testedSnapshot, root, manifest.includedFiles);
+    const zipSha = manifest.sha256;
+    assertZipUnchanged(stagedZip, zipSha);
+
     runCommand(
       process.execPath,
       [
@@ -165,14 +154,8 @@ export function buildCandidate({ root = REPO_ROOT, runCommand = run } = {}) {
       ],
       root,
     );
-    if (readInputSnapshot(root, runCommand).id !== testedSnapshot.id) throw new Error('候选打包期间测试输入改变，需重新构建');
-
-    const manifest = JSON.parse(fs.readFileSync(stagedManifest, 'utf8'));
-    assertReleaseInputs(testedSnapshot, root, manifest.includedFiles);
-    const zipSha = sha256File(stagedZip);
-    if (zipSha !== manifest.sha256) {
-      throw new Error(`candidate zip sha 与 pack manifest 不一致：${zipSha} vs ${manifest.sha256}`);
-    }
+    assertZipUnchanged(stagedZip, zipSha);
+    assertSnapshotUnchanged(root, testedSnapshot, '打包与校验', runCommand);
     // 持久化：同一字节 zip 改名落 candidates/（rename 不改字节；sha 落 manifest 供 promote 验身份）
     fs.mkdirSync(candidatesDir(root), { recursive: true });
     for (const p of [finalPaths.zip, finalPaths.manifest]) {
@@ -185,9 +168,25 @@ export function buildCandidate({ root = REPO_ROOT, runCommand = run } = {}) {
       complete: false,
       built_at: new Date().toISOString(),
       zip_sha256: zipSha,
-      daily_test: daily,
-      skipped_gates: ['npm test (full)', 'check-plan-version --release'],
-      note: 'candidate 已通过日常全集；正式全量、最终发布 plan 门禁及 consumer golden PASS 后才可晋升同一字节 zip。请保留此受测来源，含未提交改动时仅 source_commit 无法还原。',
+      full_test: {
+        ok: result.ok,
+        registered: result.registered,
+        executed: result.executed,
+        passed: result.passed,
+        failed: result.failed,
+        missed: result.missed,
+        skipped: result.skipped,
+        timedOut: result.timedOut,
+        infrastructureFailed: result.infrastructureFailed,
+        snapshot_id: testedSnapshot.id,
+        ending_snapshot_id: result.endingSnapshot.id,
+        source_root: root,
+        source_commit: testedSnapshot.head,
+        zip_sha256: zipSha,
+        in_zip_manifest_sha256: manifest.inZipManifest.sha256,
+      },
+      skipped_gates: ['check-plan-version --release'],
+      note: '请保留候选来源及版本窗口直至发布；晋升核查构建全量、包身份、consumer golden 与发布 plan 门禁。',
     };
     fs.writeFileSync(finalPaths.manifest, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 
@@ -200,7 +199,8 @@ export function buildCandidate({ root = REPO_ROOT, runCommand = run } = {}) {
       ['scripts/smoke-consumer-lifecycle.mjs', '--zip', finalPaths.zip],
       root,
     );
-    if (readInputSnapshot(root, runCommand).id !== testedSnapshot.id) throw new Error('候选冒烟期间测试输入改变，需重新构建');
+    assertZipUnchanged(finalPaths.zip, zipSha);
+    assertSnapshotUnchanged(root, testedSnapshot, '冒烟', runCommand);
     manifest.candidate.complete = true;
     manifest.candidate.smoke_checked_at = new Date().toISOString();
     fs.writeFileSync(finalPaths.manifest, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
@@ -232,16 +232,20 @@ export function buildCandidate({ root = REPO_ROOT, runCommand = run } = {}) {
 
 /** @param {string[]} argv */
 export async function promoteCandidate(argv, { root = REPO_ROOT, runCommand = run } = {}) {
-  const sourceIdx = argv.indexOf('--source-root');
-  if (sourceIdx >= 0 && (!argv[sourceIdx + 1] || argv[sourceIdx + 1].startsWith('--'))) throw new Error('--source-root 需要候选对应的受测源目录');
-  const explicitSource = sourceIdx >= 0 ? path.resolve(argv[sourceIdx + 1]) : undefined;
-  // 主干可已进入下一版本；显式来源决定所晋升候选的版本。
+  const values = new Map();
+  for (let i = 0; i < argv.length; i += 2) {
+    const option = argv[i];
+    const value = argv[i + 1];
+    if (option !== '--evaluator-report' && option !== '--source-root') throw new Error(`不支持的晋升参数：${option}`);
+    if (!value || value.startsWith('--') || values.has(option)) throw new Error(`${option} 需要且只接受一个路径`);
+    values.set(option, path.resolve(value));
+  }
+  const rootForVersion = values.get('--source-root') ?? root;
   let version;
-  try { version = readVersion(explicitSource ?? root); }
-  catch { throw new Error('无法读取候选来源的 package.json；请指定保留的受测来源，来源缺失时需重新构建'); }
+  try { version = readVersion(rootForVersion); }
+  catch { throw new Error('无法读取候选来源的 package.json，请指定候选对应的来源目录'); }
   const cand = candidatePaths(version, root);
-  const evalIdx = argv.indexOf('--evaluator-report');
-  const evalReportPath = evalIdx >= 0 ? argv[evalIdx + 1] : undefined;
+  const evalReportPath = values.get('--evaluator-report');
 
   if (!fs.existsSync(cand.zip) || !fs.existsSync(cand.manifest)) {
     throw new Error(`无 candidate 产物：${cand.zip}（先跑 candidate build）`);
@@ -254,6 +258,13 @@ export async function promoteCandidate(argv, { root = REPO_ROOT, runCommand = ru
     throw new Error(
       `candidate zip 字节身份失配：盘上 ${zipSha.slice(0, 12)}… vs 记录 ${String(manifest.candidate?.zip_sha256).slice(0, 12)}…——不得 promote（如需重建请重跑 candidate build）`,
     );
+  }
+
+  const full = manifest.candidate.full_test;
+  if (!hasPassingCounts(full) || !isSha256(full.snapshot_id) || full.ending_snapshot_id !== full.snapshot_id
+    || full.zip_sha256 !== zipSha || !isSha256(full.in_zip_manifest_sha256)
+    || full.in_zip_manifest_sha256 !== manifest.inZipManifest?.sha256) {
+    throw new Error('候选缺少与此 zip 绑定的构建全量通过证明，需重新构建候选');
   }
 
   // ② consumer golden evaluator PASS（G3：evaluator PASS → promote 同一 candidate）
@@ -277,45 +288,28 @@ export async function promoteCandidate(argv, { root = REPO_ROOT, runCommand = ru
     );
   }
 
-  // ③ 正式全量只接受候选对应的相同输入；主干前进时可指定保留的隔离副本。
   let sourceRoot;
-  try { sourceRoot = fs.realpathSync(explicitSource ?? manifest.candidate?.daily_test?.source_root ?? root); }
-  catch { throw new Error('候选受测来源不存在；请用 --source-root 指定保留副本，脏候选无法仅由 source_commit 还原，来源缺失时需重新构建'); }
-  const expectedSnapshotId = manifest.candidate?.daily_test?.snapshot_id;
-  if (!expectedSnapshotId) throw new Error('candidate 缺少日常受测输入来源，需重新构建候选');
-  const snapshot = readInputSnapshot(sourceRoot, runCommand);
-  // dev-only plan/测试可继续变化；完整证明仍必须绑定本次来源的全部稳定输入。
-  // 发布文件则逐字节匹配候选，不能仅凭 daily 的 HEAD 或 source_commit 认定同源。
-  await assertMatchingReleaseSource(sourceRoot, cand, manifest, snapshot, runCommand);
-  assertFrozenSource(sourceRoot, snapshot, cand, zipSha, runCommand);
-  let full;
-  try { full = readPassingRun(sourceRoot, 'full', snapshot, runCommand); }
-  catch {
-    console.log('\n[candidate] promote：在匹配的受测来源补正式完整 npm test ...');
-    runCommand(process.execPath, [npmCli(), 'test'], path.join(sourceRoot, 'harness'));
-    full = readPassingRun(sourceRoot, 'full', snapshot, runCommand);
-  }
-  assertFrozenSource(sourceRoot, snapshot, cand, zipSha, runCommand);
-  manifest.candidate.full_test = { ...full, checked_at: new Date().toISOString() };
-  manifest.candidate.skipped_gates = ['check-plan-version --release'];
+  try { sourceRoot = fs.realpathSync(values.get('--source-root') ?? full.source_root); }
+  catch { throw new Error('候选来源不存在，请用 --source-root 指定对应版本及发布内容的来源目录'); }
+  await assertMatchingReleaseSource(sourceRoot, cand, manifest, runCommand);
+  assertZipUnchanged(cand.zip, zipSha);
 
-  // ④ 补最终发布 plan 门禁——只有正式全量已过才可标 eligible，不绕过门禁。
-  console.log('\n[candidate] promote：补跑 check-plan-version --release ...');
+  console.log('\n[candidate] promote：执行 check-plan-version --release ...');
   try {
     runCommand(process.execPath, ['scripts/check-plan-version.mjs', '--release'], sourceRoot);
   } catch (error) {
-    assertFrozenSource(sourceRoot, snapshot, cand, zipSha, runCommand);
+    assertZipUnchanged(cand.zip, zipSha);
     manifest.candidate.status = 'eligible';
     manifest.candidate.eligible_at = new Date().toISOString();
     manifest.candidate.eligible_note =
       `正式全量、consumer golden 与 zip 身份已过，但全局发布 plan 门禁未过：${error.message}；只标 eligible，待 plan 完结后重跑 promote。`;
     fs.writeFileSync(cand.manifest, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
-    console.error('\n[candidate] 发布 plan 门禁未过：candidate 标记为 **eligible**（不 promote，不绕过全局发布门禁）。');
+    console.error('\n[candidate] 发布 plan 门禁未过：candidate 保留 eligible。');
     throw new Error('发布 plan 门禁未过，candidate 保留 eligible');
   }
 
-  // ⑤ 移动同一字节对象到 dist/ 正式名（rename，不重新 pack）
-  assertFrozenSource(sourceRoot, snapshot, cand, zipSha, runCommand);
+  // 晋升移动原 zip，保持宿主验收过的字节。
+  assertZipUnchanged(cand.zip, zipSha);
   const distDir = path.join(root, 'dist');
   const finalZip = path.join(distDir, `framework-${version}.zip`);
   const finalManifest = path.join(distDir, `framework-${version}.manifest.json`);
@@ -342,7 +336,10 @@ const isMain = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPat
 if (isMain) {
   try {
     const sub = process.argv[2];
-    if (sub === 'build') buildCandidate();
+    if (sub === 'build') {
+      if (process.argv.length !== 3) throw new Error('candidate build 不接受参数');
+      buildCandidate();
+    }
     else if (sub === 'promote') await promoteCandidate(process.argv.slice(3));
     else {
       console.error('用法：node scripts/candidate-release.mjs <build|promote> [promote: --evaluator-report <path> --source-root <受测源目录>]');

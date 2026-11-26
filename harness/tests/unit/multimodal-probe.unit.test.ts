@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // multimodal-probe.unit.test.ts — M3 image_input 探测与 goal footgun
 
 import * as fs from 'fs';
@@ -395,16 +396,7 @@ export function runAll(): Promise<UnitCaseResult[]> {
 }
 
 async function runMultimodalProbeUnitTests(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }
 
 if (require.main === module) {

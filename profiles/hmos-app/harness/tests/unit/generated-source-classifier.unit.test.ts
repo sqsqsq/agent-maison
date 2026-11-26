@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../../../../../harness/tests/utils/unit-cases';
 // ============================================================================
 // generated-source-classifier.unit.test.ts — 构建生成物分类器（plan d9e4b7c1 T1）
 // ============================================================================
@@ -90,12 +91,14 @@ const MOD_REL = '04-BusinessBase/AccountManager/BuildProfile.ets';
 export function runAll(): UnitCaseResult[] {
   const cases: UnitCaseResult[] = [];
   const t = (name: string, fn: () => void): void => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       fn();
       cases.push({ name, ok: true });
     } catch (e) {
       cases.push({ name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   };
 
   t('宿主真实模板形态 → generated_legit', () => {

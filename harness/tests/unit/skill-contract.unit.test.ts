@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // skill-contract.unit.test.ts — capability contract parsing and static graph gate
 // ============================================================================
@@ -124,7 +125,6 @@ const cases: Case[] = [
   },
 ];
 
-
 cases.push({
   name: 'contract 1.1 schema and parser agree on obligation/base/enhancement and version boundaries',
   run: () => {
@@ -148,7 +148,9 @@ cases.push({
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((testCase) => {
+    const endUnitCase = beginUnitCase(testCase.name);
+    if (!endUnitCase) return discoveryResult(testCase.name);
     try { testCase.run(); return { name: testCase.name, ok: true }; }
-    catch (error) { return { name: testCase.name, ok: false, error: (error as Error).message }; }
+    catch (error) { return { name: testCase.name, ok: false, error: (error as Error).message }; } finally { endUnitCase(); }
   });
 }

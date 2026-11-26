@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // goal-runner-hardening.unit.test.ts — P0/P1/P2 guards, locks, budget, resume
 
 import * as fs from 'fs';
@@ -223,7 +224,6 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const mixed = resolveManifestDriftDecision({ ...dr, currentFields: { ...withBudget, budget: 'budget-c' } });
       assert(mixed.rebaseApplied && mixed.changedFields.includes('requirement'), '整体授权仍记录预算与真实需求的混合变化，不享有预算专用路径');
 
-
     },
   },
   {
@@ -438,16 +438,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }
 
 if (require.main === module) {

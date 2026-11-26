@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 /**
  * plan c7e2a9d4 T4 — contracts 统一解析边界的**跨消费者**交汇面。
  *
@@ -384,11 +385,13 @@ const cases: Case[] = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(testCase => {
+    const endUnitCase = beginUnitCase(testCase.name);
+    if (!endUnitCase) return discoveryResult(testCase.name);
     try {
       testCase.run();
       return { name: testCase.name, ok: true };
     } catch (error) {
       return { name: testCase.name, ok: false, error: (error as Error).stack ?? String(error) };
-    }
+    } finally { endUnitCase(); }
   });
 }

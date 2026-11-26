@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import { collectPhaseRepairCandidates } from '../../scripts/utils/repair-candidates';
 /**
  * testing-stepresult-evidence — native Hylyre v1 三重判据、P0 对账、静态 selector 契约
@@ -1567,11 +1568,13 @@ test('e9d49418: 非 UI 设备义务仍核计划断言；UI 文件缺失不降为
 
 export function runAll(): UnitCaseResult[] {
   return CASES.map(testCase => {
+    const endUnitCase = beginUnitCase(`testing-stepresult-evidence: ${testCase.name}`);
+    if (!endUnitCase) return discoveryResult(`testing-stepresult-evidence: ${testCase.name}`);
     try {
       testCase.run();
       return { name: `testing-stepresult-evidence: ${testCase.name}`, ok: true };
     } catch (error) {
       return { name: `testing-stepresult-evidence: ${testCase.name}`, ok: false, error: (error as Error).stack ?? (error as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

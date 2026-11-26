@@ -7,7 +7,7 @@
 // 造法由 plan §10.1 的 T0 实验钉死，**不得改回轻法**：
 //   N：Node 对模块路径做 realpath，junction 的 `framework/harness` 会被解开、
 //      子进程 `detectRepoLayout(__dirname)` 解析回源仓并往源仓写产物。故 harness
-//      必须**整拷**（`*.ts` + tsconfig* + package.json + 八个子目录及已安装依赖）。
+//      必须**整拷**框架源码和运行目录。只读已安装依赖可单独链接。
 //      `profiles/` 同样整拷——profile 侧模块用
 //      `createRequire('../../../harness/harness-runner.ts')`，junction 会让它们
 //      realpath 回源仓、与入口形成两套模块级状态。
@@ -21,6 +21,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { clearFrameworkConfigCache } from '../../config';
+import * as YAML from 'yaml';
+import { fixture as seedChangeUnitBlueprint } from '../unit/blueprint-skill-projection.unit.test';
+import { rewriteBlueprint } from '../unit/change-unit-progression.unit.test';
+import { asRecord, type BlueprintRecord } from '../../scripts/utils/component-blueprint-model';
+import { resolveBlueprintTarget } from '../../scripts/utils/blueprint-addressing';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
 
 export const SOURCE_REPO_ROOT = path.resolve(__dirname, '..', '..', '..');
@@ -56,7 +62,7 @@ export function git(root: string, args: string[]): void {
  * 在 `<hostRoot>/framework` 下 provision 一份可被真 harness 子进程使用的框架根。
  * 返回 harness 目录（子进程 cwd）。
  */
-export function provisionFrameworkUnder(hostRoot: string): { frameworkRoot: string; harnessDir: string } {
+export function provisionFrameworkUnder(hostRoot: string, { linkDependencies = false } = {}): { frameworkRoot: string; harnessDir: string } {
   const fw = path.join(hostRoot, 'framework');
   const harness = path.join(fw, 'harness');
   fs.mkdirSync(harness, { recursive: true });
@@ -69,7 +75,9 @@ export function provisionFrameworkUnder(hostRoot: string): { frameworkRoot: stri
   for (const d of ['scripts', 'schemas', 'templates', 'prompts', 'code-graph', 'graph-extractor', 'state', 'trace']) {
     copyDir(path.join(srcHarness, d), path.join(harness, d));
   }
-  copyDir(path.join(srcHarness, 'node_modules'), path.join(harness, 'node_modules'));
+  const dependencies = path.join(srcHarness, 'node_modules');
+  if (linkDependencies) link(dependencies, path.join(harness, 'node_modules'));
+  else copyDir(dependencies, path.join(harness, 'node_modules'));
   for (const d of ['skills', 'workflows', 'specs', 'templates', 'agents', 'docs']) {
     copyDir(path.join(SOURCE_REPO_ROOT, d), path.join(fw, d));
   }
@@ -240,10 +248,6 @@ export const REAL_CHAIN_PNG_EXISTING_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAE3RFWHRDb21tZW50ACRgICQnICQmICQkXdEAKQAAAAxJREFUeJxj+P//PwAF/gL+De9GuAAAAABJRU5ErkJggg==',
   'base64',
 );
-export const REAL_CHAIN_PNG_NEW_BYTES = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAE3RFWHRDb21tZW50ACRgICQnICQmICQkXdEAKQAAAAxJREFUeJxjYGBgAAAABAAB9hc4VQAAAABJRU5ErkJggg==',
-  'base64',
-);
 
 export function writeHostBytes(root: string, rel: string, bytes: Buffer): void {
   const abs = path.join(root, rel);
@@ -291,7 +295,6 @@ export function scaffoldRealChainHost(project: RealChainProject, adapter = 'code
   // 指向**源仓**，那里没有 `profiles/test-chain` → `profile-loader.ts:199-205` 静默回落
   // hmos-app，于是父进程 preflight 按 hmos-app 的 `personal_prerequisites` 要 DevEco。
   // 子进程（真 harness）在 provision 出来的框架根里正确解析 test-chain。
-  // 照 `goal-runner-testing-integrity.unit.test.ts:118-124` 先例给一个假工具链路径。
   const deveco = path.join(root, 'fake-deveco');
   const hvigorBin = path.join(deveco, 'tools', 'hvigor', 'bin',
     process.platform === 'win32' ? 'hvigorw.bat' : 'hvigorw');
@@ -460,3 +463,69 @@ export function provisionRealChainProject(): RealChainProject {
 //    上限：诊断须在 ut 同一轮内完成（agent 自跑 harness 后发布 verifier 报告）；报告留到下一轮才发布时，
 //    `no_progress_guard` 先于回退路由停机（watched 集=产品源码，UT 无权改），该形态未覆盖。
 // ============================================================================
+
+export const CU_SOURCE = 'src/ledger/LedgerFeature.ets';
+
+const EMPTY_LEDGER_TEST = "import { describe } from '@ohos/hypium';\n\ndescribe('LedgerFeature', () => {\n});\n";
+
+export const CU_TEST = 'src/ledger/src/ohosTest/ets/test/LedgerFeature.test.ets';
+
+export const CU_REQUIREMENT = '新增一笔账目后刷新账页并在重启后恢复余额';
+
+function seedCuBoundHost(project: RealChainProject) {
+  const f = seedChangeUnitBlueprint(project.root);
+  const configFile = path.join(project.root, 'framework.config.json');
+  const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+  // This isolated fixture keeps Ledger outside the other feature's inventory, but its
+  // source root is still declared so the existing invocation observer records real writes.
+  config.architecture.outer_layers.push({ id: 'src', can_depend_on: [], intra_layer_deps: 'dag' });
+  fs.writeFileSync(configFile, JSON.stringify(config, null, 2));
+  writeHostFile(project.root, 'doc/module-catalog.yaml', [
+    'schema_version: "1.0"', 'modules:',
+    ...[[project.module, `${project.modulePath}/index.ets`], ['ledger', '02-Feature/ledger/index.ets']].flatMap(([name, entry]) => [
+      `  - name: "${name}"`, '    layer: "02-Feature"', '    sub_layer: null', '    format: "HAR"', `    one_liner: "${name}"`,
+      '    responsibilities: []', '    NOT_responsible_for: []', '    typical_business_terms: []', '    easily_confused_with: []',
+      '    key_exports: []', `    entry_file: "${entry}"`,
+    ]),
+    '',
+  ].join('\n'));
+  clearFrameworkConfigCache();
+  rewriteBlueprint(project.root, bp => {
+    const unit = YAML.parse(fs.readFileSync(f.cuFile, 'utf-8'));
+    const node = asRecord(resolveBlueprintTarget(bp, unit.design_refs[0].target))!;
+    const contracts = JSON.parse(JSON.stringify(node.contracts)
+      .split('test/ledger/LedgerFeature.test.ets').join(CU_TEST).split('planned:').join('')) as BlueprintRecord;
+    contracts.modules = [{ name: 'ledger', layer: '02-Feature', format: 'HAR', change_type: 'modify', package_path: 'src/ledger' }];
+    contracts.files = [CU_SOURCE];
+    node.contracts = contracts;
+    for (const useCase of (node.use_cases as BlueprintRecord).use_cases as BlueprintRecord[]) {
+      useCase.coordinator = 'LedgerFeature.add';
+      useCase.ui_bindings = [{ ui: 'LedgerPage', role: 'entry', user_actions: [{ trigger: '点击新增账目', calls: 'LedgerFeature.add' }] }];
+    }
+  });
+  clearFrameworkConfigCache();
+  writeHostFile(project.root, CU_SOURCE, 'export class LedgerFeature {\n  balance(): number { return 0; }\n}\n');
+  writeHostFile(project.root, CU_TEST, EMPTY_LEDGER_TEST);
+  const cu: RealChainProject = { ...project, feature: f.feature, module: 'ledger', modulePath: 'src/ledger', runId: undefined };
+  const prepared = prepareFeatureScopeCandidate({
+    projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: cu.feature, completionTarget: 'feature',
+    requestedResults: ['账目刷新与恢复'], requestedPhases: ['plan', 'coding', 'review', 'ut'], requirement: CU_REQUIREMENT, overwrite: true,
+    impact: { userVisibleBehaviorChange: false, reason: '只改账本领域服务，不改任何界面', basisPaths: [CU_SOURCE] },
+  });
+  return { cu, birthChain: prepared.scope.phase_chain.map(String), birthScope: prepared.scope };
+}
+
+export const BLUEPRINT_ID = 'ledger-app-blueprint';
+
+export async function withFreshCuHost(run: (s: Pick<RealChainProject, 'root' | 'frameworkRoot' | 'harnessDir'>) => Promise<void>): Promise<void> {
+  const p = provisionRealChainProject();
+  try {
+    scaffoldRealChainHost(p); seedCuBoundHost(p);
+    git(p.root, ['add', '-A']); git(p.root, ['commit', '-qm', 'fresh CU request baseline']);
+    await run({ root: p.root, frameworkRoot: p.frameworkRoot, harnessDir: p.harnessDir });
+  } finally {
+    clearFrameworkConfigCache();
+    if (process.env.REAL_CHAIN_DEBUG === '1') console.log(`[fresh-cu-host] kept root ${p.root}`);
+    else fs.rmSync(p.root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+  }
+}

@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // adjudicated-repair-loop.unit.test.ts — M2 纯函数层（plan e2b7c4a9 t2.6）
 // ----------------------------------------------------------------------------
@@ -417,12 +418,14 @@ export function runAll(): UnitCaseResult[] {
   // 标准执行模式：逐条执行并捕获异常（不可只登记 ok:true——那是假 PASS）。
   // 必须位于**全部 run() 注册之后**——注册顺序即执行顺序。
   for (const c of cases) {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       c.run();
       results.push({ name: c.name, ok: true });
     } catch (err) {
       results.push({ name: c.name, ok: false, error: (err as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return results;
 }

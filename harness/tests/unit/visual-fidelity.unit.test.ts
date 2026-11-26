@@ -1,4 +1,4 @@
-import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // visual-fidelity.unit.test.ts — 视觉保真 review 修复回归
 // ============================================================================
@@ -186,7 +186,7 @@ function writeHeaderOnlyPng(outPath: string, w: number, h: number): void {
   fs.writeFileSync(outPath, Buffer.concat([sig, ihdr, iend]));
 }
 
-function executeCases(selector?: string): UnitCaseResult[] {
+function executeCases(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   // plan 07a41ec6 T10③：无 delegated 视觉 provider 时 region_attest / critic 回执类证明按 SKIP 处理。
   // 本套件校验的是这些证明在 **provider 在场** 时的判据，故整套声明一个测试 provider（名字刻意不与任何回执 adapter 相同）。
@@ -201,13 +201,14 @@ function executeCases(selector?: string): UnitCaseResult[] {
     else process.env[MAISON_GOAL_VISUAL_PROVIDER_MODEL_ENV] = prevProviderModel;
   };
   const run = (name: string, fn: () => void) => {
-    if (!matchesUnitCase(name, selector)) return;
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       fn();
       results.push({ name, ok: true });
     } catch (e) {
       results.push({ name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   };
 
   run('gate_collect_x_markers', () => {
@@ -6428,4 +6429,3 @@ function executeCases(selector?: string): UnitCaseResult[] {
 }
 
 export const runAll = () => executeCases();
-export const runSelectedCases = (selector?: string) => selectedUnitCases(executeCases(selector), selector, []);

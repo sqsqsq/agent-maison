@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // phase-closure-finalizer.unit.test.ts — summary 1.2 staged closure invariants
 // ============================================================================
@@ -404,8 +405,6 @@ const cases: Case[] = [
         // 生产的门**一定带 executionScope**（:6843 把有效范围算出来再传）。同一对单变量在
         // 带范围的调用形态下必须给出同一结论——否则范围一在场就绕开了本次修复。
         // 本范围的 design-context 还没被 satisfied，:211 的 1.2 分支不成立，仍落到 recompute 那支；
-        // design 已满足且由**阶段证据**承接的那一格（:213 → executionScopeEvidenceIssues）
-        // 需要一次真实范围修订才产生，覆盖在 release-only 的 `real-chain` 正例上（M5/M6 两次变异均在其上复现）。
         const executionScope = loadEffectiveExecutionScope(project.root, OWN_FEATURE, project.runId);
         assert(Boolean(executionScope), '有效范围取不到，带范围的对照不成立');
         const scopedWithOwner = checkPlanAuthority({ ...gateInput, executionScope, pendingOwnerPhase: 'coding' });
@@ -1032,11 +1031,13 @@ const cases: Case[] = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((testCase) => {
+    const endUnitCase = beginUnitCase(testCase.name);
+    if (!endUnitCase) return discoveryResult(testCase.name);
     try {
       testCase.run();
       return { name: testCase.name, ok: true };
     } catch (error) {
       return { name: testCase.name, ok: false, error: (error as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

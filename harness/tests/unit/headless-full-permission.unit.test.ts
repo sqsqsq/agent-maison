@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // headless-full-permission.unit.test.ts — plan a8e5c3f9：统一 headless 全权限执行契约
 // ============================================================================
@@ -189,11 +190,13 @@ export function runAll(): UnitCaseResult[] {
     { name: 't7 七份 adapter.yaml 声明与运行时一致', fn: testAdapterYamlDeclarationsAligned },
   ];
   return cases.map(({ name, fn }) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return discoveryResult(name);
     try {
       fn();
       return { name, ok: true };
     } catch (e) {
       return { name, ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
+    } finally { endUnitCase(); }
   });
 }

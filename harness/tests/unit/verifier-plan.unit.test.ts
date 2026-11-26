@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // verifier-plan.unit.test.ts — verifier 适用性解析矩阵（plan a9d4e7c2 T1 / d2f7a9c4）
 // ============================================================================
@@ -310,12 +311,14 @@ const CASES: Array<{ name: string; fn: () => void }> = [{ name: '② workflow �
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   for (const c of CASES) {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       c.fn();
       results.push({ name: c.name, ok: true });
     } catch (err) {
       results.push({ name: c.name, ok: false, error: (err as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return results;
 }

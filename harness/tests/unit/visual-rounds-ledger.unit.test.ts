@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 /**
  * visual-rounds-ledger 单测（t1，plan f7a3d9c2）：state/round 二维轮次账本 + 指纹级熔断。
  * 覆盖 rev4/rev5/rev6 三轮 review 钉死的全矩阵：
@@ -374,14 +375,5 @@ test('6279fcd7 T6 host replay f829b8: re-entry reconciliation adopts i11 e75c/29
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

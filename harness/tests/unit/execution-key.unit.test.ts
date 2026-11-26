@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 import { issueManagedInvocation } from '../utils/managed-invocation';
 import { resolveManagedGoalInvocation, effectiveForceDevice } from '../../scripts/utils/managed-goal-invocation';
 // execution-key.unit.test.ts — plan 07a41ec6 T6：执行键、同键复用判定、稳定性统计（含失败轮）
@@ -462,14 +463,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

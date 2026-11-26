@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // adhoc-repair-diagnosis.unit.test.ts — plan a2f7c9e4 §3.6：返修局部诊断（装当前构建 / 量测 / dump 落点 / 提示入口 / CLI 设备门）
 //
 // 设备一律替身：只 mock hdc 传输面（probe / bm dump / install / 候选元数据 / 装前就绪桥），install provider 主体走生产代码；
@@ -315,14 +316,5 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }

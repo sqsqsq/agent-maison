@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // init-orchestrate.unit.test.ts
 
 import assert from 'assert';
@@ -28,7 +29,6 @@ import {
   validateDecisionJson,
 } from '../../scripts/init-orchestrate';
 import type { InitTask } from '../../scripts/utils/init-task-planner';
-import type { InitExecutionContext } from '../../scripts/utils/init-task-executor';
 import { prepareConfigWriteForTask } from '../../scripts/utils/config-builder';
 import {
   prepareInitExecutionPlan,
@@ -36,6 +36,7 @@ import {
   probeInitTaskPlan,
   type InitTaskPlan,
 } from '../../scripts/utils/init-task-planner';
+import type { InitExecutionContext } from '../../scripts/utils/init-task-executor';
 
 const HARNESS_ROOT = path.join(__dirname, '../..');
 
@@ -2423,11 +2424,13 @@ const cases: Array<{ name: string; run: () => void }> = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (err) {
       return { name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

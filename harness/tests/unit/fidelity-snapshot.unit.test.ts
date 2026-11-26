@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // fidelity-snapshot.unit.test.ts — 在线高保真快照 lock / 离线校验 / 结构化分母
 // ============================================================================
@@ -160,12 +161,14 @@ function writeUiSpec(root: string, feature: string, refIds: string[]): void {
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   const run = (name: string, fn: () => void) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       fn();
       results.push({ name, ok: true });
     } catch (e) {
       results.push({ name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   };
 
   run('validateFidelityLockDoc_rejects_empty_screens', () => {

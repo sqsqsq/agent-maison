@@ -319,16 +319,14 @@ export function runSyntheticRuleTests(repoRoot, rules) {
       test: 'npm test',
       'release:pack': 'node scripts/pack-release.mjs',
       'release:verify': 'node scripts/verify-release-pack.mjs',
-      'test:changed': 'npm --prefix harness run test:changed',
-      'test:daily': 'npm --prefix harness run test:daily',
       'candidate:build': 'node scripts/candidate-release.mjs build',
+      'test:development': 'node tests/example.cjs',
     },
     devDependencies: { archiver: '^7.0.0', 'extract-zip': '^2.0.1' },
   };
   const sanitized = sanitizePackageJson(pkg);
   if (sanitized.scripts['release:pack']) errors.push('sanitize: release:pack still present');
-  if (sanitized.scripts['test:changed']) errors.push('sanitize: test:changed still present');
-  if (sanitized.scripts['test:daily']) errors.push('sanitize: test:daily still present');
+  if (sanitized.scripts['test:development']) errors.push('sanitize: test:development still present');
   if (sanitized.scripts['candidate:build']) errors.push('sanitize: candidate:build still present');
   if (sanitized.devDependencies) errors.push('sanitize: devDependencies still present');
   if (!sanitized.scripts.test) errors.push('sanitize: test script removed');
@@ -337,11 +335,7 @@ export function runSyntheticRuleTests(repoRoot, rules) {
   const harnessPkg = {
     name: 'harness',
     scripts: {
-      test: 'npm run test:unit && npm run test:fixtures',
-      'test:unit': 'ts-node tests/run-unit.ts',
-      'test:fixtures': 'ts-node tests/run-tests.ts',
-      'test:changed': 'ts-node tests/run-test-plan.ts',
-      'test:daily': 'ts-node tests/run-test-plan.ts --daily',
+      test: 'node tests/test-runtime.cjs',
       'check:catalog': 'ts-node harness-runner.ts --phase catalog',
       'check:glossary': 'ts-node harness-runner.ts --phase glossary',
       'check:docs': 'ts-node harness-runner.ts --phase docs',
@@ -349,10 +343,6 @@ export function runSyntheticRuleTests(repoRoot, rules) {
     },
   };
   const sanitizedHarness = sanitizeHarnessPackageJson(harnessPkg);
-  if (sanitizedHarness.scripts['test:unit']) errors.push('sanitizeHarness: test:unit still present');
-  if (sanitizedHarness.scripts['test:fixtures']) errors.push('sanitizeHarness: test:fixtures still present');
-  if (sanitizedHarness.scripts['test:changed']) errors.push('sanitizeHarness: test:changed still present');
-  if (sanitizedHarness.scripts['test:daily']) errors.push('sanitizeHarness: test:daily still present');
   if (sanitizedHarness.scripts.test !== 'npm run check:global') {
     errors.push('sanitizeHarness: test must be npm run check:global');
   }

@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // release-shipped-in-ignored-dirs.unit.test.ts — 跨清单对账（e5d8a2c4 T1/T4#1）
 // ----------------------------------------------------------------------------
@@ -56,12 +57,14 @@ function shippedInsideIgnoredDirs(included: string[], ignored: string[]): string
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
   const run = async (name: string, fn: () => Promise<void> | void): Promise<void> => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       await fn();
       results.push({ name, ok: true });
     } catch (err) {
       results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+    } finally { endUnitCase(); }
   };
 
   await run('对账（双向集合相等）：发布真实产出 ∩ ignored 覆盖 == shipped_files_in_runtime_dirs', async () => {

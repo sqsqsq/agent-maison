@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../../../../../harness/tests/utils/unit-cases';
 // ============================================================================
 // device-recovery-bridge.unit.test.ts — 四个设备边界共用的就绪/恢复语义
 //                                       （openspec device-readiness-and-completion t6）
@@ -13,12 +14,14 @@ import { resolveAttemptCredentialRef } from '../../../../../harness/scripts/util
 import type { UnitCaseResult } from '../../../../../harness/tests/run-unit';
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

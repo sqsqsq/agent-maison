@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // ut-contract-caliber.unit.test.ts — plan f4c8d2b7：UT 契约冲突收口回归钉
 // ============================================================================
@@ -558,11 +559,13 @@ export function runAll(): UnitCaseResult[] {
     { name: 'd7e3b9a4 反例：named-handler 加载失败（use-cases 在场）SKIP 不打标', fn: testNamedHandlerLoadFailureStaysUnmarked },
   ];
   return cases.map(({ name, fn }) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return discoveryResult(name);
     try {
       fn();
       return { name, ok: true };
     } catch (e) {
       return { name, ok: false, error: e instanceof Error ? e.message : String(e) };
-    }
+    } finally { endUnitCase(); }
   });
 }

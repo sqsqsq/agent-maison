@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // consumer-golden.unit.test.ts — bc-openCard consumer golden evaluator（c4e8b1d3 G3）
 // ----------------------------------------------------------------------------
@@ -31,12 +32,14 @@ const THREE_SCREEN_CAPTURES = ['add_bank_card_collapsed', 'add_bank_card_expande
 const SHIPPED_CONTRACT = path.resolve(__dirname, '../../scripts/consumer-golden/bc-opencard.golden-contract.json');
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

@@ -1,8 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { fixtureDisplayName } from './fixture-runner';
+export function fixtureDisplayName(directory: string): string {
+  const normalized = path.resolve(directory).replace(/\\/g, '/');
+  const segment = '/tests/fixtures/';
+  const index = normalized.lastIndexOf(segment);
+  if (index < 0) throw new Error(`fixture is outside its declared test directory: ${directory}`);
+  return normalized.slice(index + segment.length);
+}
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
-const ROOTS = ['harness/tests/fixtures', 'profiles/hmos-app/harness/tests/fixtures', 'profiles/generic/harness/tests/fixtures'];
 export function collectAllFixtureDirs(): string[] {
   const logical = new Map<string, string>();
   const walk = (directory: string): void => {
@@ -15,6 +20,12 @@ export function collectAllFixtureDirs(): string[] {
     }
     for (const entry of entries) if (entry.isDirectory()) walk(path.join(directory, entry.name));
   };
-  for (const root of ROOTS) walk(path.join(FRAMEWORK_ROOT, root));
+  walk(path.join(FRAMEWORK_ROOT, 'harness/tests/fixtures'));
+  const profiles = path.join(FRAMEWORK_ROOT, 'profiles');
+  if (fs.existsSync(profiles)) {
+    for (const entry of fs.readdirSync(profiles, { withFileTypes: true })) {
+      if (entry.isDirectory()) walk(path.join(profiles, entry.name, 'harness/tests/fixtures'));
+    }
+  }
   return [...logical.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, directory]) => directory);
 }

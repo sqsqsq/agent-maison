@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 /**
  * golden-capture-targets.unit.test.ts — golden 显式 capture targets（c4e8b1d3 G3 生产接线）
  *
@@ -315,14 +316,5 @@ test('c4e8b1d3 Todo 3 守门：direct capture env 路径只读一次 contract �
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).stack ?? String(err) });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

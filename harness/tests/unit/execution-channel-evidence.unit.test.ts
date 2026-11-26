@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // execution-channel-evidence.unit.test.ts — 非 Hylyre 通道 per-TC 证据绑定
 //                                            （plan a6c4e9f2 tasks 6.5b）
@@ -447,19 +448,6 @@ test('manual 通道：manual:<class> → unsupported_gap（人工确认仍不算
   });
 });
 
-export function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const testCase of CASES) {
-    try {
-      testCase.run();
-      results.push({ name: testCase.name, ok: true });
-    } catch (e) {
-      results.push({
-        name: testCase.name,
-        ok: false,
-        error: e instanceof Error ? (e.stack ?? e.message) : String(e),
-      });
-    }
-  }
-  return Promise.resolve(results);
+export async function runAll(): Promise<UnitCaseResult[]> {
+  return runUnitCases(CASES);
 }

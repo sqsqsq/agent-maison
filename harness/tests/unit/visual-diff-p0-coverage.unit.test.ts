@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 /**
  * visual-diff-p0-coverage — T3：P0 屏即使 lightweight 也不得逃过设备 visual_diff。
  *   病灶：home_no_card（P0+lightweight）曾被 collectP0*Targets 的 `!s.lightweight` 排除
@@ -100,14 +101,5 @@ test('T3: collectP0VisualTargetIds 汇总含 P0+lightweight 屏与其 overlay', 
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const out: UnitCaseResult[] = [];
-  for (const c of CASES) {
-    try {
-      await c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (e) {
-      out.push({ name: c.name, ok: false, error: e instanceof Error ? (e.stack ?? e.message) : String(e) });
-    }
-  }
-  return out;
+  return runUnitCasesAsync(CASES);
 }

@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // device-session.unit.test.ts — 托管设备会话的所有权/回收/分类契约
 //                               （openspec device-readiness-and-completion t2）
@@ -28,12 +29,14 @@ async function run(
   name: string,
   fn: () => void | Promise<void>,
 ): Promise<void> {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     await fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

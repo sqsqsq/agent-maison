@@ -35,14 +35,14 @@ function snapshot(root) {
   return { head, files, id: hash(JSON.stringify({ head, files })) };
 }
 
-function writeRun(root, scope, changes = {}) {
+function writeRun(root, changes = {}) {
   const inputSnapshot = snapshot(root);
-  const ids = scope === 'full' ? ['daily-sentinel', 'formal-sentinel'] : ['daily-sentinel'];
-  const result = { scope, full: scope === 'full', ok: true, inputSnapshot, endingSnapshotId: inputSnapshot.id,
-    plan: { scope, full: scope === 'full', selected: ids.map(id => ({ group: { id } })), reused: [] },
-    groups: ids.map(id => ({ id, ok: true, status: 'completed' })), ...changes };
-  json(path.join(reports(root), `${scope}.json`), result);
-  if (scope === 'full') json(path.join(reports(root), 'results.json'), { completeRun: { snapshotId: inputSnapshot.id, ok: result.ok } });
+  const result = {
+    ok: true, inputSnapshot, endingSnapshot: inputSnapshot,
+    registered: 2, executed: 2, passed: 2, failed: 0, missed: 0, skipped: 0, timedOut: 0, infrastructureFailed: 0,
+    ...changes,
+  };
+  json(path.join(reports(root), 'full.json'), result);
   return result;
 }
 
@@ -63,8 +63,8 @@ function stage(root, output) {
 async function fixture(options = {}) {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'am-candidate-gates-')); roots.push(temp);
   const root = path.join(temp, 'source');
-  json(path.join(root, 'package.json'), { name: 'fixture', version, scripts: { test: 'npm --prefix harness test', 'test:daily': 'development only' } });
-  json(path.join(root, 'harness/package.json'), { scripts: { test: 'full', 'test:daily': 'daily', 'check:global': 'global', typecheck: 'tsc' } });
+  json(path.join(root, 'package.json'), { name: 'fixture', version, scripts: { test: 'npm --prefix harness test' } });
+  json(path.join(root, 'harness/package.json'), { scripts: { test: 'full', 'check:global': 'global', typecheck: 'tsc' } });
   write(path.join(root, 'README.md'), 'release text\r\n');
   write(path.join(root, 'src/value.ts'), 'export const value = 1;\n');
   write(path.join(root, 'harness/node_modules/ts-node/dist/bin.js'), '');
@@ -81,15 +81,18 @@ async function fixture(options = {}) {
   const runCommand = (cmd, args, cwd) => {
     calls.push({ cmd, args, cwd });
     const source = path.basename(cwd) === 'harness' ? path.dirname(cwd) : cwd;
-    if (cmd === 'git' && args[0] === 'branch') return 'fixture-branch\n';
     if (args.includes('-e')) return JSON.stringify(snapshot(source));
-    if (args[1] === 'run' && args[2] === 'test:daily') { writeRun(source, 'daily', options.dailyResult); return; }
-    if (args[1] === 'test') { if (options.onFull) options.onFull(source); else writeRun(source, 'full'); return; }
+    if (args[1] === 'test') {
+      if (options.onFull) options.onFull(source);
+      else writeRun(source, options.fullResult);
+      return;
+    }
     if (args[0] === 'scripts/pack-release.mjs') {
       const out = args[args.indexOf('--out') + 1];
       if (args.includes('--stage-only')) { stage(source, path.join(out, 'release-staging/framework')); return; }
       fs.mkdirSync(out, { recursive: true }); fs.copyFileSync(zip, path.join(out, `framework-${version}.zip`));
-      json(path.join(out, `framework-${version}.manifest.json`), sidecar); return;
+      json(path.join(out, `framework-${version}.manifest.json`), { ...sidecar, ...options.packManifest });
+      options.afterPack?.(source); return;
     }
     if (args[0] === 'scripts/verify-release-pack.mjs') {
       assert.equal(hash(fs.readFileSync(args[args.indexOf('--zip') + 1])), sidecar.sha256);
@@ -97,7 +100,8 @@ async function fixture(options = {}) {
     }
     if (args[0] === 'scripts/smoke-consumer-lifecycle.mjs') {
       assert.equal(hash(fs.readFileSync(args[args.indexOf('--zip') + 1])), sidecar.sha256);
-      if (options.smokeFail) throw new Error('controlled smoke failure'); return;
+      if (options.smokeFail) throw new Error('controlled smoke failure');
+      options.afterSmoke?.(args[args.indexOf('--zip') + 1]); return;
     }
     if (args[0] === 'scripts/check-plan-version.mjs') {
       options.onPlan?.(source); if (options.planFail) throw new Error('controlled pending plan'); return;
@@ -113,117 +117,173 @@ async function fixture(options = {}) {
 const fullCalls = f => f.calls.filter(call => call.args[1] === 'test');
 const planCalls = f => f.calls.filter(call => call.args[0] === 'scripts/check-plan-version.mjs');
 
-test('来源快照子进程stderr可见且stdout仍为可读JSON', () => {
+test('来源快照子进程 stderr 可见且 stdout 仍为可读 JSON', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'am-candidate-capture-')); roots.push(temp);
   const root = path.join(temp, 'source'), npm = path.join(temp, 'npm.cjs');
-  json(path.join(root, 'package.json'), { version }); write(npm, '');
+  json(path.join(root, 'package.json'), { version });
+  const full = writeRun(root);
+  write(npm, `require('fs').writeFileSync(${JSON.stringify(path.join(reports(root), 'full.json'))}, ${JSON.stringify(JSON.stringify(full))});`);
   write(path.join(root, 'harness/node_modules/typescript/bin/tsc'), '');
   write(path.join(root, 'harness/node_modules/ts-node/dist/bin.js'),
-    'process.stderr.write("SOURCE_CAPTURE_STDERR\\n");process.stdout.write(JSON.stringify({id:"private-capture-id",head:"0",files:{}}));');
+    'process.stderr.write("SOURCE_CAPTURE_STDERR\\\\n");process.stdout.write(JSON.stringify({id:"private-capture-id",head:"0",files:{}}));');
   const driver = path.join(temp, 'driver.mjs');
   const entry = new URL('../candidate-release.mjs', import.meta.url).href;
   write(driver, `import { buildCandidate } from ${JSON.stringify(entry)};try { buildCandidate({root:${JSON.stringify(root)}}); } catch(error) { console.error('EXPECTED_CAPTURE_STOP:'+error.message);process.exitCode=1; }`);
   const result = spawnSync(process.execPath, [driver], { encoding: 'utf8', env: { ...process.env, npm_execpath: npm } });
-  assert.equal(result.status, 1, '受控入口在缺daily报告处结束，不运行pack');
+  assert.equal(result.status, 1);
   assert.match(result.stderr, /SOURCE_CAPTURE_STDERR/);
-  assert.match(result.stderr, /EXPECTED_CAPTURE_STOP:.*daily\.json/, 'JSON已正确解析并推进到读取日常证明');
-  assert.ok(!result.stdout.includes('private-capture-id'), '快照stdout仅用于JSON解析');
+  assert.match(result.stderr, /EXPECTED_CAPTURE_STOP:.*输入改变/);
+  assert.ok(!result.stdout.includes('private-capture-id'));
 });
 
-test('候选构建实际选择日常全集，verify与smoke消费同一zip，并保留待补正式门禁', async () => {
-  const f = await fixture(); f.build();
-  assert.deepEqual(f.calls[0].args.slice(1), ['run', 'test:daily']); assert.equal(fullCalls(f).length, 0);
-  const manifest = readJson(paths(f.root).manifest);
-  assert.equal(manifest.candidate.complete, true); assert.equal(manifest.candidate.daily_test.scope, 'daily');
-  assert.deepEqual(manifest.candidate.skipped_gates, ['npm test (full)', 'check-plan-version --release']);
+test('候选构建执行一次根全量并记录同一 zip，晋升只消费既有证明', async () => {
+  const f = await fixture();
+  f.build();
+  assert.equal(fullCalls(f).length, 1);
+  assert.deepEqual(fullCalls(f)[0].args.slice(1), ['test']);
+  assert.equal(fullCalls(f)[0].cwd, f.root);
+  const { candidate } = readJson(paths(f.root).manifest);
+  assert.equal(candidate.complete, true);
+  assert.equal(candidate.full_test.snapshot_id, snapshot(f.root).id);
+  assert.equal(candidate.full_test.ending_snapshot_id, candidate.full_test.snapshot_id);
+  assert.equal(candidate.full_test.zip_sha256, f.sidecar.sha256);
+  assert.deepEqual(candidate.skipped_gates, ['check-plan-version --release']);
   assert.equal(f.calls.filter(call => call.args[0] === 'scripts/verify-release-pack.mjs').length, 1);
   assert.equal(f.calls.filter(call => call.args[0] === 'scripts/smoke-consumer-lifecycle.mjs').length, 1);
-});
 
-test('候选日常结果、verify或smoke真实失败都不能宣称构建完整', async t => {
-  for (const options of [{ dailyResult: { ok: false } }, { verifyFail: true }, { smokeFail: true }]) await t.test(JSON.stringify(options), async () => {
-    const f = await fixture(options); assert.throws(f.build);
-    assert.ok(!fs.existsSync(paths(f.root).manifest) || readJson(paths(f.root).manifest).candidate.complete === false);
-    assert.equal(fullCalls(f).length, 0);
-  });
-});
-
-test('晋升缺正式证明时在匹配来源补一次full，之后移动同一字节fixture zip', async () => {
-  const f = await fixture(); f.build(); await f.promote();
-  assert.equal(fullCalls(f).length, 1); assert.equal(planCalls(f).length, 1);
+  fs.rmSync(path.join(reports(f.root), 'full.json'));
+  await f.promote();
+  assert.equal(fullCalls(f).length, 1);
+  assert.equal(planCalls(f).length, 1);
   assert.equal(hash(fs.readFileSync(path.join(f.root, `dist/framework-${version}.zip`))), f.sidecar.sha256);
-  assert.equal(f.calls.filter(call => call.args[0] === 'scripts/pack-release.mjs' && !call.args.includes('--stage-only')).length, 1, '晋升不可重打候选zip');
+  assert.equal(f.calls.filter(call => call.args[0] === 'scripts/pack-release.mjs' && !call.args.includes('--stage-only')).length, 1);
 });
 
-test('daily/changed/phase及只改full头的报告均不能升级；失败时不碰plan/eligible', async t => {
-  for (const scope of ['daily', 'changed', 'phase', 'forged-full', 'full-failed']) await t.test(scope, async () => {
-    const f = await fixture({ onFull: source => {
-      if (scope === 'full-failed') { writeRun(source, 'full', { ok: false }); return; }
-      const result = writeRun(source, 'daily');
-      if (scope === 'forged-full') { result.scope = 'full'; result.full = true; result.plan.scope = 'full'; result.plan.full = true; }
-      else result.scope = scope;
-      json(path.join(reports(source), 'full.json'), result);
-    } });
-    f.build(); await assert.rejects(f.promote, /测试证明无效|completeRun/);
-    assert.equal(fullCalls(f).length, 1); assert.equal(planCalls(f).length, 0);
-    assert.equal(readJson(paths(f.root).manifest).candidate.status, 'built');
+for (const [name, options, message] of [
+  ['全量失败', { fullResult: { ok: false } }, /根全量证明无效/],
+  ['有漏跑', { fullResult: { missed: 1 } }, /根全量证明无效/],
+  ['输入起止不一致', { fullResult: { endingSnapshot: { id: 'different' } } }, /根全量证明无效/],
+  ['全量退出后的输入漂移', { onFull: root => { writeRun(root); write(path.join(root, 'src/value.ts'), 'changed'); } }, /输入改变/],
+  ['打包期间新增文件', { packManifest: { includedFiles: ['src/extra.ts'] }, afterPack: root => write(path.join(root, 'src/extra.ts'), 'added') }, /未被受测 InputSnapshot 覆盖/],
+  ['打包期间其他测试输入漂移', { afterPack: root => write(path.join(root, 'scripts/new.unit.mjs'), 'changed') }, /输入改变/],
+  ['校验失败', { verifyFail: true }, /controlled verify failure/],
+  ['冒烟失败', { smokeFail: true }, /controlled smoke failure/],
+  ['冒烟期间 zip 漂移', { afterSmoke: zip => fs.appendFileSync(zip, 'changed') }, /zip 字节身份失配/],
+]) {
+  test(`候选构建拒绝${name}`, async () => {
+    const f = await fixture(options);
+    assert.throws(f.build, message);
+    assert.ok(!fs.existsSync(paths(f.root).manifest) || readJson(paths(f.root).manifest).candidate.complete === false);
+    assert.equal(fullCalls(f).length, 1);
   });
+}
+
+test('候选构建要求本次根全量报告，旧报告或筛选结果不能补证', async () => {
+  const f = await fixture({ onFull: root => json(path.join(reports(root), 'filtered.json'), { ok: true }) });
+  writeRun(f.root);
+  assert.throws(f.build, /缺少本次根全量报告/);
+  assert.equal(fullCalls(f).length, 1);
+  assert.equal(f.calls.some(call => call.args[0] === 'scripts/pack-release.mjs'), false);
 });
 
-test('相同发布内容允许dev-only输入变化，复用其真实full；仅plan失败才eligible', async () => {
-  const f = await fixture({ planFail: true }); f.build();
-  write(path.join(f.root, '.cursor/plan.md'), 'completed\n'); const full = writeRun(f.root, 'full');
+for (const [name, edit] of [
+  ['旧候选', candidate => { candidate.daily_test = candidate.full_test; delete candidate.full_test; }],
+  ['另一快照', candidate => { candidate.full_test.ending_snapshot_id = '0'.repeat(64); }],
+  ['另一 zip', candidate => { candidate.full_test.zip_sha256 = '0'.repeat(64); }],
+  ['另一包内 manifest', candidate => { candidate.full_test.in_zip_manifest_sha256 = '0'.repeat(64); }],
+  ['不同源码身份', candidate => { candidate.full_test.source_commit = '1'.repeat(40); }],
+]) {
+  test(`晋升拒绝${name}并保留原候选`, async () => {
+    const f = await fixture();
+    f.build();
+    const file = paths(f.root).manifest, manifest = readJson(file);
+    edit(manifest.candidate);
+    json(file, manifest);
+    await assert.rejects(f.promote, /需重新构建/);
+    assert.equal(fullCalls(f).length, 1);
+    assert.equal(planCalls(f).length, 0);
+    assert.equal(readJson(file).candidate.status, 'built');
+  });
+}
+
+test('仅发布 plan 未过时 eligible，更新 plan 后复用原构建的全量证明', async () => {
+  const f = await fixture({ planFail: true });
+  f.build();
+  const file = paths(f.root).manifest, tested = readJson(file).candidate.full_test.snapshot_id;
   await assert.rejects(f.promote, /eligible/);
-  const candidate = readJson(paths(f.root).manifest).candidate;
-  assert.equal(candidate.status, 'eligible'); assert.equal(candidate.full_test.snapshot_id, full.inputSnapshot.id);
-  assert.notEqual(candidate.full_test.snapshot_id, candidate.daily_test.snapshot_id); assert.equal(fullCalls(f).length, 0);
+  assert.equal(readJson(file).candidate.status, 'eligible');
+  write(path.join(f.root, '.cursor/plan.md'), 'completed\n');
+  f.options.planFail = false;
+  await f.promote();
+  const promoted = readJson(path.join(f.root, `dist/framework-${version}.manifest.json`));
+  assert.equal(promoted.candidate.full_test.snapshot_id, tested);
+  assert.notEqual(promoted.candidate.full_test.snapshot_id, snapshot(f.root).id);
+  assert.equal(fullCalls(f).length, 1);
 });
 
-test('同HEAD的源码变化、增删发布文件和版本差异都在full之前拒绝', async t => {
-  for (const change of ['content', 'extra', 'missing', 'version', 'manifest-version']) await t.test(change, async () => {
-    const f = await fixture(); f.build();
-    if (change === 'content') write(path.join(f.root, 'src/value.ts'), 'export const value = 2;\n');
-    if (change === 'extra') write(path.join(f.root, 'src/extra.ts'), 'extra\n');
-    if (change === 'missing') fs.rmSync(path.join(f.root, 'src/value.ts'));
-    if (change === 'version') { const pkg = readJson(path.join(f.root, 'package.json')); pkg.version = '9.9.10'; json(path.join(f.root, 'package.json'), pkg); }
-    if (change === 'manifest-version') { const m = readJson(paths(f.root).manifest); m.version = '9.9.10'; json(paths(f.root).manifest, m); }
-    await assert.rejects(f.promote, /发布集合与 candidate 不一致|无 candidate 产物/);
-    assert.equal(fullCalls(f).length, 0); assert.equal(planCalls(f).length, 0); assert.ok(fs.existsSync(paths(f.root).zip));
+for (const [name, change] of [
+  ['内容变化', root => write(path.join(root, 'src/value.ts'), 'export const value = 2;\n')],
+  ['增加文件', root => write(path.join(root, 'src/extra.ts'), 'extra\n')],
+  ['减少文件', root => fs.rmSync(path.join(root, 'src/value.ts'))],
+  ['版本失配', root => { const file = paths(root).manifest, manifest = readJson(file); manifest.version = '9.9.10'; json(file, manifest); }],
+]) {
+  test(`晋升前拒绝来源发布集合${name}`, async () => {
+    const f = await fixture();
+    f.build();
+    change(f.root);
+    await assert.rejects(f.promote, /发布集合与 candidate 不一致/);
+    assert.equal(fullCalls(f).length, 1);
+    assert.equal(planCalls(f).length, 0);
+    assert.ok(fs.existsSync(paths(f.root).zip));
   });
+}
+
+test('检查 plan 期间 zip 失配不会标记 eligible', async () => {
+  const f = await fixture({ planFail: true, onPlan: root => fs.appendFileSync(paths(root).zip, 'changed') });
+  f.build();
+  await assert.rejects(f.promote, /zip 字节身份失配/);
+  assert.equal(readJson(paths(f.root).manifest).candidate.status, 'built');
 });
 
-test('全量或plan期间来源漂移，或完整证明来自另一快照，都不得晋升或eligible', async t => {
-  for (const mode of ['full-drift', 'plan-drift', 'stale-full']) await t.test(mode, async () => {
-    const options = mode === 'plan-drift' ? { planFail: true, onPlan: root => write(path.join(root, 'src/value.ts'), 'changed\n') }
-      : { onFull: root => { const full = writeRun(root, 'full');
-        if (mode === 'full-drift') write(path.join(root, 'src/value.ts'), 'changed\n');
-        else json(path.join(reports(root), 'full.json'), { ...full, endingSnapshotId: 'different' }); } };
-    const f = await fixture(options); f.build(); await assert.rejects(f.promote, /输入已改变|测试证明无效/);
-    assert.equal(readJson(paths(f.root).manifest).candidate.status, 'built'); assert.ok(fs.existsSync(paths(f.root).zip));
+test('主干已进入新版本时，保留旧来源可继续核查原候选', async () => {
+  const f = await fixture();
+  f.build();
+  const retained = path.join(f.temp, 'retained');
+  fs.cpSync(f.root, retained, { recursive: true });
+  const pkg = readJson(path.join(f.root, 'package.json'));
+  pkg.version = '9.9.10';
+  json(path.join(f.root, 'package.json'), pkg);
+  await f.promote(['--source-root', retained]);
+  assert.equal(fullCalls(f).length, 1);
+  assert.equal(planCalls(f)[0].cwd, fs.realpathSync(retained));
+  assert.equal(readJson(path.join(f.root, 'package.json')).version, '9.9.10');
+});
+
+for (const [name, change, message] of [
+  ['golden', f => json(f.golden, { verdict: 'PASS', installed_manifest_sha256: 'other' }), /不匹配/],
+  ['smoke', f => { const file = paths(f.root).manifest, manifest = readJson(file); manifest.candidate.complete = false; json(file, manifest); }, /complete !== true/],
+  ['zip', f => fs.appendFileSync(paths(f.root).zip, 'changed'), /字节身份失配/],
+]) {
+  test(`晋升拒绝 ${name} 失败`, async () => {
+    const f = await fixture();
+    f.build();
+    change(f);
+    await assert.rejects(f.promote, message);
+    assert.equal(fullCalls(f).length, 1);
+    assert.equal(planCalls(f).length, 0);
   });
-});
+}
 
-test('主干已进入新版本时可显式选择保留的旧来源，不改写主干且不重打候选', async () => {
-  const f = await fixture({ planFail: true }); f.build();
-  const retained = path.join(f.temp, 'retained'); fs.cpSync(f.root, retained, { recursive: true }); writeRun(retained, 'full');
-  const pkg = readJson(path.join(f.root, 'package.json')); pkg.version = '9.9.10'; json(path.join(f.root, 'package.json'), pkg);
-  await assert.rejects(() => f.promote(['--source-root', retained]), /eligible/);
-  assert.equal(fullCalls(f).length, 0); assert.equal(readJson(path.join(f.root, 'package.json')).version, '9.9.10');
-  assert.equal(readJson(paths(f.root).manifest).candidate.full_test.source_root, fs.realpathSync(retained));
-});
-
-test('golden、smoke完成标记和zip字节身份仍在正式测试前阻断', async t => {
-  for (const mode of ['golden', 'smoke', 'zip']) await t.test(mode, async () => {
-    const f = await fixture(); f.build();
-    if (mode === 'golden') json(f.golden, { verdict: 'PASS', installed_manifest_sha256: 'other' });
-    if (mode === 'smoke') { const m = readJson(paths(f.root).manifest); m.candidate.complete = false; json(paths(f.root).manifest, m); }
-    if (mode === 'zip') fs.appendFileSync(paths(f.root).zip, 'changed');
-    await assert.rejects(f.promote, /不匹配|complete !== true|字节身份失配/); assert.equal(fullCalls(f).length, 0);
-  });
+test('候选命令拒绝本地测试筛选参数', () => {
+  for (const operation of ['build', 'promote']) {
+    const result = spawnSync(process.execPath, [path.join(repo, 'scripts/candidate-release.mjs'), operation, '--filter', 'subset'], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /不接受参数|不支持的晋升参数/);
+  }
 });
 
 test('sanitize移除所有开发测试与候选脚本，消费者harness npm test仍check:global', () => {
-  const scripts = { test: 'full', 'test:changed': 'changed', 'test:daily': 'daily', 'test:unit': 'unit', 'candidate:build': 'candidate', 'release:all': 'release', 'check:global': 'global' };
+  const scripts = { test: 'full', 'test:development': 'unit', 'candidate:build': 'candidate', 'release:all': 'release', 'check:global': 'global' };
   const root = sanitizePackageJson({ scripts }); const harness = sanitizeHarnessPackageJson({ scripts });
   assert.ok(!Object.keys(root.scripts).some(key => /^(?:test:|candidate:|release:)/.test(key)));
   assert.ok(!Object.keys(harness.scripts).some(key => key.startsWith('test:'))); assert.equal(harness.scripts.test, 'npm run check:global');
@@ -236,7 +296,7 @@ test('release:all真实CLI仍选择npm test完整门禁，先verify/smoke再落f
   json(path.join(temp, 'package.json'), { version }); write(path.join(temp, 'README.md'), 'fixture\n');
   for (const file of ['release-all.mjs', 'release-pack-rules.mjs', 'release-excludes.json']) write(path.join(temp, 'scripts', file), fs.readFileSync(path.join(repo, 'scripts', file)));
   for (const file of ['ts-node/dist/bin.js', 'typescript/bin/tsc']) write(path.join(temp, 'harness/node_modules', file), '');
-  const record = `const fs=require('fs'),path=require('path');fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({file:__filename,args:process.argv.slice(2)})+'\\n');`;
+  const record = `const fs=require('fs'),path=require('path');fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({file:__filename,args:process.argv.slice(2),cwd:process.cwd()})+'\\n');`;
   write(path.join(temp, 'npm.cjs'), record);
   write(path.join(temp, 'scripts/check-plan-version.mjs'), `import fs from 'fs';fs.appendFileSync(${JSON.stringify(log)},JSON.stringify({file:'plan',args:process.argv.slice(2)})+'\\n');`);
   write(path.join(temp, 'scripts/pack-release.mjs'), `import fs from 'fs';import path from 'path';const out=process.argv[process.argv.indexOf('--out')+1];fs.mkdirSync(out,{recursive:true});fs.writeFileSync(path.join(out,'framework-${version}.zip'),'fixture-zip');fs.writeFileSync(path.join(out,'framework-${version}.manifest.json'),'{}');`);
@@ -247,5 +307,7 @@ test('release:all真实CLI仍选择npm test完整门禁，先verify/smoke再落f
   assert.equal(result.status, 0, result.stdout + result.stderr);
   const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
   assert.deepEqual(calls.map(call => call.args.includes('test') ? 'full' : call.file), ['plan', 'full', 'verify-release-pack', 'smoke-consumer-lifecycle']);
+  assert.equal(calls[1].cwd, fs.realpathSync(temp));
+  assert.deepEqual(calls[1].args, ['test']);
   assert.equal(fs.readFileSync(path.join(temp, `dist/framework-${version}.zip`), 'utf8'), 'fixture-zip');
 });

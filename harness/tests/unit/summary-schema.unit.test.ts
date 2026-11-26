@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // summary-schema.unit.test.ts — summary.json 稳定契约回归
 // ============================================================================
@@ -242,12 +243,14 @@ function testFrameworkBlockedActionability(): void {
 }
 
 function runCase(name: string, fn: () => void): UnitCaseResult {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return discoveryResult(name);
   try {
     fn();
     return { name, ok: true };
   } catch (err) {
     return { name, ok: false, error: (err as Error).message };
-  }
+  } finally { endUnitCase(); }
 }
 
 export function runAll(): UnitCaseResult[] {

@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // goal-runner-policy.unit.test.ts — resolveAutoChain, classifyPhaseVerdict, goal manifest, adapter preflight
 
 import * as fs from 'fs';
@@ -442,16 +443,7 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }
 
 if (require.main === module) {

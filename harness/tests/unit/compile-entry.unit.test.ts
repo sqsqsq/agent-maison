@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -260,10 +261,12 @@ export async function runAll() {
   for (const key of keys) delete process.env[key];
   try {
     for (const item of cases) {
+      const endUnitCase = beginUnitCase(item.name);
+      if (!endUnitCase) continue;
       const root = fixture();
       try { await item.run(root); results.push({ name: item.name, ok: true }); }
       catch (error) { results.push({ name: item.name, ok: false, error: String((error as Error).stack ?? error) }); }
-      finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+      finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache();  endUnitCase(); }
     }
   } finally {
     for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }

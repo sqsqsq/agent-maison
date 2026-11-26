@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 /**
  * critic-receipt-producer 单测（t3b，plan f7a3d9c2）：claude structured_events 解析器 +
  * runner attestation 回执生产（verified/unverified/降级路径）。
@@ -411,14 +412,5 @@ test('V5①②/V6 非 goal 和无解析器仍不可达；会话缺当前工具�
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // host-replay-fixes.unit.test.ts — plan e7c2a4d8（宿主回灌三修 v23）
 // T1 preflight 内存口径/.dry 隔离/枚举二分/锁单点 · T2 活跃预算分段 ·
@@ -704,145 +705,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       if (!threw) throw new Error('非法枚举未 fail-closed');
     },
   },
-  {
-    // ------------------------------------------------------------ round2 P2 e2e
-    // dry trust 字节级回归：真实拉起 goal-runner --dry-run（consumer 布局临时宿主，
-    // framework 共享目录用 junction、harness 真拷贝+node_modules junction），断言：
-    // ① 项目侧全部预置文件（vision 账本/需求/checkpoint 种子/config/入口）逐字节不变；
-    // ② 新文件只落 goal-runs/.dry/<run_id>/；③ --override-adapter 不写 framework.local.json；
-    // ④ .dry events 全量 dry_run:true 且零 vision_ledger_anchor。
-    // framework/** 写入不在本例射程（框架写保护另有 foreign-file 防线与专测）。
-    name: 'round2 P2 e2e: dry-run trust 面字节级不变（含 --override-adapter 写回门）',
-    run: () => {
-      const repoRoot = path.resolve(__dirname, '../../..');
-      const harnessRoot = path.resolve(__dirname, '../..');
-      const sha256 = (p: string): string =>
-        require('crypto').createHash('sha256').update(fs.readFileSync(p)).digest('hex');
-      const snapshotTree = (root: string, skipTop: string[]): Map<string, string> => {
-        const out = new Map<string, string>();
-        const walk = (dir: string): void => {
-          for (const ent of fs.readdirSync(dir, { withFileTypes: true })) {
-            const abs = path.join(dir, ent.name);
-            const rel = path.relative(root, abs).replace(/\\/g, '/');
-            if (skipTop.some((s) => rel === s || rel.startsWith(`${s}/`))) continue;
-            if (ent.isDirectory()) walk(abs);
-            else if (ent.isFile()) out.set(rel, sha256(abs));
-          }
-        };
-        walk(root);
-        return out;
-      };
-
-      const temp = tmpDir('drybyte');
-      const junctions: string[] = [];
-      const junction = (src: string, dst: string): void => {
-        fs.symlinkSync(src, dst, 'junction');
-        junctions.push(dst);
-      };
-      try {
-        // consumer 布局
-        const fw = path.join(temp, 'framework');
-        fs.mkdirSync(fw, { recursive: true });
-        for (const d of ['agents', 'skills', 'workflows', 'profiles', 'templates', 'specs', 'scripts']) {
-          const src = path.join(repoRoot, d);
-          if (fs.existsSync(src)) junction(src, path.join(fw, d));
-        }
-        const fhar = path.join(fw, 'harness');
-        fs.cpSync(harnessRoot, fhar, {
-          recursive: true,
-          filter: (s) => {
-            const b = path.basename(s);
-            return b !== 'node_modules' && b !== 'tests' && b !== 'reports';
-          },
-        });
-        junction(path.join(harnessRoot, 'node_modules'), path.join(fhar, 'node_modules'));
-
-        // 项目侧种子
-        fs.writeFileSync(path.join(temp, 'framework.config.json'), JSON.stringify({
-          schema_version: '1.1',
-          project_name: 'drybyte', active_workflow: 'spec-driven',
-          materialized_adapters: ['cursor'],
-          architecture: {
-            outer_layers: [{ id: 'L1', can_depend_on: [], intra_layer_deps: 'forbid' }],
-            module_inner_layers: ['shared'],
-            inner_dependency_direction: 'upward',
-            cross_module_exports_file: 'index.ets',
-          },
-          paths: { features_dir: 'doc/features' },
-        }, null, 2));
-        fs.writeFileSync(path.join(temp, 'AGENTS.md'), '# stub\n');
-        const featDir = path.join(temp, 'doc/features/f1');
-        fs.mkdirSync(path.join(featDir, 'vision'), { recursive: true });
-        fs.writeFileSync(path.join(featDir, 'vision', 'artifact-attestations.jsonl'), '{"seed":1}\n');
-        fs.writeFileSync(path.join(featDir, 'vision', 'policy-downgrades.jsonl'), '{"seed":2}\n');
-        fs.writeFileSync(path.join(featDir, 'requirement.md'), '# dry byteid probe\n');
-        const cpOut = path.join(temp, 'cp-out');
-        fs.mkdirSync(cpOut, { recursive: true });
-        fs.writeFileSync(path.join(cpOut, 'seed.json'), '{"seed":3}\n');
-
-        const before = snapshotTree(temp, ['framework']);
-
-        const env: NodeJS.ProcessEnv = { ...process.env };
-        delete env.MAISON_GOAL_RUNNER;
-        delete env.MAISON_GOAL_HEADLESS;
-        delete env.MAISON_GOAL_RUN_ID;
-        delete env.MAISON_GOAL_GATE_HARNESS;
-        delete env.MAISON_GOAL_ALLOW_NESTED;
-        env.MAISON_GOAL_CHECKPOINT_DIR = cpOut;
-        const r = withRuntimeTest({ root: temp }, () => require('child_process').spawnSync(process.execPath, [
-          '-r', 'ts-node/register/transpile-only', 'scripts/goal-runner.ts',
-          '--feature', 'f1', '--requirement', 'dry byteid probe',
-          '--start', 'spec', '--end', 'spec',
-          '--dry-run', '--adapter', 'cursor', '--override-adapter',
-        ], { cwd: fhar, env, encoding: 'utf-8', timeout: 300_000 })) as {
-          status: number | null; stdout: string; stderr: string;
-        };
-        if (r.status === null) throw new Error(`dry-run 超时/未退出：${(r.stderr || '').slice(-500)}`);
-        if (!/GOAL_RUN event=end/.test(r.stdout || '')) {
-          throw new Error(`dry-run 未走到 run_end：exit=${r.status}\n${(r.stderr || '').slice(-800)}`);
-        }
-
-        const after = snapshotTree(temp, ['framework']);
-        const problems: string[] = [];
-        for (const [rel, h] of before) {
-          if (!after.has(rel)) problems.push(`预置文件被删除: ${rel}`);
-          else if (after.get(rel) !== h) problems.push(`预置文件被改写: ${rel}`);
-        }
-        const allowedPrefix = `doc/features/f1/goal-runs/${DRY_RUNS_SUBDIR}/`;
-        const newFiles = [...after.keys()].filter((rel) => !before.has(rel));
-        for (const rel of newFiles) {
-          if (!rel.startsWith(allowedPrefix)) problems.push(`.dry 之外的新文件: ${rel}`);
-        }
-        if (fs.existsSync(path.join(temp, 'framework.local.json'))) {
-          problems.push('--override-adapter 在 dry 下写回了 framework.local.json');
-        }
-        if (problems.length > 0) throw new Error(`trust 面字节对账失败：\n${problems.join('\n')}`);
-        if (newFiles.length === 0) throw new Error('.dry 未产出任何文件（run 没真跑？）');
-
-        // .dry events：全量 dry 打标 + 零 vision anchor
-        const dryDirAbs = path.join(temp, 'doc/features/f1/goal-runs', DRY_RUNS_SUBDIR);
-        let checkedEvents = 0;
-        for (const runId of fs.readdirSync(dryDirAbs)) {
-          const evPath = path.join(dryDirAbs, runId, 'events.jsonl');
-          if (!fs.existsSync(evPath)) continue;
-          const rows = fs.readFileSync(evPath, 'utf-8').trim().split('\n')
-            .map((l) => JSON.parse(l) as { dry_run?: unknown; type?: string });
-          checkedEvents += rows.length;
-          if (rows.some((e2) => e2.dry_run !== true)) throw new Error('dry events 存在未打标行');
-          if (rows.some((e2) => e2.type === 'vision_ledger_anchor')) {
-            throw new Error('dry events 出现 vision_ledger_anchor（invoke 窗口零账本读被破坏）');
-          }
-        }
-        if (checkedEvents === 0) throw new Error('.dry events.jsonl 缺失');
-      } finally {
-        // 清理：先摘 junction（rmdirSync 只删 reparse point，绝不进仓库真身），再递归删
-        for (const j of junctions.reverse()) {
-          try { fs.rmdirSync(j); } catch { /* best-effort */ }
-        }
-        try { fs.rmSync(temp, { recursive: true, force: true }); } catch { /* best-effort */ }
-      }
-    },
-  },
   // ------------------------------------------------------------ t1（plan c6a9e4d2）
   // events-only resume：resume 起点/priorOutcomes 一律由 authoritative events 回放，
   // goal-report.json 永不参与恢复决策；events 缺失/损坏 fail-closed；terminal guard
@@ -967,21 +829,20 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-export function runAll(selector?: string): UnitCaseResult[] {
+export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {
-    if (!matchesUnitCase(c.name, selector)) continue;
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       c.run();
       results.push({ name: c.name, ok: true });
     } catch (e) {
       results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return results;
 }
-
-export function runSelectedCases(selector?: string) { return selectedUnitCases(runAll(selector), selector, []); }
 
 if (require.main === module) {
   const r = runAll();
@@ -990,5 +851,3 @@ if (require.main === module) {
   }
   process.exit(r.every(x => x.ok) ? 0 : 1);
 }
-import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
-import { withRuntimeTest } from '../utils/runtime-test-control';

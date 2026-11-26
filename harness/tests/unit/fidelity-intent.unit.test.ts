@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // fidelity-intent.unit.test.ts — t6 三态意图/解引用/只升不降（goal-fakepass-hardening）
 //
 // codex 三轮 P1-7 强制的两用例分离：仅 manifest 摘要=ambiguous；解引用 SSOT 文档后
@@ -130,11 +131,13 @@ const cases: Case[] = [
 
 export function runAll(): UnitCaseResult[] {
   return cases.map((c) => {
+    const endUnitCase = beginUnitCase(`fidelity-intent: ${c.name}`);
+    if (!endUnitCase) return discoveryResult(`fidelity-intent: ${c.name}`);
     try {
       c.run();
       return { name: `fidelity-intent: ${c.name}`, ok: true };
     } catch (err) {
       return { name: `fidelity-intent: ${c.name}`, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

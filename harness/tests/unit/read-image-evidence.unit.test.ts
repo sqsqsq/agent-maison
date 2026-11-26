@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // read-image-evidence.unit.test.ts — M3 读图证据块契约
 
 import {
@@ -99,16 +100,7 @@ export function runAll(): Promise<UnitCaseResult[]> {
 }
 
 async function runReadImageEvidenceUnitTests(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }
 
 if (require.main === module) {

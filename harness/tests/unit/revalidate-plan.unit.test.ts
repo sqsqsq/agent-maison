@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // revalidate-plan.unit.test.ts — plan 07a41ec6 T8：--revalidate 目标选择（纯函数）与漂移风险分级
 
 import assert from 'assert';
@@ -58,14 +59,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

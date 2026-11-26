@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // generic profile：无 coding-host 时 check-coding 必须返回 coding_host_missing
 // ============================================================================
@@ -130,12 +131,14 @@ export async function runAll(): Promise<UnitCaseResult[]> {
   );
   const out: UnitCaseResult[] = [];
   for (const c of cases) {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       await c.run();
       out.push({ name: c.name, ok: true });
     } catch (err) {
       out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return out;
 }

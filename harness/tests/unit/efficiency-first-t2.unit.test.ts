@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // efficiency-first-t2.unit.test.ts — plan 07a41ec6 T2/T3（openspec efficiency-first-closure）
 //
 // 钉住：执行通道三态（gap 留分母、不算 PASS、不阻止完成）、P0 五数口径、身份断言注入
@@ -746,14 +747,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

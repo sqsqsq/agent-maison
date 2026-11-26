@@ -1,6 +1,6 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 import * as fs from 'fs';
 import { withRuntimeTest } from '../utils/runtime-test-control';
-import * as os from 'os';
 import * as path from 'path';
 import assert from 'assert';
 import { loadWorkflowSpec, workflowForExistingRun } from '../../workflow-loader';
@@ -12,7 +12,7 @@ import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { clearFrameworkConfigCache } from '../../config';
-import { setupGoalRuntimeHost } from './goal-runner-testing-integrity.unit.test';
+import { setupGoalRuntimeHost } from '../utils/existing-goal-delivery-fixture';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
 export interface UnitCaseResult { name: string; ok: boolean; error?: string }
@@ -23,7 +23,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     assert.deepStrictEqual(legacy.auto_chain, ['spec', 'plan', 'coding', 'review', 'ut', 'testing']);
     assert(!legacy.auto_chain_by_track && !legacy.artifacts.some(a => ['change', 'exit'].includes(a.id)));
     assert.deepStrictEqual(resolvePhaseChain(legacy).featureOrdered, legacy.auto_chain);
-    for (const kept of ['harness/scripts/utils/lite-json-schema.ts', 'harness/scripts/check-change-unit.ts', 'harness/tests/unit/successor-exit-early.unit.test.ts', 'harness/tests/unit/successor-exit-late.unit.test.ts']) assert(fs.existsSync(path.join(FRAMEWORK_ROOT, kept)), kept);
+    for (const kept of ['harness/scripts/utils/lite-json-schema.ts', 'harness/scripts/check-change-unit.ts', 'harness/scripts/utils/change-unit-completion.ts', 'harness/scripts/utils/feature-execution-scope.ts']) assert(fs.existsSync(path.join(FRAMEWORK_ROOT, kept)), kept);
   } },
   { name: '现代 review request 忽略残留 track:lite 并提示，真实 capability 仍按单职责范围解析', run() {
     const root = setupGoalRuntimeHost('codex').root;
@@ -82,10 +82,5 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
 ];
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const test of cases) {
-    try { await test.run(); results.push({ name: test.name, ok: true }); }
-    catch (error) { results.push({ name: test.name, ok: false, error: error instanceof Error ? error.stack : String(error) }); }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }

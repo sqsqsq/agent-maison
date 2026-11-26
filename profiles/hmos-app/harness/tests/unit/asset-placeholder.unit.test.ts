@@ -1,3 +1,4 @@
+import { runUnitCases } from '../../../../../harness/tests/utils/unit-cases';
 export const layer = 'capability' as const; // Actual native helper calls are part of this suite.
 // ============================================================================
 // asset-placeholder.unit.test.ts — 素材占位能力（角色占位生成 / 占位 CLI / $r 引用扫描）
@@ -330,14 +331,5 @@ test('canonical 契约集成：语义 type + acquisition:placeholder 过 validat
 });
 
 export function runAll(): UnitCaseResult[] {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (err) {
-      out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return out;
+  return runUnitCases(cases);
 }

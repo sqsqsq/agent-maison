@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../../../../../harness/tests/utils/unit-cases';
 /**
  * round5 P1-A nav 配置单测：屏 id 归一化（X1）+ 步骤形状 + 一致性校验。
  * 承重用例＝真实 manage_non_local 三套 id（ui-spec `manage_non_local` / 采集 `__overlay__0` /
@@ -33,12 +34,14 @@ import type { UnitCaseResult } from '../../../../../harness/tests/run-unit';
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   const run = (name: string, fn: () => void) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return;
     try {
       fn();
       results.push({ name, ok: true });
     } catch (e) {
       results.push({ name, ok: false, error: (e as Error).message });
-    }
+    } finally { endUnitCase(); }
   };
 
   run('短信稳定页锚与缺按钮分开；旧all_of不可自动放行，真正错页/锁屏不落正式截图', () => {

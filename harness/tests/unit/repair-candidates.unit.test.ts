@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // ============================================================================
 // repair-candidates.unit.test.ts — 责任阶段统一路由的共享事实层（plan b6e4c9f2 t1）
 // 信任合取（逐条 verifier 验证/conditional receipt 抑制/负面两分支）、两层指纹、
@@ -41,7 +42,6 @@ import {
 } from '../../../profiles/hmos-app/harness/hvigor-runner';
 import { extractFailureClassification as parseFailureClassificationFromDetails } from '../../harness-runner';
 import { formatRepairCandidatesMenu } from '../../scripts/utils/assess-renderer';
-import type { AssessRecommendation, AssessResult, ReconcileObservationV1 } from '../../scripts/utils/assess';
 import type { UnitCaseResult } from '../run-unit';
 
 import * as path from 'path';
@@ -49,6 +49,7 @@ import * as YAML from 'yaml';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import { loadArtifactInventory, loadFeatureContracts, phaseContractIndex } from '../../scripts/utils/skill-contract';
 import type { RepairResponsibilityContext } from '../../scripts/utils/repair-responsibility';
+import type { AssessRecommendation, AssessResult, ReconcileObservationV1 } from '../../scripts/utils/assess';
 const fixtureFramework = path.resolve(__dirname, '../../..');
 const fixtureWorkflow = loadWorkflowSpec(fixtureFramework, 'obligation-driven');
 const fixtureInventory = loadArtifactInventory(fixtureFramework);
@@ -67,12 +68,14 @@ const collectReviewRepairCandidates = (input: Parameters<typeof productionCollec
 const deriveCategoryFromFiles = (files: readonly string[]) => productionDeriveCategoryFromFiles(files, responsibility);
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 
 function assert(condition: boolean, message: string): void {

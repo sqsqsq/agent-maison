@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -24,7 +25,6 @@ import { executeCheck } from '../../scripts/utils/check-execution';
 import { fixture as blueprintFixture } from './blueprint-skill-projection.unit.test';
 import { provisionFrameworkUnder } from '../utils/real-chain-host';
 import type { CheckContext, ContractsSpec, UseCasesSpec } from '../../scripts/utils/types';
-import type { UnitCaseResult } from '../run-unit';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 const history = path.resolve(__dirname, '../fixtures/host-recovery-history/20261023/20261023T044016Z-fe4512/project');
@@ -368,10 +368,4 @@ const cases: Array<{ name: string; run(): void }> = [
   }); } },
 ];
 
-function runCases(filter?: string): UnitCaseResult[] {
-  return cases.filter(item => filter === undefined || item.name.includes(filter)).map(item => {
-    try { item.run(); return { name: item.name, ok: true }; } catch (error) { return { name: item.name, ok: false, error: String(error) }; }
-  });
-}
-export const runAll = (): UnitCaseResult[] => runCases();
-export const runSelectedCases = (filter?: string) => { const results = runCases(filter); return { results, matchedCaseCount: results.length, executionTimings: [] }; };
+export const runAll = () => runUnitCases(cases);

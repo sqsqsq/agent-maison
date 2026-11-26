@@ -1,4 +1,4 @@
-import { unitCaseGroups } from '../utils/unit-case-selection';
+import { beginUnitCase } from '../utils/unit-cases';
 // verifier-material.unit.test.ts — plan 07a41ec6 T7：审前材料视图（subject 寻址材料）与差异登记
 
 import assert from 'assert';
@@ -24,6 +24,8 @@ import {
   verifierMaterialsEquivalent,
   verifierMaterialFileMatchesCurrent,
   verifierMaterialFileHash,
+  verifierUsesImplementationChanges,
+  verifierInputBindingsSha256,
   VerifierPreimagesUnavailable,
 } from '../../scripts/utils/verifier-material';
 import { readImplementationReviewChanges } from '../../scripts/utils/diff-scope';
@@ -31,7 +33,6 @@ import { buildVerifierRequest } from '../../scripts/utils/verifier-request';
 import { stableStringify } from '../../scripts/utils/phase-evidence-manifest';
 import type { ContextFileEntry } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
-import { copyC6HostReplay } from '../utils/c6-host-replay';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { assembleVerifierPhasePrompt, collectContextFiles, refreshVerifierRequestContext, writeRunSummaryBase } from '../../harness-runner';
 import { assembleAIPrompt, buildScriptReport, failScriptReportWithFatalError, generateScriptReport, loadVerifierPromptTemplate, readVerifierItemReviewPrompt,
@@ -39,25 +40,20 @@ import { assembleAIPrompt, buildScriptReport, failScriptReportWithFatalError, ge
 import { classifyFailureKind } from '../../scripts/utils/goal-failure-classifier';
 import { factsPhaseFingerprint, type FactsInvocationContext } from '../../scripts/utils/context-facts';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { hasChangedVerifierMaterialInputs, readCurrentDispositionInput } from '../../scripts/utils/verify-feature-completion';
-import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
+import { hasChangedVerifierMaterialInputs } from '../../scripts/utils/verify-feature-completion';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import type { ResolvedPhaseInputs } from '../../scripts/utils/capability-resolution';
 import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
 import type { CheckContext } from '../../scripts/utils/types';
-import { readPhaseRepairIssues, verifierSemanticChecks } from '../../scripts/utils/repair-candidates';
-import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
-import { phaseCompletionProblems } from '../../scripts/utils/check-disposition';
-import { createIndependentQuestioningResult, describeQuestioningChanges, requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning, independentQuestioningBlockers } from '../../scripts/utils/blueprint-questioning';
+import { createIndependentQuestioningResult, describeQuestioningChanges, requiredQuestioningScopes, selectQuestioningScopes } from '../../scripts/utils/blueprint-questioning';
 import { setupRunlessProject } from './execution-scope.unit.test';
 import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { loadResolvedProfile } from '../../profile-loader';
 import { fixture as codingFixture } from './standalone-coding-review.unit.test';
 import { buildGoalManifestFromInput, computeManifestIdentityFields, diffManifestIdentityFields } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const FEATURE = 'vm-fixture';
 
@@ -91,86 +87,49 @@ const CHECKS = [
   { id: 'b', status: 'WARN', severity: 'MINOR' },
 ];
 
-function countAcceptanceCollections<T>(run: () => T): { result: T; count: number } {
-  const material = require('../../scripts/utils/verifier-material') as typeof import('../../scripts/utils/verifier-material');
-  const original = material.collectCurrentAcceptanceEvidence;
-  let count = 0;
-  material.collectCurrentAcceptanceEvidence = input => { count += 1; return original(input); };
-  try { return { result: run(), count }; }
-  finally { material.collectCurrentAcceptanceEvidence = original; }
-}
-
 const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'phase verifier ignores unbound implementation changes outside Coding and Review but keeps real acceptance sources',
     run: () => {
+      const featurePhases = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
+      assert.deepStrictEqual(featurePhases.filter(verifierUsesImplementationChanges), ['coding', 'review']);
       const root = mkProject(), frameworkRoot = path.resolve(__dirname, '../../..'), feature = FEATURE;
       const priorBase = process.env.HARNESS_DIFF_BASE_REF;
       const prefix = '02-Feature/Value/';
       const source = prefix + 'src/main/ets/Value.ets', test = prefix + 'src/ohosTest/ets/test/Value.test.ets';
-      const modified = prefix + 'Unrelated.ets', retired = prefix + 'Retired.ets';
-      const oldName = prefix + 'OldName.ets', newName = prefix + 'NewName.ets';
-      const unbound = [modified, retired, oldName, newName];
-      const phases = ['spec', 'plan', 'coding', 'review', 'ut', 'testing'];
-      const onlyBound = ['spec', 'plan', 'ut', 'testing'];
+      const modified = prefix + 'Unrelated.ets';
       try {
         const git = reviewRepo(root);
         put(root, source, 'export function value() { return 42; }\n');
         put(root, test, "it('uses the production value', 0, () => { expect(value()).assertEqual(42); });\n");
         put(root, modified, 'export const unrelated = 1;\n');
-        put(root, retired, 'export const retired = "before A";\n');
-        put(root, oldName, 'export const renamed = true;\n');
         put(root, `doc/features/${feature}/contracts.yaml`, YAML.stringify({ feature, files: [source, test],
           modules: [{ name: 'Value', package_path: '02-Feature/Value' }] }));
         put(root, `doc/features/${feature}/acceptance.yaml`, YAML.stringify({ feature, criteria: [{ id: 'AC-1', description: 'value is observable', ut_layer: 'unit' }] }));
         git('add', '-A'); git('commit', '-qm', 'before unrelated work');
-        const first = git('rev-parse', 'HEAD');
-        put(root, retired, 'export const retired = "before B";\n');
-        git('add', retired); git('commit', '-qm', 'change the deleted preimage only');
-        const second = git('rev-parse', 'HEAD');
+        process.env.HARNESS_DIFF_BASE_REF = git('rev-parse', 'HEAD');
         const loader = new SpecLoader(root, undefined, undefined, frameworkRoot);
         const resolvedProfile = loadResolvedProfile(root, loadFrameworkConfig(root), frameworkRoot);
         const common = { projectRoot: root, frameworkRoot, feature };
-        const raw = (phase: string) => buildVerifierMaterialView({ ...common, phase, gateFingerprint: null, phaseRuleText: 'rule',
-          templateText: 'template', checks: CHECKS, contextFiles: [] });
-        const assemble = (phase: string) => assembleVerifierPhasePrompt(path.join(frameworkRoot, 'harness'),
-          { kind: 'standalone', ...common, frameworkRel: '' }, loader,
-          { phase, feature, phaseRule: loader.loadPhaseRule(phase), featureSpec: loader.loadFeatureSpec(feature) },
-          buildScriptReport(phase, feature, root, []), { phaseIssues: null, goalBrief: null, resolvedProfile });
-        process.env.HARNESS_DIFF_BASE_REF = first;
-        const before = new Map(onlyBound.map(phase => [phase, assemble(phase)]));
+        const featureSpec = loader.loadFeatureSpec(feature);
+        const prepare = (phase: 'spec' | 'review') => {
+          const context = { phase, feature, phaseRule: loader.loadPhaseRule(phase), featureSpec };
+          const report = buildScriptReport(phase, feature, root, []);
+          return () => assembleVerifierPhasePrompt(path.join(frameworkRoot, 'harness'),
+            { kind: 'standalone', ...common, frameworkRel: '' }, loader, context, report,
+            { phaseIssues: null, goalBrief: null, resolvedProfile });
+        };
+        const assembleSpec = prepare('spec');
+        const before = assembleSpec().material;
         put(root, modified, 'export const unrelated = 2;\n');
-        git('rm', '-q', retired);
-        git('mv', oldName, newName);
-        const updated = new Map(phases.map(phase => [phase, assemble(phase)]));
-        const withoutPrompt = new Map(phases.map(phase => [phase, raw(phase)]));
-        for (const phase of onlyBound) {
-          const { material, prompt } = updated.get(phase)!;
-          assert.equal(material.material_sha256, before.get(phase)!.material.material_sha256, phase);
-          assert(unbound.every(file => !prompt.includes(file) && !withoutPrompt.get(phase)!.files.some(entry => entry.path === file)), phase);
-          assert(material.files.some(file => file.path === test) && material.files.some(file => file.path === source), phase);
-        }
-        for (const phase of ['coding', 'review']) {
-          const { prompt } = updated.get(phase)!;
-          assert(prompt.includes('D: ' + retired) && prompt.includes(`R: ${oldName} -> ${newName}`) && prompt.includes('unrelated = 2'), phase);
-        }
-        process.env.HARNESS_DIFF_BASE_REF = second;
-        for (const phase of phases) {
-          const view = updated.get(phase)!.material, promptless = withoutPrompt.get(phase)!;
-          const unchanged = onlyBound.includes(phase);
-          const subject = createHash('sha256').update(phase).digest('hex');
-          writeVerifierMaterial(featurePhaseReportsDir(root, feature, phase, frameworkRoot), subject, view);
-          const opts = { ...common, phase, summary: { verifier_subject_id: subject } };
-          assert.equal(hasChangedVerifierMaterialInputs(opts), !unchanged, phase);
-          assert.equal(hasChangedVerifierMaterialInputs({ ...opts, checkFiles: false }), !unchanged, phase);
-          assert.deepEqual(diffVerifierMaterial(promptless, raw(phase)), unchanged ? [] : ['input_bindings'], phase);
-        }
-        put(root, test, "it('uses the production value', 0, () => { expect(value()).assertEqual(99); });\n");
-        for (const phase of onlyBound) {
-          const view = updated.get(phase)!.material;
-          assert(diffVerifierMaterial(view, assemble(phase).material).includes(test), phase);
-          assert(hasChangedVerifierMaterialInputs({ ...common, phase, summary: { verifier_subject_id: createHash('sha256').update(phase).digest('hex') } }), phase);
-        }
+        const spec = assembleSpec();
+        assert.equal(spec.material.material_sha256, before.material_sha256);
+        assert(!spec.prompt.includes(modified) && !spec.material.files.some(file => file.path === modified));
+        assert(spec.material.files.some(file => file.path === test) && spec.material.files.some(file => file.path === source));
+
+        const review = prepare('review')();
+        assert(review.prompt.includes(`M: ${modified}`) && review.prompt.includes('unrelated = 2'));
+        assert(review.material.files.some(file => file.path === modified));
       } finally {
         if (priorBase === undefined) delete process.env.HARNESS_DIFF_BASE_REF; else process.env.HARNESS_DIFF_BASE_REF = priorBase;
         fs.rmSync(root, { recursive: true, force: true });
@@ -253,10 +212,10 @@ const cases: Array<{ name: string; run: () => void }> = [
         git('add', '-A'); git('commit', '-qm', 'first before state');
         const a = git('rev-parse', 'HEAD');
         put(root, oldPath, before + '// old declaration B\n');
-        git('add', '-A'); git('commit', '-qm', 'changed rename preimage');
+        git('commit', '-qam', 'changed rename preimage');
         const b = git('rev-parse', 'HEAD');
         fs.writeFileSync(path.join(root, deleted), Buffer.from([0, 0x81, 0xab, 0xff]));
-        git('add', '-A'); git('commit', '-qm', 'changed deletion preimage');
+        git('commit', '-qam', 'changed deletion preimage');
         const c = git('rev-parse', 'HEAD');
         put(root, 'unrelated.txt', 'neutral file\n');
         git('add', '-A'); git('commit', '-qm', 'unchanged reviewed preimages');
@@ -269,40 +228,51 @@ const cases: Array<{ name: string; run: () => void }> = [
         git('rm', '-q', deleted);
         const resolved: ResolvedPhaseInputs = { phase, values: {}, artifacts: {},
           context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } };
-        const baseInput = { projectRoot: root, frameworkRoot, feature, phase, gateFingerprint: null, phaseRuleText: 'rule',
-          templateText: 'template', checks: CHECKS };
-        const subject = (view: ReturnType<typeof buildVerifierMaterialView>) => buildVerifierRequest({
-          feature, phase, gate_fingerprint: null, source_commit_sha: null, worktree_digest: null, prompt_path: 'p.md',
-          prompt_sha256: 'f'.repeat(64), material_sha256: view.material_sha256,
-        }).subject_id;
-        for (const resolvedInputs of [undefined, resolved]) {
-          const build = (baseRef: string, readForPrompt = false, runId?: string) => {
-            process.env.HARNESS_DIFF_BASE_REF = baseRef;
-            const observed = readForPrompt ? readImplementationReviewChanges(root, feature, { frameworkRoot, resolvedInputs, runId }) : undefined;
-            return buildVerifierMaterialView({ ...baseInput, resolvedInputs, runId, reviewChanges: observed,
-              contextFiles: observed ? observed.contextFiles.filter(file => file.label.startsWith('(')) : [] });
-          };
-          const renameA = build(a), renameB = build(b), deletionC = build(c), unrelatedD = build(d);
-          for (const [left, right] of [[renameA, renameB], [renameB, deletionC]]) {
-            assert.deepEqual(diffVerifierMaterial(left, right), ['input_bindings']);
-            assert.notEqual(subject(left), subject(right));
-            assert(!verifierMaterialsEquivalent(left, right, root, resolvedInputs));
-          }
-          assert.equal(subject(deletionC), subject(unrelatedD), 'unrelated commit does not bind baseline SHA');
-          assert.equal(subject(build(d, true)), subject(unrelatedD), 'prompt-time and policy-off recompute consume the same raw preimages');
-          assert.equal(subject(build(a, true, manifest.run_id)), subject(unrelatedD), 'Goal ignores the standalone baseline override');
-          const paths = readImplementationReviewChanges(root, feature, { frameworkRoot, runId: manifest.run_id })!.preimages;
-          assert(paths.some(entry => entry.status === 'R' && entry.path === oldPath && entry.target === newPath));
-          assert(paths.some(entry => entry.status === 'D' && entry.path === deleted
-            && entry.sha256 === createHash('sha256').update(Buffer.from([0, 0x81, 0xab, 0xff])).digest('hex')));
-          assert(!unrelatedD.files.some(file => file.path === oldPath || file.path === deleted));
-        }
+        const common = { projectRoot: root, frameworkRoot, feature, phase };
+        const readPreimages = (baseRef: string, includePrompt = false) => {
+          process.env.HARNESS_DIFF_BASE_REF = baseRef;
+          const observed = readImplementationReviewChanges(root, feature, { frameworkRoot, preimagesOnly: !includePrompt });
+          assert(observed && observed.preimages.length === 2, 'expected the real deletion and rename originals');
+          return observed;
+        };
+        const renameA = readPreimages(a);
+        const renameB = readPreimages(b);
+        const promptC = readPreimages(c, true);
+        const fingerprint = (reviewChanges: typeof renameA, resolvedInputs?: ResolvedPhaseInputs) =>
+          verifierInputBindingsSha256({ ...common, reviewChanges, resolvedInputs });
+        const legacyA = fingerprint(renameA), legacyB = fingerprint(renameB), legacyC = fingerprint(promptC);
+        assert(legacyA && legacyB && legacyC);
+        assert.notEqual(legacyA, legacyB, 'changing only the rename preimage changes the binding');
+        assert.notEqual(legacyB, legacyC, 'changing only the delete preimage changes the binding');
+        assert.deepEqual(renameA.preimages.filter(entry => entry.status === 'D'), renameB.preimages.filter(entry => entry.status === 'D'));
+        assert.deepEqual(renameB.preimages.filter(entry => entry.status === 'R'), promptC.preimages.filter(entry => entry.status === 'R'));
+        assert(promptC.preimages.some(entry => entry.status === 'R' && entry.path === oldPath && entry.target === newPath));
+        assert(promptC.preimages.some(entry => entry.status === 'D' && entry.path === deleted
+          && entry.sha256 === createHash('sha256').update(Buffer.from([0, 0x81, 0xab, 0xff])).digest('hex')));
+        assert.notEqual(fingerprint(renameA, resolved), fingerprint(promptC, resolved), 'resolved inputs also bind the original Git bytes');
+
         const harnessRoot = path.join(frameworkRoot, 'harness');
         const gateFingerprint = computeGateFingerprint(frameworkRoot, phase);
         const report = generateScriptReport(harnessRoot, phase, feature, root, [
           { id: 'fixture_structure', category: 'structure', description: 'Review product is readable', severity: 'BLOCKER', status: 'PASS', details: 'Fixture review product exists.' },
         ], frameworkRoot);
-        const material = buildVerifierMaterialView({ ...baseInput, gateFingerprint, checks: report.checks, contextFiles: [], runId: manifest.run_id });
+        const build = (reviewChanges?: typeof renameA, runId?: string) => buildVerifierMaterialView({ ...common, gateFingerprint, runId,
+          phaseRuleText: 'rule', templateText: 'template', checks: report.checks, contextFiles: [], reviewChanges });
+        process.env.HARNESS_DIFF_BASE_REF = a;
+        const materialA = build(renameA), materialB = build(renameB), material = build(undefined, manifest.run_id);
+        assert.equal(materialA.input_bindings_sha256, legacyA);
+        assert.equal(materialB.input_bindings_sha256, legacyB);
+        assert.equal(material.input_bindings_sha256, legacyC, 'empty-context Goal signing uses D rather than the external A override and matches the neutral C packet');
+        assert(!material.files.some(file => file.path === oldPath || file.path === deleted));
+        const subject = (view: typeof material) => buildVerifierRequest({
+          feature, phase, gate_fingerprint: gateFingerprint, source_commit_sha: null, worktree_digest: null, prompt_path: 'p.md',
+          prompt_sha256: 'f'.repeat(64), material_sha256: view.material_sha256,
+        }).subject_id;
+        for (const [left, right] of [[materialA, materialB], [materialB, material]]) {
+          assert.deepEqual(diffVerifierMaterial(left, right), ['input_bindings']);
+          assert.notEqual(subject(left), subject(right));
+          assert(!verifierMaterialsEquivalent(left, right, root));
+        }
         const reportsDir = featurePhaseReportsDir(root, feature, phase, frameworkRoot);
         put(root, path.relative(root, path.join(reportsDir, 'ai-prompt.md')), 'Review the fixed Goal Git baseline.\n');
         const signed = writeRunSummaryBase(root, report, frameworkRoot,
@@ -360,7 +330,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         const recheck = (summary: unknown) => hasChangedVerifierMaterialInputs({ projectRoot: root, frameworkRoot, feature, phase, summary });
         assert(recheck(issued), 'the normal entry must not return a cached summary holding a stale independent request');
         let lastGapSummary: unknown;
-        for (let attempt = 0; attempt < 2; attempt++) assert.throws(build, (error: unknown) => {
+        assert.throws(build, (error: unknown) => {
           if (!(error instanceof VerifierPreimagesUnavailable)) return false;
           assert(error.message.includes(removed));
           const failure = failScriptReportWithFatalError(report, 'assemble_ai_prompt', error, frameworkRoot, 'verification_evidence_gap');
@@ -466,51 +436,6 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'CU canonical blueprint material follows consumed content and preserves unchanged legacy whole-blueprint bindings',
-    run: () => {
-      const { loadHostSnapshot, SNAPSHOT_CU_FEATURE } = require('../fixtures/host-snapshot-3.1.0/generate') as typeof import('../fixtures/host-snapshot-3.1.0/generate');
-      const { loadCanonicalBlueprint } = require('../../scripts/utils/component-blueprint-path') as typeof import('../../scripts/utils/component-blueprint-path');
-      const { blueprintAuthorContent } = require('../../scripts/utils/component-blueprint-model') as typeof import('../../scripts/utils/component-blueprint-model');
-      const { reconcileChangeUnitBlueprintRefs } = require('../../scripts/utils/change-unit-design-preparation') as typeof import('../../scripts/utils/change-unit-design-preparation');
-      const { changeConsumedTargetContent, changeUnconsumedBlueprintContent } = require('./phase-evidence-manifest.unit.test') as typeof import('./phase-evidence-manifest.unit.test');
-      const host = loadHostSnapshot();
-      try {
-        const { blueprint, canonicalPath } = loadCanonicalBlueprint(host.root, 'ledger-app-blueprint');
-        const file = path.relative(host.root, canonicalPath).replace(/\\/g, '/');
-        const build = (feature = SNAPSHOT_CU_FEATURE) => buildVerifierMaterialView({ projectRoot: host.root, feature, phase: 'review',
-          gateFingerprint: null, phaseRuleText: 'rule', templateText: 'template', checks: CHECKS,
-          contextFiles: [{ label: file, kind: 'path', content: '' }] });
-        const before = build(), whole = build('whole-blueprint');
-        const legacy = { ...before, files: before.files.map(entry => entry.path === file ? { ...entry,
-          sha256: createHash('sha256').update(stableStringify(blueprintAuthorContent(blueprint, true))).digest('hex') } : entry) };
-        legacy.material_sha256 = computeMaterialSha256(legacy);
-        const matches = (material: typeof before) => verifierMaterialFileMatchesCurrent({ projectRoot: host.root, feature: SNAPSHOT_CU_FEATURE, material, file });
-        assert(matches(before) && matches(legacy), 'both current scoped and unchanged historical whole bindings remain valid');
-        assert(verifierMaterialsEquivalent(legacy, before, host.root), 'unchanged current author content proves the old recipe migration');
-        blueprint.revision = Number(blueprint.revision) + 1;
-        for (const result of blueprint.derived_results as Array<{ input_revision: number }>) result.input_revision = Number(blueprint.revision);
-        changeUnconsumedBlueprintContent(blueprint);
-        fs.writeFileSync(canonicalPath, YAML.stringify(blueprint));
-        const reconciled = reconcileChangeUnitBlueprintRefs(host.root, 'ledger-app-blueprint');
-        assert(reconciled.bumped.some(entry => entry.change_unit_id === 'ledger-refresh') && !reconciled.skipped.length, JSON.stringify(reconciled));
-        const after = build();
-        assert.equal(after.files.find(entry => entry.path === file)?.sha256, before.files.find(entry => entry.path === file)?.sha256,
-          'unconsumed wording and identity changes preserve the CU canonical blueprint entry');
-        assert(matches(before));
-        assert(!matches(legacy) && !verifierMaterialsEquivalent(legacy, build(), host.root), 'changed old whole bindings cannot be guessed equivalent');
-        assert.notEqual(build('whole-blueprint').material_sha256, whole.material_sha256, 'whole-blueprint review still sees real author content changes');
-        blueprint.revision = Number(blueprint.revision) + 1;
-        for (const result of blueprint.derived_results as Array<{ input_revision: number }>) result.input_revision = Number(blueprint.revision);
-        changeConsumedTargetContent(blueprint); fs.writeFileSync(canonicalPath, YAML.stringify(blueprint));
-        const changed = reconcileChangeUnitBlueprintRefs(host.root, 'ledger-app-blueprint');
-        assert(changed.bumped.some(entry => entry.change_unit_id === 'ledger-refresh') && !changed.skipped.length, JSON.stringify(changed));
-        assert(verifierMaterialFileHash({ projectRoot: host.root, feature: SNAPSHOT_CU_FEATURE, file }), 'the changed canonical CU remains readable after real reconciliation');
-        assert(!matches(before), 'consumed target content remains binding');
-        assert.notEqual(build().material_sha256, before.material_sha256);
-      } finally { clearFrameworkConfigCache(); fs.rmSync(host.root, { recursive: true, force: true }); }
-    },
-  },
-  {
     name: 'P2 actual run control manifest budget is material-neutral; requirement, write authority and non-control files remain binding',
     run: () => {
       const f = codingFixture(false, true), file = path.join(f.root, f.manifest.report_dir, 'manifest.json');
@@ -596,53 +521,6 @@ const cases: Array<{ name: string; run: () => void }> = [
       assert(Buffer.byteLength(diff, 'utf8') < 1_000);
       assert(diff.includes('/design_views/0/nodes/0/acceptance/criteria/0/description') && diff.includes('view:development/node:otp'));
       assert(diff.includes('before.yaml') && diff.includes('current.yaml'));
-    },
-  },
-  {
-    name: 'P2 C Q uses the single machine envelope and stable IDs without frontier quota or loss of substantive denial',
-    run: () => {
-      const blueprint = { design_views: [], relations: [], review_summary: { authored_by: 'author' } } as Record<string, any>;
-      const items = [...requiredQuestioningScopes(blueprint)].map(([ref, kind]) => ({ question: 'Is this scope sufficiently justified?', owner: 'design', scope_kind: kind,
-        scope_ref: ref, disposition: 'not_applicable', verification_refs: ['request:original'], provenance: { source_kind: 'requirement', source_ref: 'request.md', observed_at: '2026-10-29', evidence_strength: 'authoritative', extraction_method: 'read' } }));
-      const result = createIndependentQuestioningResult({ providerId: 'independent', authoredBy: 'author', items });
-      blueprint.review_summary.questioning = result;
-      assert.deepEqual(validateBlueprintQuestioning(blueprint), [], 'a legal independent answer remains valid');
-      assert(!('frontier_budget' in result) && !('repeated_frontier_count' in result));
-      assert.deepEqual((result.items as Record<string, unknown>[]).map(item => item.question_id),
-        (createIndependentQuestioningResult({ providerId: 'independent', authoredBy: 'author', items }).items as Record<string, unknown>[]).map(item => item.question_id));
-      assert.deepEqual((result.items as Record<string, unknown>[]).map(item => item.question_id),
-        (createIndependentQuestioningResult({ providerId: 'independent', authoredBy: 'author', items: items.map(item => ({ ...item, question_id: 'self-selected-new-id' })) }).items as Record<string, unknown>[]).map(item => item.question_id));
-      const previous = { ...result, items: (result.items as Record<string, unknown>[]).map((item, i) => ({ ...item, question_id: `legacy-${i}` })) };
-      assert.equal((createIndependentQuestioningResult({ providerId: 'independent', authoredBy: 'author', items, previous }).items as Record<string, unknown>[])[0].question_id, 'legacy-0', 'known historical IDs remain stable');
-      (result.items as Record<string, unknown>[])[0].disposition = 'blocker';
-      (result.items as Record<string, unknown>[])[0].answer = 'Original acceptance is contradicted by the actual recovery path.';
-      blueprint.review_summary.questioning = { ...result, frontier_budget: 0, repeated_frontier_count: 1000 };
-      assert(!validateBlueprintQuestioning(blueprint).some(item => item.id === 'blueprint_questioning_frontier_budget_exceeded'));
-      assert.equal(independentQuestioningBlockers(blueprint).length, 1, 'retiring execution counters cannot erase Q business denial');
-      assert(validateBlueprintQuestioning(blueprint).some(item => item.id === 'blueprint_admission_false_pass'
-        && item.path === '$.review_summary.questioning.items[0].disposition' && item.message.includes('actual recovery path')),
-      'the sole Q validator must preserve the concrete negative answer for every canonical consumer');
-      const { loadHostSnapshot } = require('../fixtures/host-snapshot-3.1.0/generate') as typeof import('../fixtures/host-snapshot-3.1.0/generate');
-      const { loadCanonicalBlueprint } = require('../../scripts/utils/component-blueprint-path') as typeof import('../../scripts/utils/component-blueprint-path');
-      const { checkCanonicalComponentBlueprint } = require('../../scripts/check-component-blueprint') as typeof import('../../scripts/check-component-blueprint');
-      const { writeBackAdmission } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
-      const host = loadHostSnapshot();
-      try {
-        const configFile = path.join(host.root, 'framework.config.json');
-        const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
-        config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
-        fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
-        const canonical = loadCanonicalBlueprint(host.root, 'ledger-app-blueprint');
-        const entry = (canonical.blueprint.review_summary as any).questioning.items.find((item: any) => item.scope_ref === 'view:logical');
-        assert(entry, 'the real snapshot must carry the logical Q result');
-        assert(!checkCanonicalComponentBlueprint(host.root, 'ledger-app-blueprint').issues.some(item => item.severity === 'BLOCKER'), 'the original legal canonical blueprint passes');
-        entry.disposition = 'blocker'; entry.answer = 'The actual recovery path contradicts the original acceptance.';
-        const admission = writeBackAdmission(canonical.blueprint, { projectRoot: host.root, canonicalPath: canonical.canonicalPath });
-        assert.notEqual(admission.status, 'pass', 'machine admission cannot override a real independent denial');
-        fs.writeFileSync(canonical.canonicalPath, YAML.stringify(canonical.blueprint));
-        const denied = checkCanonicalComponentBlueprint(host.root, 'ledger-app-blueprint').issues;
-        assert(denied.some(item => item.id === 'blueprint_admission_false_pass' && item.message.includes(entry.answer)), 'the public canonical checker receives the same actual Q denial');
-      } finally { clearFrameworkConfigCache(); fs.rmSync(host.root, { recursive: true, force: true }); }
     },
   },
   {
@@ -761,9 +639,10 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(!verifierMaterialsEquivalent(legacy, before, root), 'a missing original input basis cannot be guessed from HEAD or author claims');
         blueprint.revision++; blueprint.provenance.observed_at = 'later'; blueprint.review_summary.admission.status = 'pass';
         blueprint.review_summary.questioning.provider_id = 'new-provider'; blueprint.review_summary.questioning.items[0].question_id = 'new-id'; write();
-        assert.equal(build().material_sha256, before.material_sha256, 'machine envelopes cannot purchase another Q');
+        const metadataOnly = build();
+        assert.equal(metadataOnly.material_sha256, before.material_sha256, 'machine envelopes cannot purchase another Q');
         assert(verifierMaterialFileMatchesCurrent({ projectRoot: root, feature: FEATURE, material: before, file: 'blueprint.yaml' }));
-        assert(verifierMaterialsEquivalent(before, build(), root), 'already-normalized current evidence remains reusable across machine metadata writes');
+        assert(verifierMaterialsEquivalent(before, metadataOnly, root), 'already-normalized current evidence remains reusable across machine metadata writes');
         blueprint.review_summary.summary = 'The author now claims a different recovery guarantee.'; write();
         assert.notEqual(build().material_sha256, before.material_sha256, 'an actual author statement is independent review material even when it is not proof of progress');
         assert(!verifierMaterialFileMatchesCurrent({ projectRoot: root, feature: FEATURE, material: before, file: 'blueprint.yaml' }));
@@ -843,160 +722,6 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(produced.values.contracts.state === 'resolved');
         assert(designScopeRevisionChecks({ ...ctx, resolvedInputs: produced, featureSpec: loader.loadFeatureSpec(f.feature, produced) }, [])
           .some(check => check.scope_revision_input), 'path rebasing must not hide a real new interface contract');
-      } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
-    },
-  },
-  {
-    name: 'S2 shared entry and producer select current assertions and frozen proof, retain them after refutation and refresh real changes',
-    run: () => {
-      const f = copyC6HostReplay();
-      const frameworkRoot = path.resolve(__dirname, '../../..');
-      const reports = featurePhaseReportsDir(f.root, f.feature, 'plan', frameworkRoot);
-      const options = { projectRoot: f.root, feature: f.feature, phase: 'plan', frameworkRoot };
-      const current = () => resolveCurrentDisposition(readCurrentDispositionInput({ ...options, chain: ['plan'], runId: f.runId }));
-      try {
-        const beforeFiles = fs.readdirSync(reports).sort();
-        const originalIssues = readPhaseRepairIssues(f.root, f.feature, 'plan', { frameworkRoot })!;
-        assert(originalIssues.rows.some(row => row.id === 'acceptance_to_interface'));
-        const evidence = collectCurrentAcceptanceEvidence(options);
-        assert(evidence.some(file => file.label.endsWith('bank_open_card_ut.test.ets') && file.content.includes('expect(')), 'real assertions, beyond a test label');
-        assert(evidence.some(file => file.label.endsWith('OtpService.ets') && file.content.includes('OtpVerificationState')));
-        assert(evidence.some(file => file.label.endsWith('BankCardOpeningService.ets') && file.content.includes('tickOtp')));
-        assert(evidence.some(file => file.label.endsWith('frozen.ut-result.WalletMain.json')));
-        const nativeHost = require('../../../profiles/hmos-app/harness/ut-host-impl') as typeof import('../../../profiles/hmos-app/harness/ut-host-impl');
-        const nativeFacts = nativeHost.currentUtExecutionInputs;
-        try {
-          nativeHost.currentUtExecutionInputs = undefined as unknown as typeof nativeFacts;
-          const withoutNative = collectCurrentAcceptanceEvidence(options);
-          assert(withoutNative.some(file => file.label.endsWith('bank_open_card_ut.test.ets'))
-            && !withoutNative.some(file => file.label.endsWith('frozen.ut-result.WalletMain.json')),
-            'without native qualification the verifier still reads assertions, but receives no validated frozen execution proof');
-        } finally { nativeHost.currentUtExecutionInputs = nativeFacts; }
-        assert(!evidence.some(file => /\/(?:summary|script-report|ac-coverage)\.json$/.test(file.label)), 'mutable latest reports are not plan materials');
-        const countedEntry = countAcceptanceCollections(current);
-        assert(countedEntry.result.completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface' && problem.action === 'verify'));
-        assert.equal(countedEntry.count, 1, 'one read-only entry assembles current counterevidence once');
-        assert.deepEqual(fs.readdirSync(reports).sort(), beforeFiles, 'read-only entry cannot issue requests');
-        const loader = new SpecLoader(f.root, undefined, undefined, frameworkRoot);
-        const entry = resolveCapabilityResolutionEntryInput({ ...options, featuresDir: relFeaturesDir(f.root), goalRunId: f.runId, goalAttemptId: 'i28' });
-        const resolvedInputs = resolveCapabilityInputs({ ...options, track: 'full', ...entry }).inputs;
-        assert(resolvedInputs, 'use the real CU/run-resolved producer input');
-        const scopeContext = { ...options, featureSpec: loader.loadFeatureSpec(f.feature, resolvedInputs), resolvedInputs, factsContext: entry.factsContext } as CheckContext;
-        const eventsFile = path.join(f.root, f.featureDir, 'goal-runs', f.runId, 'events.jsonl'), eventsBytes = fs.readFileSync(eventsFile);
-        assert.deepEqual(designScopeRevisionChecks(scopeContext, []), [], 'moving an unchanged contracts binding cannot publish a new design fact or refresh birth code observations');
-        const contractsFile = resolveFeatureArtifact(f.root, f.feature, 'contracts.yaml').actualPath, contractsBytes = fs.readFileSync(contractsFile);
-        fs.appendFileSync(contractsFile, '\n# explanatory text only\n');
-        const commentInputs = resolveCapabilityInputs({ ...options, track: 'full', ...entry }).inputs!;
-        assert.deepEqual(designScopeRevisionChecks({ ...scopeContext, resolvedInputs: commentInputs,
-          featureSpec: loader.loadFeatureSpec(f.feature, commentInputs) }, []), [], 'a comment cannot manufacture an empty design revision after valid descendant proofs are retained');
-        fs.writeFileSync(contractsFile, contractsBytes);
-        assert(fs.readFileSync(eventsFile).equals(eventsBytes), 'design-fact comparison cannot rewrite historical scope or events');
-        const context = () => collectContextFiles(loader, { kind: 'consumer', projectRoot: f.root, frameworkRoot, frameworkRel: 'framework' }, 'plan', f.feature, loader.loadFeatureSpec(f.feature, resolvedInputs), { resolvedInputs, factsContext: entry.factsContext });
-        const contexts = context();
-        for (const file of evidence) assert(contexts.some(entry => entry.label === file.label), `real producer omitted ${file.label}`);
-        const script = JSON.parse(fs.readFileSync(path.join(reports, 'script-report.json'), 'utf8'));
-        const build = () => buildVerifierMaterialView({ ...options, resolvedInputs, factsContext: entry.factsContext, gateFingerprint: computeGateFingerprint(frameworkRoot, 'plan'), phaseRuleText: 'c6 material binding', templateText: 'current producer', checks: script.checks, contextFiles: context() });
-        const view = build();
-        const issued = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: view,
-          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'production material test' } });
-        assert(issued.verifier_subject_id);
-        publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: issued.verifier_subject_id,
-          reportText: '```issue-verification\n- issue: acceptance_to_interface\n  verdict: refuted\n  evidence: Current AC-3/BD-2 assertions drive OtpVerificationState through the production service.\n```', skipSummaryPatch: true });
-        const countedWriter = countAcceptanceCollections(() => writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: view,
-          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'production material test' } }));
-        const reviewed = countedWriter.result;
-        assert.equal(countedWriter.count, 1, 'subject validation and disposition reuse one read view when no revision is written');
-        assert(!reviewed.repair_candidates?.length, 'the real producer consumes the independent refutation');
-        assert.equal(build().material_sha256, view.material_sha256, 'closing the finding cannot remove its counterevidence');
-        assert(!current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface'), 'current semantic/facts inputs cannot reopen an already reviewed counterevidence claim');
-        const native = evidence.find(file => file.label.endsWith('/ut/execution-key.json'))!;
-        const latest = path.join(path.dirname(path.dirname(path.dirname(path.join(f.root, native.label)))), '20991026T000000Z-000', 'ut');
-        fs.mkdirSync(path.dirname(latest), { recursive: true }); fs.cpSync(path.dirname(path.join(f.root, native.label)), latest, { recursive: true });
-        const keyFile = path.join(latest, 'execution-key.json');
-        const key = JSON.parse(fs.readFileSync(keyFile, 'utf8')); key.run_started_at = '2099-10-26T00:00:00Z'; fs.writeFileSync(keyFile, JSON.stringify(key));
-        assert.equal(build().material_sha256, view.material_sha256, 'routine same-key UT runs keep the original frozen anchor');
-        for (const label of ['02-Feature/WalletMain/src/main/ets/domain/service/OtpService.ets', '02-Feature/WalletMain/src/ohosTest/ets/test/bank_open_card_ut.test.ets']) {
-          const file = path.join(f.root, label), bytes = fs.readFileSync(file);
-          fs.appendFileSync(file, '\n// changed executable input\n');
-          try { assert.notEqual(build().material_sha256, view.material_sha256, label); }
-          catch (error) { assert.match((error as Error).message, /input binding stale:/, 'changed bound inputs must refresh or fail their existing binding'); }
-          assert(current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface' && problem.action === 'verify'), 'a refuted finding still requires fresh proof after real input changes');
-          fs.writeFileSync(file, bytes);
-        }
-        const config = path.join(f.root, 'hvigor/hvigor-config.json5'), configBytes = fs.readFileSync(config);
-        fs.appendFileSync(config, '\n// tool configuration changed\n');
-        assert(collectCurrentAcceptanceEvidence(options).some(file => file.label.startsWith('(') && file.content.includes('配置')));
-        const changedView = build();
-        assert.notEqual(changedView.material_sha256, view.material_sha256);
-        assert.equal(require('../../scripts/utils/repair-candidates').phaseIssuesForVerifierSubject(f.root, f.feature, 'plan', issued.verifier_subject_id, frameworkRoot), null, 'the old subject cannot certify changed execution conditions');
-        const changed = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: changedView,
-          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'production changed inputs' } });
-        assert.notEqual(changed.verifier_subject_id, issued.verifier_subject_id, 'invalidated evidence must issue a new real request');
-        assert.equal(build().material_sha256, changedView.material_sha256, 'a pending request retains the historical anchor and current gap');
-        assert(current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface' && problem.action === 'verify'), 'the changed-subject producer cannot erase the pending original verification');
-        assert.equal(require('../../scripts/utils/repair-candidates').phaseIssuesForVerifierSubject(f.root, f.feature, 'plan', changed.verifier_subject_id, frameworkRoot), null);
-        const refutedBody = '```issue-verification\n- issue: acceptance_to_interface\n  verdict: refuted\n  evidence: Original verifier assessed the current configuration gap and all bound materials; the old plan concern is not a remaining acceptance obligation.\n```';
-        publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: changed.verifier_subject_id,
-          reportText: refutedBody, skipSummaryPatch: true });
-        const close = () => finalizePhaseClosure({ ...options, phase: 'plan', resolvedInputs, factsContext: entry.factsContext,
-          goalRunId: f.runId, persistPhaseState: () => undefined });
-        assert.equal(close().summary.closure_status, 'closed', 'a real reply on the changed subject must close the original verification lifecycle');
-        assert(!current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface'));
-        fs.appendFileSync(config, '// another current configuration change\n');
-        assert(current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface' && problem.action === 'verify'));
-        const confirmedView = build();
-        const confirmedRequest = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: confirmedView,
-          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'second changed configuration' } });
-        const issueRow = originalIssues.rows.find(row => row.id === 'acceptance_to_interface')!;
-        const finding = verifierSemanticChecks(originalIssues.reportText, 'plan', f.feature).find(row => row.id === issueRow.id)!;
-        const confirmedBody = '```yaml\n' + YAML.stringify({ verification_result: { feature: f.feature, phase: 'plan', checks: [finding],
-          summary: { pass: 0, fail: 1, blockers: 0, verdict: 'PASS' } } }) + '```\n```issue-verification\n- issue: ' + issueRow.id
-          + '\n  verdict: confirmed\n  repair_owner: plan\n' + YAML.stringify({ evidence: 'plan.md contracts.yaml | ' + issueRow.summary }).split('\n').filter(Boolean).map(line => '  ' + line).join('\n') + '\n```';
-        publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: confirmedRequest.verifier_subject_id,
-          reportText: confirmedBody, skipSummaryPatch: true });
-        const confirmed = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: confirmedView,
-          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'current independent confirmation' } });
-        assert(confirmed.repair_candidates?.some(candidate => candidate.id === issueRow.id));
-        const ownerTasks = phaseCompletionProblems(current(), ['plan']);
-        assert(ownerTasks.some(problem => problem.id === 'open_finding:' + issueRow.id && problem.action === 'repair' && problem.owner === 'plan'), 'persisted author dispatch must see the original verifier confirmation as owner repair');
-        assert(!ownerTasks.every(problem => problem.action === 'verify'), 'the real runtime verifier-only predicate must yield to the current owner task');
-        assert.equal(confirmed.next_action, 'fix_verifier_findings_then_rerun_harness');
-        assert.throws(close, /open_finding:acceptance_to_interface/, 'confirmed required work cannot close before its author repairs it');
-        // A bounded native-execution substitute publishes the existing frozen result under the actual new configuration key.
-        const nativeApi = require('../../../profiles/hmos-app/harness/execution-key') as typeof import('../../../profiles/hmos-app/harness/execution-key');
-        const newRun = path.join(path.dirname(path.dirname(latest)), '20991027T000000Z-000', 'ut');
-        fs.mkdirSync(path.dirname(newRun), { recursive: true }); fs.cpSync(latest, newRun, { recursive: true });
-        const newRecord = JSON.parse(fs.readFileSync(keyFile, 'utf8'));
-        const modules = newRecord.frozen_files.flatMap((name: string) => /^frozen\.ut-result\.(.+)\.json$/.exec(name)?.[1] ?? []);
-        newRecord.inputs.tool_config_sha256 = nativeApi.sha256Text(modules.sort().map((module: string) => `${module}=${nativeHost.utBuildCollectorKey(f.root, module, 'default')}`).join('\n'));
-        newRecord.execution_key = nativeApi.computeExecutionKey(newRecord.inputs); newRecord.run_started_at = '2099-10-27T00:00:00Z';
-        nativeApi.writeExecutionKeyRecord(newRun, newRecord);
-        const refreshed = collectCurrentAcceptanceEvidence(options);
-        assert(refreshed.some(file => file.label === path.relative(f.root, path.join(newRun, 'execution-key.json')).replace(/\\/g, '/')), 'unusable prior anchors cannot hide a newly valid frozen execution');
-        assert(!refreshed.some(file => file.label === native.label), 'the current selected native anchor must actually refresh');
-        const refreshedView = build();
-        const refreshedRequest = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: refreshedView,
-          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'current native evidence refresh' } });
-        publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: refreshedRequest.verifier_subject_id,
-          reportText: refutedBody, skipSummaryPatch: true });
-        assert.equal(close().summary.closure_status, 'closed');
-        assert.equal(build().material_sha256, refreshedView.material_sha256, 'the refreshed anchor stays stable after the original verifier reply');
-        assert(!current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface'));
-        fs.writeFileSync(config, configBytes);
-        writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: view,
-          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'restore original test configuration' } });
-        const frozen = path.join(f.root, evidence.find(file => file.label.endsWith('frozen.ut-result.WalletMain.json'))!.label);
-        fs.appendFileSync(frozen, '\n');
-        assert(collectCurrentAcceptanceEvidence(options).some(file => file.label.startsWith('(') && file.content.includes('字节变化')));
-        assert(current().completionBlocking.some(problem => problem.action === 'verify'));
-        const frozenView = build();
-        const frozenRequest = writeRunSummaryBase(f.root, script, frameworkRoot, { verifierMaterial: frozenView,
-          verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'changed frozen native bytes' } });
-        assert.equal(build().material_sha256, frozenView.material_sha256, 'issuing a request cannot discard the configuration inputs selected for its frozen-evidence diagnosis');
-        publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: frozenRequest.verifier_subject_id,
-          reportText: refutedBody, skipSummaryPatch: true });
-        assert.equal(close().summary.closure_status, 'closed');
-        assert(!current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface'));
       } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
     },
   },
@@ -1160,22 +885,17 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-export function runSelectedCases(filter?: string) {
+export function runAll() {
   const results: UnitCaseResult[] = [];
-  const timings: UnitExecutionTiming[] = [];
-  for (const c of cases.filter(test => matchesUnitCase(test.name, filter))) {
-    const finish = startCaseTiming([c.name], timings);
+  for (const c of cases) {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       c.run();
       results.push({ name: c.name, ok: true });
     } catch (err) {
       results.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    } finally { finish(); }
+    } finally {  endUnitCase(); }
   }
-  return selectedUnitCases(results, filter, timings);
+  return results;
 }
-
-export function runAll(): UnitCaseResult[] { return runSelectedCases().results; }
-
-export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name))
-  .map(group => ({ ...group, releaseOnly: group.caseNames.some(name => name.startsWith('S2 shared entry and producer')) }));

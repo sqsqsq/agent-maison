@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 /**
  * goal-runner closure / receipt advance gate unit tests.
  */
@@ -73,14 +74,5 @@ test('resolveGoalRunStatus: timeout unclosed at end → PARTIAL not COMPLETED', 
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of CASES) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(CASES);
 }

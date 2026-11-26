@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 /**
  * execution-channel — plan a6c4e9f2 D2/T3 的定向回归。
  *
@@ -111,7 +112,6 @@ test('四通道分流正确；manual:<class> 判 unsupported_gap，裸 manual �
   assert.strictEqual(unknownClass.ok, false, '枚举外的缺口类别不算机器证明');
   assert.strictEqual(parseExecutionChannel('manual:perf_sampling')?.gap_reason, 'perf_sampling');
 });
-
 
 // ---------------------------------------------------------------------------
 // plan b3d7e5a1 T2：provider id 的计划期 registry 存在性
@@ -543,15 +543,6 @@ test('发布指引：flat failure_kind/failure_code 只出现在禁令语境（�
   }
 });
 
-export function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: e instanceof Error ? (e.stack ?? e.message) : String(e) });
-    }
-  }
-  return Promise.resolve(results);
+export async function runAll(): Promise<UnitCaseResult[]> {
+  return runUnitCases(cases);
 }

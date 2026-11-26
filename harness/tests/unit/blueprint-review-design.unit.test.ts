@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -23,11 +24,7 @@ import { evaluateAcceptanceFlowStructure } from '../../scripts/utils/p0-semantic
 import { featureFilePath } from '../../config';
 import { SpecLoader, normalizeUseCasePortCalls } from '../../scripts/utils/spec-loader';
 import { evaluateComponentClosure } from '../../scripts/utils/component-closure-validator';
-import { observeChangeUnitCompletion } from '../../scripts/utils/change-unit-completion';
-import { SNAPSHOT_CU_FEATURE } from '../fixtures/host-snapshot-3.1.0/generate';
-import { loadMigratedHostSnapshot } from '../fixtures/host-snapshot-3.1.0/migrate';
 import type { CheckContext, AcceptanceSpec } from '../../scripts/utils/types';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, unitCaseGroups, SelectedUnitCases, UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 type Fixture = ReturnType<typeof createBlueprintReviewDesignFixture>;
@@ -1103,35 +1100,16 @@ const cases: Array<{ name: string; run(f: Fixture): void }> = [
     const text = render(f); assert(text.includes('无效，未展示（非阻断）')); assert(!text.includes('participant invalid'));
   } },
 ];
-export async function runSelectedCases(selector?: string): Promise<SelectedUnitCases> {
-  const timings: UnitExecutionTiming[] = [];
-  const results = cases.filter(c => matchesUnitCase(c.name, selector)).map(c => {
-    const endTiming = startCaseTiming([c.name], timings); const f = createBlueprintReviewDesignFixture();
-    try { c.run(f); return { name: c.name, ok: true }; } catch (error) { return { name: c.name, ok: false, error: (error as Error).stack }; }
-    finally { try { fs.rmSync(f.root, { recursive: true, force: true }); } finally { endTiming(); } }
-  });
-  const name = 'previously completed but non-retired CU is still checked after authoritative content becomes invalid';
-  if (!matchesUnitCase(name, selector)) return selectedUnitCases(results, selector, timings);
-  const endTiming = startCaseTiming([name], timings);
-  const old = await loadMigratedHostSnapshot([SNAPSHOT_CU_FEATURE]);
-  try {
-    const loaded = loadCanonicalChangeUnit(old.root, 'ledger-app-blueprint', 'ledger-refresh');
-    assert.equal(observeChangeUnitCompletion(old.root, asChangeUnitArtifact(loaded.changeUnit)).state, 'VALID');
-    const bp = loadCanonicalBlueprint(old.root, 'ledger-app-blueprint'); const content = asRecords(bp.blueprint.design_views).flatMap(v => asRecords(v.nodes)).find(n => asRecord(n.acceptance));
-    assert(content); asRecords(asRecord(content.acceptance)!.criteria)[0].expected_result = '';
-    fs.writeFileSync(bp.canonicalPath, YAML.stringify(bp.blueprint));
-    const cu = YAML.parse(fs.readFileSync(loaded.canonicalPath, 'utf8')); const hash = sha256Bytes(fs.readFileSync(bp.canonicalPath));
-    const walk = (value: unknown): void => { if (!value || typeof value !== 'object') return; if ((value as BlueprintRecord).artifact === 'component-blueprint@1') (value as BlueprintRecord).artifact_sha256 = hash; Object.values(value).forEach(walk); };
-    walk(cu); fs.writeFileSync(loaded.canonicalPath, YAML.stringify(cu));
-    const ready = deriveDesignPreparationReadiness(old.root, 'ledger-app-blueprint'); const item = ready.perUnit.find(u => u.changeUnitId === 'ledger-refresh');
-    assert(item && item.verdict === 'blocked' && item.issueIds.includes('authority_acceptance_content_invalid'), JSON.stringify(ready.perUnit));
-    results.push({ name, ok: true });
-  } catch (error) { results.push({ name, ok: false, error: (error as Error).stack }); }
-  finally { try { fs.rmSync(old.root, { recursive: true, force: true }); } finally { endTiming(); } }
-  return selectedUnitCases(results, selector, timings);
+export function runAll() {
+  return runUnitCases(cases.map(({ name, run }) => ({
+    name,
+    run: () => {
+      const fixture = createBlueprintReviewDesignFixture();
+      try {
+        run(fixture);
+      } finally {
+        fs.rmSync(fixture.root, { recursive: true, force: true });
+      }
+    },
+  })));
 }
-export async function runAll() { return (await runSelectedCases()).results; }
-export const listCaseGroups = () => [
-  ...unitCaseGroups(cases.map(test => test.name)),
-  { caseNames: ['previously completed but non-retired CU is still checked after authoritative content becomes invalid'], releaseOnly: true },
-];

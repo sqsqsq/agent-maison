@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -190,18 +191,21 @@ export function runAll(): UnitCaseResult[] {
       }
     })],
     ['missing, escaping and out-of-range diagnosis evidence cannot qualify or dispatch', () => withProject(root => {
+      const eligibility = { planMode: 'enabled' as const, phase: 'coding', scriptVerdict: 'FAIL', checks: [compileFail],
+        reportValidity: 'UNVERIFIED' as const, hasBlockedCapability: false };
       for (const refs of ['上游有问题', '`missing.log:1`', '`build.log:999`', '`../outside.log:1`']) {
         writeIssues(root, 'coding', issue(target, refs));
-        assert.strictEqual(readPhaseRepairIssues(root, FEATURE, 'coding')?.rows.length, 0, refs);
-        assert(!writer(root, 'coding', [compileFail]).verifier_request, refs);
+        const upstreamDiagnosis = readPhaseRepairIssues(root, FEATURE, 'coding');
+        assert.strictEqual(upstreamDiagnosis?.rows.length, 0, refs);
+        assert(!canProduceVerifierRequest({ ...eligibility, upstreamDiagnosis }).allowed, refs);
       }
+      assert(!writer(root, 'coding', [compileFail]).verifier_request, '实际报告不能用越界证据签发诊断请求');
       assert.strictEqual(readableIssueEvidence(root, '`build.log:1`').length, 1);
       writeFile(path.join(root, target), '# Plan\n## Scope\n```yaml\nin_scope_modules: [F]\nout_of_scope_modules: []\nrationale: owned source fixture\n```\n');
       writeFile(path.join(root, 'doc/features/demo/contracts.yaml'), 'modules:\n  - name: F\n    package_path: 02-Feature/F\nfiles: []\n');
       writeFile(path.join(root, '02-Feature/F/src/main/ets/A.ets'), 'export class A {}\n');
       writeIssues(root, 'coding', issue('02-Feature/F/src/main/resources/string.json'));
       assert.strictEqual(readPhaseRepairIssues(root, FEATURE, 'coding')?.rows.length, 0, 'missing implementation/resource remains coding work');
-      assert(!writer(root, 'coding', [compileFail]).verifier_request);
       const configFile = path.join(root, 'framework.config.json');
       const config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.project_profile = { name: 'hmos-app' };
       fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
@@ -339,5 +343,6 @@ export function runAll(): UnitCaseResult[] {
       assert.strictEqual(resolveRepairDeclineState({ ...input, verifyFactDecline: () => true }).get(fp)?.declined_rounds, 1);
     })],
   ];
-  return cases.map(([name, body]) => { try { body(); return { name, ok: true }; } catch (error) { return { name, ok: false, error: (error as Error).stack }; } });
+  return cases.map(([name, body]) => { const endUnitCase = beginUnitCase(name);
+                                       if (!endUnitCase) return discoveryResult(name); try { body(); return { name, ok: true }; } catch (error) { return { name, ok: false, error: (error as Error).stack }; } finally { endUnitCase(); } });
 }

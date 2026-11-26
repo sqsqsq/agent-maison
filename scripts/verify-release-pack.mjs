@@ -222,12 +222,6 @@ function assertZipContents(frameworkRoot) {
   const harnessPkgPath = path.join(frameworkRoot, 'harness/package.json');
   if (!fs.existsSync(harnessPkgPath)) fail('harness/package.json missing');
   const harnessPkg = JSON.parse(fs.readFileSync(harnessPkgPath, 'utf8'));
-  if (harnessPkg.scripts?.['test:unit']) {
-    fail('sanitized harness/package.json still has test:unit');
-  }
-  if (harnessPkg.scripts?.['test:fixtures']) {
-    fail('sanitized harness/package.json still has test:fixtures');
-  }
   for (const key of Object.keys(harnessPkg.scripts ?? {})) if (key.startsWith('test:')) fail(`sanitized harness/package.json still has development script: ${key}`);
   if (!harnessPkg.scripts?.['check:global']) {
     fail('sanitized harness/package.json missing check:global');

@@ -1,3 +1,5 @@
+import { testCliArgs } from '../utils/test-cli-args';
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -449,7 +451,7 @@ function withPublicSmallBlueprint(run: (fixture: {
     // The design is authored after the native request's actual initial HEAD/status observation.
     const canonical = componentBlueprintPath(root, id); fs.mkdirSync(path.dirname(canonical), { recursive: true }); fs.writeFileSync(canonical, YAML.stringify(blueprint));
     const framework = path.resolve(__dirname, '../../..');
-    const cli = (args: string[], blueprintId = id) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(framework, 'harness/scripts/check-component-blueprint.ts'),
+    const cli = (args: string[], blueprintId = id) => spawnSync(process.execPath, [...testCliArgs(path.join(framework, 'harness/scripts/check-component-blueprint.ts')),
       '--project-root', root, '--framework-root', framework, '--blueprint', blueprintId, '--json', ...args], { cwd: path.join(framework, 'harness'), encoding: 'utf8', timeout: 60000,
       env: { ...process.env, CLAUDE_CONFIG_DIR: home, TS_NODE_PROJECT: path.join(framework, 'harness/tsconfig.json') } });
     run({ root, canonical, id, source, head, nativeFile, cli, startRequest });
@@ -457,12 +459,14 @@ function withPublicSmallBlueprint(run: (fixture: {
 }
 
 function test(name: string, run: () => void): UnitCaseResult {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return discoveryResult(name);
   try {
     run();
     return { name, ok: true };
   } catch (error) {
     return { name, ok: false, error: (error as Error).stack ?? (error as Error).message };
-  }
+  } finally { endUnitCase(); }
 }
 
 export function runContentWarnCases(): UnitCaseResult[] {
@@ -580,8 +584,7 @@ export function runContentWarnCases(): UnitCaseResult[] {
       const expectedPath = '$.design_views[0].acceptance.boundaries[0]';
       const versionPath = `$.design_views[${runtimeIndex}].runtime_data_flows[0].use_cases.schema_version`;
       const harnessRoot = path.resolve(__dirname, '..', '..');
-      const invoke = (args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
-        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+      const invoke = (args: string[]) => spawnSync(process.execPath, [...testCliArgs(path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), [require.resolve('ts-node/dist/bin'), '--transpile-only']), '--project-root', projectRoot,
         '--blueprint', 'ledger-app-blueprint', ...args], { cwd: harnessRoot, encoding: 'utf8' });
       const jsonCli = invoke(['--write-review', '--json']); const report = JSON.parse(jsonCli.stdout);
       assert(jsonCli.status === 0 && report.status === 'PASS', jsonCli.stdout + jsonCli.stderr);
@@ -814,7 +817,6 @@ export function runAll(): UnitCaseResult[] {
     assert(prepareCanonicalBlueprintSource(root, blueprintId, context, { requestFile }).length === 0, '同输入source准备重复写');
   })));
 
-
   results.push(...runContentWarnCases());
 
   results.push(test('P2 requirement source directory binds actual bytes and preserves independent missing source gaps', () => {
@@ -1022,8 +1024,7 @@ export function runAll(): UnitCaseResult[] {
       const target = path.join(path.dirname(filePath), 'component-blueprint.review.md');
       fs.rmSync(target, { force: true });
       const harnessRoot = path.resolve(__dirname, '..', '..');
-      const invoke = () => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
-        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+      const invoke = () => spawnSync(process.execPath, [...testCliArgs(path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), [require.resolve('ts-node/dist/bin'), '--transpile-only']), '--project-root', projectRoot,
         '--blueprint', 'ledger-app-blueprint', '--write-review', '--json'], { cwd: harnessRoot, encoding: 'utf8' });
       for (const status of ['refreshed', 'current']) {
         const cli = invoke();
@@ -1081,8 +1082,7 @@ export function runAll(): UnitCaseResult[] {
       const expectedPath = `$.design_views[${asRecords(bp.design_views).indexOf(development)}].nodes[0].table_schema`;
       const expected = checkCanonicalComponentBlueprint(projectRoot, 'ledger-app-blueprint').issues;
       const harnessRoot = path.resolve(__dirname, '..', '..');
-      const invoke = (args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
-        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+      const invoke = (args: string[]) => spawnSync(process.execPath, [...testCliArgs(path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), [require.resolve('ts-node/dist/bin'), '--transpile-only']), '--project-root', projectRoot,
         '--blueprint', 'ledger-app-blueprint', ...args], { cwd: harnessRoot, encoding: 'utf8' });
       const jsonCli = invoke(['--write-review', '--json']);
       const report = JSON.parse(jsonCli.stdout);
@@ -1119,8 +1119,7 @@ export function runAll(): UnitCaseResult[] {
       assert(omitted[0]!.message.includes(journey.graph_id) && omitted[0]!.message.includes(journey.label), '提醒缺图身份或中文名称');
       assert(!expected.some(item => item.id.startsWith('blueprint_generated_graph') && item.id !== 'blueprint_generated_graph_not_displayed'), '反例中的作者图必须合法');
       const harnessRoot = path.resolve(__dirname, '..', '..');
-      const invoke = (args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin'), '--transpile-only',
-        path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), '--project-root', projectRoot,
+      const invoke = (args: string[]) => spawnSync(process.execPath, [...testCliArgs(path.join(harnessRoot, 'scripts/check-component-blueprint.ts'), [require.resolve('ts-node/dist/bin'), '--transpile-only']), '--project-root', projectRoot,
         '--blueprint', 'ledger-app-blueprint', ...args], { cwd: harnessRoot, encoding: 'utf8' });
       const jsonCli = invoke(['--write-review', '--json']);
       assert(jsonCli.status === 0, jsonCli.stdout + jsonCli.stderr);

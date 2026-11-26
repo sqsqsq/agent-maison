@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // usage-capture.unit.test.ts — C-ab-eval 采集基建契约单测（plan d4a7c1e8）
 // ============================================================================
@@ -174,14 +175,5 @@ const cases: Array<{ name: string; run: () => void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

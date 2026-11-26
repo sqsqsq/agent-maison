@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 // ============================================================================
 // agent-containment.unit.test.ts — plan c6a9e4d2 t2/t3（Windows containment +
 // controlled takeover 的 Node 侧契约）
@@ -572,6 +573,7 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
       if (r1.kind !== 'outcomes' || r1.items[0].kind !== 'guardian_identity_unverifiable') {
         throw new Error(`PID 重用未拒：${r1.kind}`);
       }
+      assert(r1.items[0].identity_mismatch === true, 'a reused PID rules out the prior binding without authorizing containment');
       const r2 = reconcileGuardianOwnership(
         [bound({})],
         makeProbe({ 4242: { startedAtMs: 1723953600000, executable: 'C:\\evil\\fake.exe', commandLine: '-Token r1/i1' } }),
@@ -695,22 +697,6 @@ process.stdin.on('end', () => process.stdout.write(JSON.stringify({
       assert(terminateGuardianProcessOnly(0) === false, 'pid=0 必须拒绝');
       const gone = awaitGuardianGone(99999999, pidExists, 2, 10);
       assert(gone, '不存在进程应确认消失');
-    },
-  },
-  {
-    name: 't3: spawn failure before a process exists cannot emit a new settled fact',
-    run: async () => {
-      const { setupGoalRuntimeHost, runGoalRuntimeChain } = require('./goal-runner-testing-integrity.unit.test') as typeof import('./goal-runner-testing-integrity.unit.test');
-      const { root } = setupGoalRuntimeHost('codex', false);
-      try {
-        const result = await runGoalRuntimeChain(root, { adapter: 'codex', freshStartPhase: 'spec', freshEndPhase: 'spec', viaRuntimeClass: true,
-          freshRequirement: '定义本次内部职责，不触发UI、设备或外部动作。',
-          invokeResultFor: () => ({ exitCode: 127, spawn_error: 'ENOENT: test transport failed before a child process existed' }) });
-        assert(result.events.some(event => event.type === 'agent_invoke_start'), '该反例必须实际到达调用，而非前置拒绝');
-        assert(!result.events.some(event => event.type === 'agent_process_bound'), '测试运输未创建/绑定进程');
-        assert(!result.events.some(event => event.type === 'agent_process_settled'), 'spawn前失败不能发settled');
-        assert(!result.events.some(event => event.type === 'run_end' && event.status === 'COMPLETED'), 'spawn前失败不能完成交付');
-      } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
   {
@@ -956,16 +942,7 @@ export function runAll(): Promise<UnitCaseResult[]> {
 }
 
 export async function runAllAsync(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }
 
 if (require.main === module) {

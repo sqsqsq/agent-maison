@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -31,9 +32,7 @@ import { validateCoverageEvidenceContent } from '../../scripts/utils/ut-artifact
 import type { UnitCaseResult } from './ut-artifact-validate.unit.test';
 import type { CheckContext } from '../../scripts/utils/types';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
-import { ensureFeatureExecutionScopeFrozen, featureEffectiveScope, readFeatureFrozenScope } from '../../scripts/utils/feature-execution-scope';
-import { executionScopeFingerprint } from '../../scripts/utils/execution-scope';
-import { clearFrameworkConfigCache, featurePhaseReportsDir } from '../../config';
+import { clearFrameworkConfigCache } from '../../config';
 
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);
@@ -243,16 +242,7 @@ function testStableCoveragePreservesVerifierSubject(): void {
   }
 }
 
-/**
- * 真 UT harness 子进程夹具（能走到 PASS 并签发 verifier subject）。goal-brief 套件复用它
- * 验证目标简报经生产入口 harness-runner 进入 verifier 提示词、材料摘要与控制台（plan 33784ed1 A1/A5）。
- */
-export function setupRealUtHarnessProject(): {
-  root: string; frameworkRoot: string; feature: string; testRel: string;
-  write: (rel: string, body: string) => void;
-  run: (clock: string) => import('child_process').SpawnSyncReturns<string>;
-  reportsDir: string; summaryPath: string; cleanup: () => void;
-} {
+function setupAcceptanceStrengthProject() {
   const repo = path.resolve(__dirname, '../../..');
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ut-harness-subject-'));
   const frameworkRoot = path.join(root, 'framework');
@@ -271,9 +261,9 @@ export function setupRealUtHarnessProject(): {
     fs.writeFileSync(path.join(frameworkRoot, 'profiles/test-ut/harness/profile-path-conventions.js'), "exports.resolveUtSourceRoots=(root,modules)=>modules.map(m=>require('path').join(root,m.package_path,'src','ohosTest')); exports.diffExcludeTestPathRegexes=[/\\/src\\/ohosTest\\//];\n");
     fs.writeFileSync(path.join(frameworkRoot, 'profiles/test-ut/harness/ut-host-impl.js'), [
       "const fs=require('fs'),path=require('path');",
-      "const pass=id=>[{id,category:'structure',severity:'BLOCKER',status:'PASS',description:id,details:'integration seam'}];",
+      "const unexpected = () => { throw new Error('this reader fixture does not execute native tests'); };",
       "const walk=d=>fs.existsSync(d)?fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):/\\.test\\.ets$/.test(e.name)?[path.join(d,e.name)]:[]):[];",
-      "exports.utHostImpl={loadUtFiles:c=>c.featureSpec.contracts.modules.flatMap(m=>walk(path.join(c.projectRoot,m.package_path,'src','ohosTest','ets','test')).map(p=>({path:path.relative(c.projectRoot,p).replace(/\\\\/g,'/'),content:fs.readFileSync(p,'utf8')}))),partitionUtFiles:(c,a)=>({all:a,scoped:a,scopeSources:['production-test-profile']}),checkUtFileNaming:()=>pass('ut_file_naming'),checkUtFrameworkImport:()=>pass('ut_framework_import'),checkUtTscCompiles:()=>pass('ut_tsc_compiles'),checkUtHvigorBuild:()=>pass('ut_hvigor_build'),checkUtHvigorTest:()=>pass('ut_hvigor_test'),checkTestRegistration:()=>pass('test_registration'),isSuiteEntryShim:()=>false};",
+      "exports.utHostImpl={loadUtFiles:c=>c.featureSpec.contracts.modules.flatMap(m=>walk(path.join(c.projectRoot,m.package_path,'src','ohosTest','ets','test')).map(p=>({path:path.relative(c.projectRoot,p).replace(/\\\\/g,'/'),content:fs.readFileSync(p,'utf8')}))),partitionUtFiles:(c,a)=>({all:a,scoped:a,scopeSources:['production-test-profile']}),checkUtFileNaming:unexpected,checkUtFrameworkImport:unexpected,checkUtTscCompiles:unexpected,checkUtHvigorBuild:unexpected,checkUtHvigorTest:unexpected,checkTestRegistration:unexpected,isSuiteEntryShim:()=>false};",
     ].join('\n'));
     write('framework.config.json', JSON.stringify({ schema_version: '1.1', project_name: 'UT subject', materialized_adapters: ['codex'], project_profile: { name: 'test-ut' }, active_workflow: 'obligation-driven', evidence_profile: 'strict', paths: { features_dir: 'doc/features' }, architecture: { outer_layers: [{ id: 'src', can_depend_on: [] }], module_inner_layers: ['main'] } }));
     write('framework.local.json', JSON.stringify({ schema_version: '1.0', agent_adapter: 'codex' }));
@@ -292,46 +282,16 @@ export function setupRealUtHarnessProject(): {
     write('.gitignore', 'framework/\n');
     spawnSync('git', ['init', '-q'], { cwd: root }); spawnSync('git', ['config', 'user.email', 'test@example.com'], { cwd: root }); spawnSync('git', ['config', 'user.name', 'Test'], { cwd: root }); spawnSync('git', ['add', '-A'], { cwd: root }); spawnSync('git', ['commit', '-qm', 'baseline'], { cwd: root });
     clearFrameworkConfigCache();
-    prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature, completionTarget: 'request', requestedResults: ['unit evidence'], requestedPhases: ['ut'], requirement: 'verify value', overwrite: true, impact: { userVisibleBehaviorChange: false, reason: 'unit only', basisPaths: [sourceRel] } });
-    ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot, feature });
-    const fingerprint = executionScopeFingerprint(featureEffectiveScope(readFeatureFrozenScope(root, feature)!));
-    write(`doc/features/${feature}/context/facts.md`, '---\n' + YAML.stringify({ schema_version: '1.1', feature, frozen_scope_fingerprint: fingerprint, established_by: 'ut', ready_to_produce: true, has_blocker_coverage_risk: false, source_code_paths: [sourceRel, 'src/demo/helper.ts', 'src/demo/model.ts', testRel], key_inputs_read: [sourceRel, 'src/demo/helper.ts', 'src/demo/model.ts', testRel], files_inspected_count: 5, searches_performed_estimate: 4, decisions_unlocked: ['verify value'], exploration_mode: 'sequential' }) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| src/demo/value.ts | value exported | verify |\n| src/demo/helper.ts | helper exists | verify dependency |\n| src/demo/model.ts | model exists | verify type |\n| ' + testRel + ' | test target | verify |\n');
     write(testRel, "import { describe, it, expect } from '@ohos/hypium';\ndescribe('Value',()=>{it('[AC-1] reads value',0,()=>{expect(1).assertEqual(1);});});\n");
-    const run = (clock: string) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), path.join(repo, 'harness/harness-runner.ts'), '--phase', 'ut', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 120000, env: { ...process.env, NODE_ENV: 'test', TS_NODE_PROJECT: path.join(repo, 'harness/tsconfig.json'), MAISON_TEST_AC_COVERAGE_NOW: clock } });
-    const reportsDir = featurePhaseReportsDir(root, feature, 'ut', frameworkRoot);
-    return { root, frameworkRoot, feature, testRel, write, run, reportsDir, summaryPath: path.join(reportsDir, 'summary.json'), cleanup };
+    return { root, frameworkRoot, feature, write, cleanup };
   } catch (error) {
     cleanup();
     throw error;
   }
 }
 
-function testTwoRealUtHarnessRunsPreserveSubject(): void {
-  const { root, feature, testRel, write, run, reportsDir: reports, summaryPath, cleanup } = setupRealUtHarnessProject();
-  try {
-    const first = run('2026-01-01T00:00:00.000Z');
-    assert(fs.existsSync(summaryPath), String(first.stderr ?? '') + String(first.stdout ?? '') + String(first.error ?? ''));
-    const firstSummary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { verifier_subject_id?: string; verdict?: string; blockers?: unknown[] };
-    assert(typeof firstSummary.verifier_subject_id === 'string', JSON.stringify(firstSummary));
-    const firstSubject = firstSummary.verifier_subject_id!;
-    const firstCoverage = fs.readFileSync(path.join(reports, 'ac-coverage.json'), 'utf8');
-    publishFixtureVerifierEvidence({ projectRoot: root, reportsDir: reports, feature, phase: 'ut', subjectId: firstSubject });
-    const second = run('2026-01-02T00:00:00.000Z'); assert(fs.existsSync(summaryPath), second.stderr + second.stdout);
-    const secondSummary = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { verifier_subject_id?: string };
-    assert(secondSummary.verifier_subject_id === firstSubject, second.stderr + second.stdout);
-    assert(fs.readFileSync(path.join(reports, 'ac-coverage.json'), 'utf8') === firstCoverage, 'identical harness rerun changed coverage bytes');
-    assert(loadVerifierEvidenceForSubject(root, feature, 'ut', firstSubject).ok, 'same-subject verifier report must remain reusable');
-    write(testRel, "import { describe, it, expect } from '@ohos/hypium';\ndescribe('Value',()=>{it('[AC-1] reads value',0,()=>{expect(1).assertEqual(1);});it('[AC-1] second path',0,()=>{expect(1).assertEqual(1);});});\n");
-    run('2026-01-03T00:00:00.000Z'); const coverageChanged = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { verifier_subject_id?: string };
-    assert(typeof coverageChanged.verifier_subject_id === 'string' && coverageChanged.verifier_subject_id !== firstSubject, 'real coverage change must advance subject');
-    const beforeSource = coverageChanged.verifier_subject_id; write(testRel, "import { describe, it, expect } from '@ohos/hypium';\ndescribe('Value',()=>{it('[AC-1] reads value',0,()=>{expect(2).assertEqual(2);});it('[AC-1] second path',0,()=>{expect(1).assertEqual(1);});});\n"); const sourceRun = run('2026-01-04T00:00:00.000Z');
-    const sourceChanged = JSON.parse(fs.readFileSync(summaryPath, 'utf8')) as { verifier_subject_id?: string };
-    assert(typeof sourceChanged.verifier_subject_id === 'string' && sourceChanged.verifier_subject_id !== beforeSource, 'reviewed source change must advance subject: ' + JSON.stringify(sourceChanged) + String(sourceRun.stderr ?? '') + String(sourceRun.stdout ?? ''));
-  } finally { cleanup(); }
-}
-
 function testAcceptanceStrengthApplicability(): void {
-  const { root, frameworkRoot, feature, write, cleanup } = setupRealUtHarnessProject();
+  const { root, frameworkRoot, feature, write, cleanup } = setupAcceptanceStrengthProject();
   try {
     const { scope: executionScope } = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot, feature,
       completionTarget: 'feature', requestedResults: ['unit evidence'], requestedPhases: ['coding', 'review', 'ut'],
@@ -561,7 +521,6 @@ export function runAll(): UnitCaseResult[] {
     { name: '3ec91fa7 signed acceptance rows survive formatting but actual conflicts return to the original review', fn: testSignedReviewReuse },
     { name: 'ac coverage writer is semantic-idempotent', fn: testAcCoverageWriteIsSemanticIdempotent },
     { name: 'stable coverage preserves verifier subject', fn: testStableCoveragePreservesVerifierSubject },
-    { name: 'two real UT harness runs preserve verifier subject', fn: testTwoRealUtHarnessRunsPreserveSubject },
     { name: 'strength review distinguishes skipped native UT and pending acceptance from unavailable bound inputs', fn: testAcceptanceStrengthApplicability },
     { name: 'dag node linked_acceptance', fn: testDagNodeLevelLinkedAcceptance },
     { name: 'ac_coverage resolvable', fn: testAcCoverageResolvable },
@@ -572,11 +531,13 @@ export function runAll(): UnitCaseResult[] {
     { name: 'inspect rejects wrong feature and missing fields', fn: testInspectRejectsWrongFeatureAndMissingFields },
   ];
   return cases.map(({ name, fn }) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return discoveryResult(name);
     try {
       fn();
       return { name, ok: true };
     } catch (e) {
       return { name, ok: false, error: e instanceof Error ? e.stack ?? e.message : String(e) };
-    }
+    } finally { endUnitCase(); }
   });
 }

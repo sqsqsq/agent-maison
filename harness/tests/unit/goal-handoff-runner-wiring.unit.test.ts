@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -5,8 +6,8 @@ function assert(condition: unknown, message: string): void {
   if (!condition) throw new Error(message);
 }
 
-export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
-  try {
+export function runAll() {
+  return runUnitCases([{ name: 'shared runtime polls at actual check boundary and accepts target ownership before work', run() {
     const source = fs.readFileSync(path.resolve(__dirname, '..', '..', 'scripts', 'goal-phase-runtime.ts'), 'utf8');
     const helperAt = source.indexOf('const consumeCompletedBoundaryHandoff =');
     const helperEnd = source.indexOf('const reviseCurrentScope =', helperAt);
@@ -31,8 +32,5 @@ export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
     assert(accept >= 0 && unitLoop > accept, 'target runtime owner must accept handoff before unit work');
     assert(source.includes('acceptedHandoff?.target_owner_kind === runtimeOwnerKind'),
       'accepted handoff must be bound to the selected runtime owner kind');
-    return [{ name: 'shared runtime polls at actual check boundary and accepts target ownership before work', ok: true }];
-  } catch (error) {
-    return [{ name: 'shared runtime actual check handoff preserves quiescent owner transfer', ok: false, error: (error as Error).message }];
-  }
+  } }]);
 }

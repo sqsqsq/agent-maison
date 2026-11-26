@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // hylyre-entry-conformance.unit.test.ts — 发布关键入口的真实输出 conformance
 //                                          （plan a6c4e9f2 T7b / tasks 6.7b）
@@ -350,19 +351,6 @@ test('0.5.1 §八-4：plan + --use-fakes 不传 --on-fail 与显式 --on-fail ab
   }
 });
 
-export function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const testCase of CASES) {
-    try {
-      testCase.run();
-      results.push({ name: testCase.name, ok: true });
-    } catch (e) {
-      results.push({
-        name: testCase.name,
-        ok: false,
-        error: e instanceof Error ? (e.stack ?? e.message) : String(e),
-      });
-    }
-  }
-  return Promise.resolve(results);
+export async function runAll(): Promise<UnitCaseResult[]> {
+  return runUnitCases(CASES);
 }

@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // intermediate-rounds-journal.unit.test.ts — S5 单写者/逻辑历史/重放收编回归
 // 验收「Ledger 安全双侧四用例」+ no-progress fuse 保全 + 546beb77 孤儿形态根治
@@ -341,14 +342,5 @@ test('T2 at 必填：空串/缺失即抛错（编译期外的运行时兜底）'
 });
 
 export function runAll(): UnitCaseResult[] {
-  const out: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      out.push({ name: c.name, ok: true });
-    } catch (err) {
-      out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return out;
+  return runUnitCases(cases);
 }

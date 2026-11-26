@@ -10,18 +10,7 @@ AgentMaison 自身发 zip 发布件（`framework-<semver>.zip`）前的 BLOCKER 
    npm run release:all
    ```
 
-   发布链内调用一次 `npm test`，完整执行日常与扩展域的 typecheck、全部有效 unit/profile（含 release-only）及 fixture；无需发布前再单独跑全量。每轮开发使用 `npm run test:changed` 日常域按需计划，普通 plan 收口使用 `npm run test:daily` 日常全集和本次必要验证。测试执行/分类基础设施改动用定向接线验证证明无漏组、scope 串用或正式晋升绕过，不因此例行重跑数小时业务全量；已知日常缺陷不能通过分层豁免。下面的 pack/verify 命令用于分步诊断，完整发布链已经包含它们。
-
-   **release-only 套件**也包含在 `npm test` 完整全量中；底层 `test:unit` 默认仍保留原诊断筛选行为。单跑：
-
-   ```bash
-   cd harness && npm run test:unit -- --filter lifecycle-evolution
-   ```
-
-   **兼容基线**：`lifecycle-evolution` 的 L0 要求上一版宿主快照（[`host-snapshot-3.1.0`](../../harness/tests/fixtures/host-snapshot-3.1.0/README.md)）原样加载后 `assessFeature().complete === true`。L0 转红只有两种合法处置：
-
-   - 修回归；
-   - 有意的破坏性变更：(a) 在 `MIGRATION.md` 登记宿主可执行的迁移步骤；(b) 在快照上按该步骤迁移后 L0 重新为 true；(c) 按快照 README「重生成规则」重生成快照并更新钉住提交。不要求自动迁移器。
+   发布链从仓根运行一次 `npm test`，执行 typecheck、全部 unit、profile、有效 fixture 和根工具测试。每轮开发和 plan 收口使用同一入口。本地排错可按套件名筛选，例如 `npm test -- --filter runner-layout-smoke`，筛选不写全量证明。下面的 pack/verify 命令用于分步诊断，完整发布链已经包含它们。
 
 2. **Plan 版本门禁 + 维护者 CHANGELOG（dev-only）**
 
@@ -78,15 +67,11 @@ npm run candidate:promote -- --evaluator-report <consumer-golden-report.json>
 npm run candidate:promote -- --source-root <受测隔离副本> --evaluator-report <consumer-golden-report.json>
 ```
 
-构建候选先运行 `test:daily` 日常全集，再 pack、校验同一 zip、执行同 zip 消费者 lifecycle smoke；候选通过可按原授权回灌宿主。候选 sidecar 记录日常测试输入 id 和来源目录，`complete` 只说明候选构建及 smoke 完成，尚不代表正式发布资格。
+构建候选先在稳定来源运行一次根 `npm test`，全绿后打包，再以同一 zip 完成包校验与消费者 lifecycle smoke。冒烟验证临时宿主安装、克隆、覆盖升级和全局检查。恢复与交付由真实宿主任务验证。候选 sidecar 记录构建全量起止输入、通过计数、源码身份和同一 zip 身份。`complete` 表示候选构建及 smoke 已完成。
 
-晋升保留 zip SHA、包内 manifest、consumer golden 和发布 plan 门禁。正式完整测试必须对应其来源当前稳定的 `InputSnapshot`，结果明确为 `scope=full`、`full=true`，并有同输入的 `completeRun` 通过事实；daily/changed 或阶段检查不能代替。没有可复用证明时，在匹配来源执行一次 `npm test`，发布 plan 门禁也使用该来源的版本窗口。来源先经已有 pack 的 `--stage-only` 得到 sanitize/LF 后发布集合，与候选逐文件对齐；只比较，不重打候选 zip。多文件、缺文件、内容或版本不一致，以及测试后输入漂移，均不得晋升。
+晋升核对构建时绑定的全量通过证明、zip SHA、包内 manifest、consumer golden 和发布 plan 门禁。旧候选仅有日常结果、缺少证明或证明与候选不匹配时重新构建。候选来源按既有打包规则生成发布文件清单，与原 zip 的版本和各文件字节核对。主干进入下一版本时，可指定对应版本且发布内容一致的保留来源，用于检查发布 plan 门禁。
 
-请保留候选对应的受测副本。干净提交可用其 `source_commit` 还原隔离来源；含未提交内容时仅 HEAD 不足以重现。找不到匹配来源须重新构建候选，不改写当前工作区凑一致。仅开发期 plan/测试输入变化可以产生新的 full 输入 id，前提是正式结果绑定实际来源，且发布集合仍与候选相同；不要求 full id 等于最初 daily id。
-
-只有正式全量、同 zip smoke、golden 和包身份均通过，而发布 plan 门禁未过时，保留 `eligible` 候选并等待 plan 完结；其它失败不授予正式资格。最终晋升移动原 zip，保持宿主已验收的字节。开发期 `test:*`、`candidate:*` 和 `release:*` 脚本不进消费者 package；消费者 `framework/harness` 的 `npm test` 仍为 `check:global`。
-
-来源 plan 状态改变会使输入快照变化，`eligible` 后重新 promote 可能需要重新执行全量；正式发布前先确认来源门禁已准备完成。
+只有全量、同 zip smoke、golden 和包身份均通过，且仅发布 plan 门禁未过时，候选才标记为 `eligible`。门禁通过后重新执行晋升，移动宿主已验收的同一 zip。消费者 `framework/harness` 的 `npm test` 仍为 `check:global`。
 
 ## 人工（可选）
 

@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 import { normalizeDeviceTestCases } from '../../scripts/utils/device-test-case-kernel';
 import type { AcceptanceSpec } from '../../scripts/utils/types';
 
@@ -72,11 +73,6 @@ export function run(): void {
   assert(empty.issues.length === 1, 'empty adhoc must fail the common case contract');
 }
 
-export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
-  try {
-    run();
-    return [{ name: 'phase 与 adhoc 共用 cases 归一/校验内核', ok: true }];
-  } catch (error) {
-    return [{ name: 'phase 与 adhoc 共用 cases 归一/校验内核', ok: false, error: (error as Error).message }];
-  }
+export function runAll() {
+  return runUnitCases([{ name: 'phase 与 adhoc 共用 cases 归一/校验内核', run }]);
 }

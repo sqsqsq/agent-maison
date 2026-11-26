@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../../../../../harness/tests/utils/unit-cases';
 // ============================================================================
 // device-test-run-lock-classify.unit.test.ts — testing 侧锁屏的失败分类
 //                                              （openspec ... t1/t6）
@@ -12,12 +13,14 @@ import * as path from 'path';
 import type { UnitCaseResult } from '../../../../../harness/tests/run-unit';
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try {
     fn();
     results.push({ name, ok: true });
   } catch (err) {
     results.push({ name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-  }
+  } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void {
   if (!cond) throw new Error(msg);

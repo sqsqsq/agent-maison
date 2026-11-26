@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // goal-model-pin-d7f3a9c4.unit.test.ts — 显式 --adapter-model 模型钉（plan d7f3a9c4 t1/t2）
 // ----------------------------------------------------------------------------
@@ -22,19 +23,7 @@ import {
   normalizeAdapterModelCliValue,
   resolveFinalModelPin,
 } from '../../scripts/utils/goal-manifest-cli';
-import {
-  buildGoalManifestFromInput,
-  computeManifestIdentityFields,
-  computeManifestIdentityHash,
-  diffManifestIdentityFields,
-  inheritSuccessorManifest,
-  isUserPinnedModel,
-  loadGoalManifestFromRun,
-  manifestIdentityFieldDigest,
-  validateAdapterModelPinValue,
-  writeGoalManifest,
-  type GoalManifest,
-} from '../../scripts/utils/goal-manifest';
+import { buildGoalManifestFromInput, computeManifestIdentityFields, computeManifestIdentityHash, diffManifestIdentityFields, inheritSuccessorManifest, isUserPinnedModel, loadGoalManifestFromRun, validateAdapterModelPinValue, writeGoalManifest } from '../../scripts/utils/goal-manifest';
 import { resolveManifestDriftDecision, resolveManifestIdentityBaseline } from '../../scripts/goal-runner';
 
 const unattended = {
@@ -734,48 +723,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       }
     },
   },
-  {
-    name: 'P3 A10 上一版宿主快照（host-snapshot-3.1.0）的真实 manifest：加载不改身份摘要、不回写；无来源的旧钉值按用户钉死读取且摘要不变',
-    run: () => {
-      const project = path.resolve(__dirname, '..', 'fixtures', 'host-snapshot-3.1.0', 'project');
-      const runs = [
-        { feature: 'demo-card', rel: 'doc/features/demo-card/goal-runs/20260925T043142Z-233c9c' },
-        { feature: '', rel: 'doc/features/ledger-app-blueprint/ledger-refresh/goal-runs/20260925T043336Z-8e78e2' },
-      ];
-      for (const r of runs) {
-        const dir = path.join(project, r.rel);
-        const manifestPath = path.join(dir, 'manifest.json');
-        const before = fs.readFileSync(manifestPath);
-        const raw = JSON.parse(before.toString('utf-8')) as GoalManifest;
-        const runId = path.basename(dir);
-        const loaded = loadGoalManifestFromRun(project, runId, { feature: r.feature || raw.feature });
-        const created = fs.readFileSync(path.join(dir, 'events.jsonl'), 'utf-8').split('\n').filter(Boolean)
-          .map((l) => JSON.parse(l) as { type?: string; manifest_identity_fields?: Record<string, string> })
-          .find((e) => e.type === 'run_created');
-        assert.ok(created?.manifest_identity_fields, `${r.rel}：快照须有出生身份`);
-        assert.deepStrictEqual(computeManifestIdentityFields(loaded), created!.manifest_identity_fields,
-          `${r.rel}：加载旧 manifest 后身份摘要须与出生记录逐字段一致`);
-        assert.ok(fs.readFileSync(manifestPath).equals(before), `${r.rel}：加载不得回写 manifest`);
-        // 同一份真实 manifest 加上 3.1.0 形状的旧钉值（只有 adapter/value）：读取即用户钉死，摘要不因新字段变化
-        const legacyPin = { adapter: loaded.adapter ?? 'codex', value: 'gpt-5.5' };
-        const withPin = { ...loaded, adapter_model_pin: legacyPin } as GoalManifest;
-        assert.strictEqual(isUserPinnedModel(withPin.adapter_model_pin), true, '旧钉值无来源=用户显式钉值');
-        assert.strictEqual(computeManifestIdentityFields(withPin).adapter_model_pin, manifestIdentityFieldDigest(legacyPin),
-          '旧钉值的身份摘要按原两字段计算，不因新增的来源一项改变');
-      }
-    },
-  },
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

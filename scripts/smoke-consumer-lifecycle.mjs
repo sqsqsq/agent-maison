@@ -1,39 +1,12 @@
 #!/usr/bin/env node
-// ============================================================================
-// smoke-consumer-lifecycle.mjs — 发布件**整机链**（e5d8a2c4 T4 骨架）
-// ----------------------------------------------------------------------------
-// 为什么必须有这一层（本纲判读原文）：前四批全是「叶子修法 + 单测同步落绿」，
-// 而 plan 自己写着"T4 七用例先行铺红"。零件绿、整机没人验过，正是漏风一直没被
-// 拦住的原因。两个实锤（都不是我自己发现的）：
-//   · 断言挂在生产**到不了**的分支上——单测照绿；
-//   · 判据拿原值比**指纹**，生产上恒 false，而夹具手写原值——3041 个绿穿过四轮 review。
-// 这两类都有一个共同特征：**验收对着夹具，不对着生产接线**。整机链没有夹具可骗——
-// 真实 zip、真实 git、真实 checkout、真实旧 HEAD→新发布件覆盖与 catalog。
-//
-// 本文件是**骨架**：生命周期各段真跑；事故回放用例**显式注册但暂 skip**。
-// skip 不是静默的——注册表缺项会直接失败（见 assertCaseRegistryComplete），
-// 且每次运行都打印 skip 清单与"骨架/完整"横幅。参照既有硬学习：
-// 「CORE_SUITES 显式注册表——新套件不注册 = 假绿」。
-//
-// 与旧 smoke-consumer-staging.mjs 的关系：**已合并，旧脚本退役**。
-// 我最初把它做成了第二套 smoke 并写"两者不互相调用"——那直接违反 plan 原文
-// 「扩展既有 release:smoke-consumer，**不新建**测试台体系」，而且我**没有当场上报
-// 这处偏离**（codex 第七批 P2 抓出）。旧脚本的唯一独有能力是发布件自带的
-// `npm test`（= check:global），已作为 stage `checkGlobal` 吸收进来，且改在 clone
-// 出来的副本上跑。入口仍是 `npm run release:smoke-consumer`，文档引用不受影响。
-//
-// 两种输入：
-//   · `--zip <path>`  ——  用 candidate 的**同一字节** zip（**这才是"验的是要发的字节"**）；
-//   · 不给 `--zip`    ——  就地重 pack，仅供改代码时的快速回归，**不构成发布证据**。
-// ============================================================================
+// 用临时宿主安装、克隆和覆盖升级发布件，再运行发布件自己的全局门禁。
+// --zip 使用指定发布件。无参数时临时重打，仅用于开发诊断。
 
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { spawnSync } from 'child_process';
 import { fileURLToPath } from 'url';
-// M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT（零依赖 CJS；dev 脚本直接静态消费，不带副本）
-import { featureRelativePath } from '../harness/scripts/utils/feature-identity.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, '..');
@@ -49,8 +22,7 @@ const REPO_ROOT = path.resolve(__dirname, '..');
  * `status`：
  *   · `covered`   —— 由下面某个生命周期 stage 真跑覆盖（stage 红即本用例红）
  *   · `pending`   —— 尚未实现（骨架期）。**不是通过**，会计入 skip 并打印。
- *   · `retired`   —— 该事故类别已不属于 Maison 职责，不再由本链验证；必须写明
- *                    `retiredReason`。编号保留，避免注册表出现空洞。
+ *   · `retired`   —— 对应回放从本冒烟链退役；保留编号及 `retiredReason`。
  */
 const CASE_REGISTRY = [
   {
@@ -71,21 +43,16 @@ const CASE_REGISTRY = [
     coveredBy: 'checkGlobal',
     note: 'autocrlf=true clone 通道确实生效，随后普通 global phases 不运行发布件 hash/Git integrity',
   },
-  {
-    id: 3,
-    name: '设备条件未恢复不重派，恢复后原请求继续完成',
-    status: 'covered',
-    coveredBy: 'goal',
-    note: 'goal stage：设备阻塞保留原因；未变重入不重买；READY后同一run补UT/testing并正式完成',
-  },
-  { id: 4, name: '全链推进不依赖任何场外快照缓存（pass snapshot 已退役）', status: 'covered', coveredBy: 'goal',
-    note: 'runner-owned-machine-facts：pass snapshot 机制整体退役——goal stage 全链（fresh→park→resume→ready 收官）在零快照世界端到端跑通即覆盖本用例；原"cache miss 自动丢弃重跑"场景不复存在' },
-  { id: 5, name: '合法coding请求源码写入经原检查完成，不冒称Feature交付', status: 'covered', coveredBy: 'goal',
-    note: '生产生成实现义务和写入边界，作者读取实际请求/研究输入后写源码；原coding检查通过，不再假设独立UT作者窗口' },
-  { id: 6, name: '实际契约检查中断后原请求接回，责任作者修复且必要检查不漏', status: 'covered', coveredBy: 'goal',
-    note: '故障真实落在当前公开模块/施工契约；原检查中断不假完成，重发同一请求后作者修正并重新核验' },
-  { id: 7, name: 'build 失败归因与空转重试', status: 'covered', coveredBy: 'goal',
-    note: 'goal driver 真实写入 ut_hvigor_build/test FAIL，验证 toolchain 归因与重复签名熔断' },
+  { id: 3, name: '设备条件未恢复不重派，恢复后原请求继续完成', status: 'retired',
+    retiredReason: 'plan 4bd95a70 退役设备停放剧本。同一请求的设备恢复由真实宿主任务验证。' },
+  { id: 4, name: '全链推进不依赖任何场外快照缓存（pass snapshot 已退役）', status: 'retired',
+    retiredReason: 'plan 4bd95a70 退役整链剧本。实际运行的恢复与交付由真实宿主任务验证。' },
+  { id: 5, name: '合法coding请求源码写入经原检查完成，不冒称Feature交付', status: 'retired',
+    retiredReason: 'plan 4bd95a70 退役施工剧本。写入边界、原检查和请求完成由真实宿主任务验证。' },
+  { id: 6, name: '实际契约检查中断后原请求接回，责任作者修复且必要检查不漏', status: 'retired',
+    retiredReason: 'plan 4bd95a70 退役契约中断剧本。原请求接回、责任返修和后续复验由真实宿主任务验证。' },
+  { id: 7, name: 'build 失败归因与空转重试', status: 'retired',
+    retiredReason: 'plan 4bd95a70 退役代填构建结果剧本。真实工具链失败的归因与重试由真实宿主任务验证。' },
   // #8 是总纲「A【P0】T4 增用例 #8」后补的（plan 481 行），**初版注册表把它漏了**，
   // 而单测还硬断言"恰好七条"——等于把漏洞钉死：已知 pending 项不在册，门禁照绿。
   // 这正是本文件声称要防的假绿形态，被 codex 当场抓出（第七批 P1）。
@@ -516,10 +483,6 @@ function stageUpgradeOverlay(ctx) {
     throw new Error(`upgradeOverlay 五种 Git 环境的 catalog 裁决不一致：${unequal.join(', ')}`);
   }
 
-  // 后续 goal smoke 需要稳定 Git 基线；恢复跟踪不属于 #9 的被测运行。
-  git(repo, 'add', '-A', '--', 'framework');
-  git(repo, 'commit', '-q', '-m', 'smoke: restore framework tracking for later goal cases');
-  ctx.upgradeOverlayStatus = status;
   ctx.log(`upgradeOverlay/#9：M/D/?? 下真实 framework-init UPDATE/run-global-phases PASS；五态 catalog 裁决逐字段相同`);
 }
 
@@ -540,217 +503,6 @@ function stageCheckGlobal(ctx) {
   ctx.log('check:global：发布件自带的 npm test 在换机副本上通过');
 }
 
-/** Consumer goal recovery uses current work-unit/check-family observations from the shipped runtime. */
-function stageGoal(ctx) {
-  const feature = 'recovery-park';
-  const driver = path.join(REPO_ROOT, 'harness', 'tests', 'helpers', 'goal-run-driver.ts');
-  const tsNode = path.join(ctx.harnessRoot, 'node_modules', 'ts-node', 'dist', 'bin.js');
-  const RESULT = '<<goal-run-result>>';
-  const runDriver = (scenario, extra, featOverride) => {
-    const r = mustRun(`goal driver ${scenario}`, process.execPath, [
-      tsNode, '--transpile-only', driver,
-      scenario, featOverride ?? feature, ctx.clonedFrameworkRoot, ctx.cloneRoot, ...(extra ? [extra] : []),
-    ], { cwd: ctx.harnessRoot });
-    const at = (r.stdout ?? '').lastIndexOf(RESULT);
-    if (at < 0) throw new Error(`goal driver ${scenario} 未返回结果：${(r.stdout ?? '').slice(-400)}`);
-    return JSON.parse((r.stdout ?? '').slice(at + RESULT.length));
-  };
-
-  runDriver('provision');
-  const park = runDriver('device_park');
-  if (park.error !== null || park.exitCode !== 1 || park.runEndStatus !== 'HALTED'
-    || !park.phaseHalts.some(h => h.phase === 'ut' && h.halt_reason === 'device_not_ready')) {
-    throw new Error(`goal/park：实际设备未就绪应保留原因并自然等待，实得 ${JSON.stringify(park)}`);
-  }
-  if (!['spec', 'plan', 'coding', 'review'].every(p => park.checkFamiliesThisCall.includes(p))
-    || park.checkFamiliesThisCall.some(p => p === 'ut' || p === 'testing') || park.authorCallsThisCall !== 1) {
-    throw new Error(`goal/park：一次单元作者、前四真实检查完成，UT/testing仍被设备条件拦住，实得 ${JSON.stringify(park)}`);
-  }
-  ctx.log(`goal/park：原单元成果保留，UT/testing因真实设备条件停放（run=${park.runId}）`);
-
-  // T3①：停放 run 的同源 device_readiness probe 转绿后，supervisor 必须自动
-  // 重新入队同一 run；这个调用仍经 goal-run-driver 子进程，并走发布件 CLI。
-  const probeWake = runDriver('supervisor_probe_wake', park.runId);
-  const probeArgs = probeWake.supervisorRunnerArgs ?? [];
-  if (probeWake.error !== null || probeWake.exitCode !== 0
-    || probeWake.supervisorAction !== 'resume'
-    || !probeArgs.includes('--resume') || !probeArgs.includes(park.runId)
-    || probeArgs.includes('--supersede')) {
-    throw new Error(
-      'goal/T3①：同源 device_readiness probe 转绿必须自动 resume 同一 run，实得 '
-      + JSON.stringify(probeWake),
-    );
-  }
-  ctx.log('goal/T3①：supervisor 周期 probe 转绿后自动 resume 同一 run（无人工确认/无 supersede）');
-
-  // T3① 后继：用真实 crash 窗留下的源 run 起一个真实后继（plan 4e6fb3b6 §5.3 起，supervisor 不再
-  // 自动 supersede——那一支没有生产产出方，已删除；原 supervisor_successor_wake 场景随之删除）。
-  const successorFeature = 'supervisor-successor';
-  runDriver('provision', null, successorFeature);
-  const truncated = runDriver('successor_source_crash', null, successorFeature);
-  // 再启动一次真实 goal-runner，读取生产 writer
-  // 写出的最终 successor manifest，钉住一次性出生字段不会被整对象深拷贝带过来。
-  //
-  // 2026-08-17：删去两条 `vision_lineage` 断言（源须为 'reset'、后继须不带该字段）。
-  // 该字段随 e5d8a2c4 T2 5a **有意净删除 vision 认证控制面**（提交 7792165c）一并退役
-  // ——签名维度整体退出、checkpoint 退化为账本恢复缓存。全仓生产代码现零引用，
-  // 只剩此处断言，于是它永远索取一个再也不会被写出的字段，成为发版死结。
-  // 机制已删而断言留存属遗留清理，不是放宽验证：successor 身份仍由 successor_of
-  // 绑定 + 新 runId + 从 coding 起步三条钉住。
-  const successorRun = runDriver('successor_manifest_probe', truncated.runId, successorFeature);
-  const successorManifest = successorRun.manifest;
-  if (successorRun.error !== null || !successorRun.runId || successorRun.runId === truncated.runId
-    || !successorRun.checkFamiliesThisCall.includes('coding')
-    || !successorManifest
-    || successorManifest.successor_of !== truncated.runId) {
-    throw new Error(
-      'goal/T3①：真实后继必须新起 run、从 coding 起步并写出 successor_of 绑定的 manifest。实得 '
-      + JSON.stringify({ truncated, successorRun }),
-    );
-  }
-  ctx.log('goal/T3①：真实后继从 coding 起步且 successor_of 绑定源 run');
-
-  const resume = runDriver('resume_after_park', park.runId);
-  const goalBehavior = resume.error === null && resume.exitCode === 1 && resume.runEndStatus === 'HALTED'
-    && resume.runId === park.runId && resume.agentCalls === 0 && resume.checkFamiliesThisCall.length === 0
-    && resume.phaseHalts.some(h => h.halt_reason === 'device_not_ready')
-    && !resume.eventTypes.includes('vision_ledger_resume_ack');
-  if (!goalBehavior) {
-    throw new Error(
-      'goal/resume：同一设备条件未变，原请求应保持等待且不重买作者或检查。实得 ' + JSON.stringify(resume),
-    );
-  }
-  ctx.log('goal/resume：条件未变保留原请求，零作者/检查重派，无旧ack门');
-
-  // 第三段（codex 第九批 P0 后半闭环）：设备恢复 READY → 同一 run 无钥匙**真正完成**。
-  // 此前只证明了"仍锁时能再次停放"；这一段证明"设备好了就能收官"——
-  // exit 0 + 报告无 WAITING 残留（旧 halt 被后续 PASS 清除）+ 完成态不封顶人工复核。
-  const ready = runDriver('resume_with_device_ready', park.runId);
-  const readyOk = ready.error === null && ready.exitCode === 0
-    && ready.runId === park.runId && ready.authorCallsThisCall === 0
-    && ready.checkFamiliesThisCall.includes('ut') && ready.checkFamiliesThisCall.includes('testing');
-  if (!readyOk) {
-    throw new Error(
-      'goal/ready：设备 READY 后同一 run 应无钥匙完整收官（exit 0，ut/testing 真跑）。实得 '
-      + JSON.stringify(ready),
-    );
-  }
-  // codex 第九批收尾 P2：注释声称的两条必须真的断言——**读发布件宿主上的报告**
-  // （开发仓 unit 验过一遍不算数：这里验的是 clone 出来的字节跑出的报告）
-  // M5A §4.3：读发布件宿主上的报告——feature 逻辑 id 经唯一 SSOT 展开为物理相对路径
-  const reportPath = path.join(ctx.cloneRoot, 'doc', 'features', featureRelativePath(feature), 'goal-runs',
-    park.runId, 'goal-report.json');
-  const report = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
-  if (report.status !== 'CHAIN_SLICE_COMPLETED') {
-    throw new Error(`goal/ready：无钥匙完成态应为 CHAIN_SLICE_COMPLETED（不封顶人工复核），实得 ${report.status}`);
-  }
-  const staleWaiting = (report.phases ?? []).filter(p => p.run_disposition === 'WAITING');
-  if (staleWaiting.length > 0) {
-    throw new Error('goal/ready：报告不得残留 WAITING 投影（旧 halt 须被后续 PASS 清除）：'
-      + JSON.stringify(staleWaiting));
-  }
-  ctx.log('goal/ready：设备恢复后同一 run 无钥匙完整收官（报告 CHAIN_SLICE_COMPLETED、零 WAITING 残留）');
-
-  // 【第五段已删除 · pass snapshot 退役（runner-owned-machine-facts）】原"cache miss
-  // 自动丢弃重跑"场景不复存在——#4 的新语义（全链推进零场外快照依赖）由上面
-  // fresh→park→resume→ready 全链真跑天然覆盖。
-  ctx.log('goal/#4：pass snapshot 已退役——全链零场外快照依赖（前四段覆盖）');
-
-  // P3 authors the declared work unit together; verify the actual write and current checks, not a removed UT author window.
-  const utMutationFeature = 'ut-source-mutation';
-  runDriver('provision', 'source-write', utMutationFeature);
-  const utMutation = runDriver('ut_source_mutation', null, utMutationFeature);
-  const mutatedSource = evalInShipped(ctx, `
-    const fs = require('fs'), path = require('path');
-    const { SpecLoader } = require('./scripts/utils/spec-loader');
-    const spec = new SpecLoader(${JSON.stringify(ctx.cloneRoot)}, undefined, undefined, ${JSON.stringify(ctx.clonedFrameworkRoot)}).loadFeatureSpec(${JSON.stringify(utMutationFeature)});
-    return (spec.contracts?.files ?? []).map(file => fs.readFileSync(path.join(${JSON.stringify(ctx.cloneRoot)}, file), 'utf8')).join('\\n');
-  `);
-  if (utMutation.error !== null || utMutation.exitCode !== 0 || !mutatedSource.includes('source-write-smoke')
-    || !utMutation.checkFamiliesThisCall.includes('coding')
-    || utMutation.manifest?.execution_scope?.completion_target !== 'request'
-    || fs.existsSync(path.join(ctx.cloneRoot, 'doc/features', featureRelativePath(utMutationFeature), 'feature-completion.json'))
-    || utMutation.eventTypes.includes('phase_write_violation')
-    || utMutation.invalidationRecords.some(r => r.reason === 'phase_write_violation')
-    || utMutation.phaseHalts.some(h => h.halt_reason === 'awaiting_human_review')) {
-    throw new Error(
-      'goal/#5：合法单元作者的实际源码写入应经当前检查正常收官，'
-      + '不得回到 phase_write_violation 自动回退或人工签字循环。实得 '
-      + JSON.stringify(utMutation),
-    );
-  }
-  ctx.log('goal/#5：合法实现义务、实际源码写入及coding检查通过；request完成不冒称Feature交付');
-
-  // Interrupt the actual failed construction check, then re-request without repairing its inputs by hand.
-  const crashFeature = 'atomic-invalidation-crash';
-  runDriver('provision', null, crashFeature);
-  const scopeBefore = evalInShipped(ctx, `
-    const { SpecLoader } = require('./scripts/utils/spec-loader');
-    return new SpecLoader(${JSON.stringify(ctx.cloneRoot)}, undefined, undefined, ${JSON.stringify(ctx.clonedFrameworkRoot)}).loadFeatureSpec(${JSON.stringify(crashFeature)}).contracts;
-  `);
-  const crashed = runDriver('crash_scope_in_run', null, crashFeature);
-  const failedScope = evalInShipped(ctx, `
-    const fs = require('fs'), path = require('path');
-    return JSON.parse(fs.readFileSync(path.join(${JSON.stringify(ctx.cloneRoot)}, 'doc/features', ${JSON.stringify(crashFeature)}, 'coding/reports/script-report.json'), 'utf8')).checks.find(check => check.id === 'scope_declaration');
-  `);
-  if (crashed.error !== null || crashed.exitCode !== 1
-    || crashed.runEndReason !== 'uncaught_exception'
-    || !crashed.checkFamiliesThisCall.includes('coding') || !crashed.runId
-    || failedScope?.status !== 'FAIL' || failedScope?.repair_owner !== 'plan') {
-    throw new Error(
-      'goal/#6：真实不一致契约须留下原FAIL及责任方，中断不能假完成。实得 '
-      + JSON.stringify({ crashed, failedScope }),
-    );
-  }
-  const resumedCrash = runDriver('crash_rerequest', null, crashFeature);
-  const scopeAfter = evalInShipped(ctx, `
-    const { SpecLoader } = require('./scripts/utils/spec-loader');
-    return new SpecLoader(${JSON.stringify(ctx.cloneRoot)}, undefined, undefined, ${JSON.stringify(ctx.clonedFrameworkRoot)}).loadFeatureSpec(${JSON.stringify(crashFeature)}).contracts;
-  `);
-  const withinOriginalModules = file => scopeBefore.modules.some(module => {
-    const prefix = path.resolve(ctx.cloneRoot, module.package_path);
-    const absolute = path.resolve(ctx.cloneRoot, file);
-    return absolute === prefix || absolute.startsWith(prefix + path.sep);
-  });
-  if (resumedCrash.error !== null || resumedCrash.exitCode !== 0
-    || resumedCrash.runId !== crashed.runId || resumedCrash.authorCallsThisCall < 1
-    || !resumedCrash.checkFamiliesThisCall.includes('coding')
-    || JSON.stringify(scopeAfter.modules) !== JSON.stringify(scopeBefore.modules)
-    || !scopeAfter.files?.length || !scopeAfter.files.every(withinOriginalModules)) {
-    throw new Error(
-      'goal/#6：同一原请求须由责任作者实际修复并重新核验，公开模块身份不扩。实得 '
-      + JSON.stringify({ resumedCrash, scopeBefore, scopeAfter }),
-    );
-  }
-  ctx.log('goal/#6：原检查FAIL保留，同请求作者修正真实契约后补验并完成');
-
-  // Keep raw compiler failures; incomplete producer/object proof waits without repeatedly buying the same tool.
-  const buildFailureFeature = 'ut-build-failure';
-  runDriver('provision', null, buildFailureFeature);
-  const buildFailure = runDriver('ut_build_failure', null, buildFailureFeature);
-  const failedBuildReport = JSON.parse(fs.readFileSync(path.join(ctx.cloneRoot, 'doc/features',
-    featureRelativePath(buildFailureFeature), 'ut/reports/script-report.json'), 'utf8'));
-  const buildFailureOk = buildFailure.error === null
-    && buildFailure.exitCode === 1 && buildFailure.runEndStatus === 'HALTED'
-    && (buildFailure.failureKinds?.length ?? 0) > 0
-    && buildFailure.failureKinds.every(k => k === 'code_regression')
-    && buildFailure.phaseHalts.some(h => h.halt_reason === 'executor_waiting')
-    && buildFailure.checkFamiliesThisCall.filter(phase => phase === 'ut').length === 1
-    && failedBuildReport.summary.verdict === 'FAIL'
-    && ['ut_hvigor_build', 'ut_hvigor_test'].every(id => failedBuildReport.checks.some(check => check.id === id && check.status === 'FAIL'))
-    && !buildFailure.phaseHalts.some(h => h.halt_reason === 'content_retry_exhausted')
-    && !buildFailure.eventTypes.includes('phase_backtrack_requested')
-    && buildFailure.agentCalls < 8;
-  if (!buildFailureOk) {
-    throw new Error(
-      'goal/#7：build原FAIL保留且归code_regression；来源未完整时等待核验，不重拉同工具、不假完成。实得 '
-      + JSON.stringify(buildFailure),
-    );
-  }
-  ctx.log('goal/#7：build两个原FAIL和code_regression归因保留，缺当前证明时等待，UT工具不重复');
-
-}
-
 /**
  * 顺序即宿主的真实时间线。**装依赖分两次**：clone 前那次是为了在发布件内读
  * runtime-artifact policy（也证明包能装），clone 后那次才是"换机后的消费者"，
@@ -764,11 +516,10 @@ const STAGES = [
   { id: 'depsClone', run: stageDepsClone },
   { id: 'upgradeOverlay', run: stageUpgradeOverlay },
   { id: 'checkGlobal', run: stageCheckGlobal },
-  { id: 'goal', run: stageGoal },
 ];
 
 // ---------------------------------------------------------------------------
-// 驱动：所有框架能力都从**发布件里**取，不从源码仓取
+// 驱动：从发布件执行消费者操作
 // ---------------------------------------------------------------------------
 
 /**

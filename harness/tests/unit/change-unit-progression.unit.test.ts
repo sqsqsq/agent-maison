@@ -1,4 +1,4 @@
-import { matchesUnitCase, selectedUnitCases } from '../utils/unit-case-selection';
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -78,26 +78,26 @@ interface UnitCaseResult {
 const VALID_PROJECT = path.resolve(__dirname, '..', 'fixtures', 'component-blueprint', 'valid');
 const VALID_CU_PATH = path.join(VALID_PROJECT, 'doc', 'features', 'ledger-app-blueprint', 'ledger-refresh', 'change-unit.yaml');
 const CHANGE_UNIT_FIXTURES = path.resolve(__dirname, '..', 'fixtures', 'change-unit');
-
-let caseSelector: string | undefined;
 function test(name: string, body: () => void): UnitCaseResult {
-  if (!matchesUnitCase(name, caseSelector)) return { name, ok: true };
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return discoveryResult(name);
   try {
     body();
     return { name, ok: true };
   } catch (error) {
     return { name, ok: false, error: (error as Error).stack ?? (error as Error).message };
-  }
+  } finally { endUnitCase(); }
 }
 
 async function asyncTest(name: string, body: () => Promise<void>): Promise<UnitCaseResult> {
-  if (!matchesUnitCase(name, caseSelector)) return { name, ok: true };
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return discoveryResult(name);
   try {
     await body();
     return { name, ok: true };
   } catch (error) {
     return { name, ok: false, error: (error as Error).stack ?? (error as Error).message };
-  }
+  } finally { endUnitCase(); }
 }
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -248,7 +248,6 @@ function completionAdapter(state: Map<string, ChangeUnitCompletionState>) {
 
 export async function runAll(): Promise<UnitCaseResult[]> {
   const results: UnitCaseResult[] = [];
-  const asynchronous: Array<Promise<UnitCaseResult>> = [];
 
   results.push(test('canonical CU passes artifact and constructability production entrypoint', () => {
     const result = checkCanonicalChangeUnit(VALID_PROJECT, 'ledger-app-blueprint', 'ledger-refresh');
@@ -960,7 +959,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assert(selectNextChangeUnit([second, first])?.change_unit_id === 'Z-unit', 'tie-break 未按 code-point 升序');
   }));
 
-  asynchronous.push(asyncTest('original-request coordinator steps A to B to C from current completion without a nested CU runner', async () => {
+  results.push(await asyncTest('original-request coordinator steps A to B to C from current completion without a nested CU runner', async () => {
     const units = progressionUnits().slice(0, 3);
     const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
     const calls: string[] = [];
@@ -989,7 +988,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assert(result.action === 'ready_for_component_closure', `末态不应宣称 closure，仅应 handoff：${result.action}`);
   }));
 
-  asynchronous.push(asyncTest('caller completed without VALID completion stops as no-progress', async () => {
+  results.push(await asyncTest('caller completed without VALID completion stops as no-progress', async () => {
     const units = progressionUnits().slice(0, 1);
     const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
     let calls = 0;
@@ -1007,7 +1006,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assert(result.action === 'blocked' && result.reasons.some(reason => reason.includes('change_unit_no_progress_after_completed')), '无进展 completed 未 fail-closed 停止');
   }));
 
-  asynchronous.push(asyncTest('pause or active run suppresses every second CU', async () => {
+  results.push(await asyncTest('pause or active run suppresses every second CU', async () => {
     const units = progressionUnits().slice(0, 3);
     const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
     let calls = 0;
@@ -1025,7 +1024,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     assert(deriveChangeUnitProgressionDecision(ready, { active: [{ featureId: 'active', runId: 'run-active' }], corrupt: [] }).action === 'resume_active', 'active run 未优先恢复');
   }));
 
-  asynchronous.push(asyncTest('failure and awaiting-human both stop before a second CU', async () => {
+  results.push(await asyncTest('failure and awaiting-human both stop before a second CU', async () => {
     for (const status of ['failed', 'awaiting_human'] as const) {
       const units = progressionUnits().slice(0, 3);
       const state = new Map(units.map(unit => [deriveChangeUnitFeatureId(unit.blueprint_id, unit.change_unit_id), 'ABSENT' as ChangeUnitCompletionState]));
@@ -1717,7 +1716,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
   }));
 
-  asynchronous.push(asyncTest('a3c7e9d1 生产 checker 接线：cu- Feature 的叙述 spec/plan 走蓝图投影分支', async () => {
+  results.push(await asyncTest('a3c7e9d1 生产 checker 接线：cu- Feature 的叙述 spec/plan 走蓝图投影分支', async () => {
     const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-a3c7-'));
     try {
       fs.cpSync(VALID_PROJECT, temp, { recursive: true });
@@ -1747,7 +1746,6 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     }
   }));
 
-  results.push(...await Promise.all(asynchronous));
   return results;
 }
 
@@ -1790,10 +1788,4 @@ function writeArchitecture(projectRoot: string, mutate?: (dsl: ArchitectureDsl) 
   mutate?.(architecture);
   fs.writeFileSync(path.join(projectRoot, 'framework.config.json'), JSON.stringify({ project_profile: { name: 'hmos-app' }, architecture }), 'utf8');
   clearFrameworkConfigCache();
-}
-
-export async function runSelectedCases(selector?: string) {
-  caseSelector = selector;
-  try { return selectedUnitCases((await runAll()).filter(r => matchesUnitCase(r.name, selector)), selector, []); }
-  finally { caseSelector = undefined; }
 }

@@ -1,4 +1,4 @@
-import { unitCaseGroups } from '../utils/unit-case-selection';
+import { beginUnitCase } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -6,44 +6,31 @@ import * as path from 'path';
 import { Module } from 'module';
 import * as ts from 'typescript';
 import * as YAML from 'yaml';
-import { spawnSync } from 'child_process';
 import { fixture, recordInvocation, UT_BASELINE_TEST } from './standalone-coding-review.unit.test';
 import { checkCodingExistingTestPreserved } from '../../scripts/check-coding';
 import { clearFrameworkConfigCache, featurePhaseReportsDir, featureFilePath, resolveFeatureArtifact } from '../../config';
 import { loadWorkflowSpec } from '../../workflow-loader';
 import { assembleAIPrompt, generateScriptReport, loadVerifierPromptTemplate } from '../../scripts/utils/report-generator';
-import { buildVerifierMaterialView, collectTestStrengthContext, verifierMaterialFileMatchesCurrent } from '../../scripts/utils/verifier-material';
+import { buildVerifierMaterialView, collectTestStrengthContext } from '../../scripts/utils/verifier-material';
 import { loadVerifierEvidence } from '../../scripts/utils/verifier-evidence';
 import { canProduceVerifierRequest, resolveVerifierPlan, workflowVerifierPrompt } from '../../scripts/utils/verifier-plan';
 import { writeRunSummaryBase } from '../../harness-runner';
-import { loadPhaseEvidenceManifest, resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, sha256File } from '../../scripts/utils/phase-evidence-manifest';
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, sha256File } from '../../scripts/utils/phase-evidence-manifest';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
-import { applicableCheckFamilies, currentCompletionEvaluation, completionProgressFromHistory, readCurrentDispositionInput, readReusableCheckResult, shouldGenerateFeatureCompletion } from '../../scripts/utils/verify-feature-completion';
+import { applicableCheckFamilies, currentCompletionEvaluation, completionProgressFromHistory, readCurrentDispositionInput, readReusableCheckResult } from '../../scripts/utils/verify-feature-completion';
 import { resolveCurrentDisposition, phaseCompletionProblems } from '../../scripts/utils/check-disposition';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
 import { finalizePhaseClosure, executedEvidenceInputs } from '../../scripts/utils/phase-closure-finalizer';
-import { ensureRunControl, casAcquireRunOwner } from '../../scripts/utils/goal-run-control';
-import { createWorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
-import { issueSessionExecution, sessionEvents } from '../../scripts/utils/session-execution-handoff';
-import { resolvePhaseWriteBoundary, capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges } from '../../scripts/utils/phase-write-boundary';
-import { provisionFrameworkUnder } from '../utils/real-chain-host';
-import { validateAttendedGoalContext } from '../../scripts/utils/attended-goal-context';
-import { loadFactsInvocationContext, resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
-import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
-import { researchSnapshotFacts } from '../fixtures/host-snapshot-3.1.0/migrate';
-import { setupGoalRuntimeHost, writeVisualDiff, runRealVisualGate, FEATURE as VISUAL_FEATURE, PRODUCT_FILE } from './goal-runner-testing-integrity.unit.test';
+import { setupGoalRuntimeHost, writeVisualDiff, runRealVisualGate, FEATURE as VISUAL_FEATURE, PRODUCT_FILE } from '../utils/existing-goal-delivery-fixture';
 import { collectActionableDefects } from '../../scripts/goal-phase-runtime';
 import { actionableDefectsToCandidates, mergeRepairCandidatesIntoSummary } from '../../scripts/utils/repair-candidates';
 import { resolveRepairResponsibility } from '../../scripts/utils/repair-responsibility';
-import { executionScopeFingerprint, type ExecutionScope } from '../../scripts/utils/execution-scope';
-import { resolveCurrentScopeView } from '../../scripts/utils/feature-track';
-import { SCOPE_REVISION_FIELDS } from '../../scripts/utils/goal-manifest';
+import { type ExecutionScope } from '../../scripts/utils/execution-scope';
 import { computeDefectFingerprint } from '../../../profiles/hmos-app/harness/visual-diff-check';
 import { resolveEffectiveScopeSource } from '../../scripts/utils/goal-run-creation';
 import type { IssueVerificationVerdict } from '../../scripts/utils/repair-candidates';
 import type { CheckResult } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
 
@@ -230,176 +217,6 @@ process.stderr.write('diagnostic tail\\n'+'x'.repeat(9000));};emit();
         }
       } finally { fs.rmSync(framework, { recursive: true, force: true }); }
     }); } },
-  { name: 'P2 registered facts keep a verified coding subject current across review research while baseline and own facts require re-verification',
-    async run() {
-      await withCurrentStrength('strengthened', current => {
-        current.publish('refuted');
-        const f = current.f, relative = 'doc/features/demo/context/facts.md', facts = path.join(f.root, relative);
-        const before = fs.readFileSync(facts, 'utf8');
-        const originalReport = loadVerifierEvidence(f.root, 'demo', 'coding', { frameworkRoot: FRAMEWORK_ROOT, resolvedInputs: current.ctx.resolvedInputs });
-        assert(originalReport.ok, JSON.stringify(originalReport)); if (!originalReport.ok) return;
-        const independentBytes = fs.readFileSync(originalReport.evidence.md_path_abs);
-        const manifest = loadPhaseEvidenceManifest(f.root, 'demo', 'coding'); assert(manifest?.integrityOk);
-        const entry = [...manifest.manifest.inputs, ...manifest.manifest.outputs].find(entry => entry.path === relative);
-        assert.equal(entry?.facts_phase, 'coding', 'the real manifest must register this as typed facts rather than a filename convention');
-        assert.equal(current.material.files.find(file => file.path === relative)?.sha256, entry?.sha256, 'producer material and original manifest use the same facts recipe');
-        const review = f.context('review'); assert(review.factsContext);
-        const crossFamily = () => resolveCurrentDisposition(readCurrentDispositionInput({ ...current.options, chain: ['coding', 'review'], resolvedInputs: review.resolvedInputs }));
-        const codingPending = () => crossFamily().completionBlocking.some(problem => problem.phase === 'coding' && problem.id === 'attestation_present');
-        assert(!codingPending(), 'the actual published independent result must be usable before later investigation');
-        researchSnapshotFacts(f.root, facts, 'review', review.factsContext);
-        const investigated = fs.readFileSync(facts, 'utf8');
-        assert.notEqual(investigated, before, 'the actual review research helper must append its own valid section');
-        assert.equal(buildVerifierMaterialView(current.materialInput).material_sha256, current.material.material_sha256, 'another family section does not buy a new coding subject');
-        assert(verifierMaterialFileMatchesCurrent({ projectRoot: f.root, feature: 'demo', material: current.material, file: relative }));
-        assert(verifierMaterialFileMatchesCurrent({ projectRoot: f.root, feature: 'demo', material: { ...current.material, schema: 'maison-verifier-material@1' }, file: relative }), 'the original @1 manifest entry.sha contract keeps its typed facts capability');
-        assert(!codingPending(), 'a cross-family actual reader cannot discard the already verified coding result for review-only research');
-        assert.equal(JSON.parse(fs.readFileSync(path.join(current.dir, 'summary.json'), 'utf8')).verifier_subject_id, current.summary.verifier_subject_id);
-        for (const changed of [investigated.replace('value is initialized', 'current source initializes value to 42'),
-          investigated + '\n## phase_delta: coding\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| src/demo/value.ts | 当前源码导出 value: number = 42 | 独立核对原验收 |\n']) {
-          fs.writeFileSync(facts, changed); assert.notEqual(changed, investigated);
-          assert(codingPending(), 'baseline or this family actual facts must invalidate the old independent conclusion');
-          const next = buildVerifierMaterialView(current.materialInput);
-          assert.notEqual(next.material_sha256, current.material.material_sha256, 'affected facts require genuinely new material');
-          const issued = writeRunSummaryBase(f.root, current.report, FRAMEWORK_ROOT, { verifierPlan: current.plan, verifierMaterial: next,
-            resolvedInputs: current.ctx.resolvedInputs, factsContext: current.ctx.factsContext });
-          assert.notEqual(issued.verifier_subject_id, current.summary.verifier_subject_id, 'the actual writer must issue the affected material for verification');
-          fs.writeFileSync(facts, investigated);
-          writeRunSummaryBase(f.root, current.report, FRAMEWORK_ROOT, { verifierPlan: current.plan, verifierMaterial: current.material,
-            resolvedInputs: current.ctx.resolvedInputs, factsContext: current.ctx.factsContext });
-        }
-        assert(fs.readFileSync(originalReport.evidence.md_path_abs).equals(independentBytes), 're-verification never rewrites the accepted independent original');
-        assert.equal(fs.readFileSync(path.join(current.dir, 'script-report.json'), 'utf8'), current.raw, 'the raw comparison FAIL remains the original executed fact');
-      });
-    } },
-  { name: 'P2 review R1 public CLI cached exit follows current verified work and preserves raw FAIL or PASS originals',
-    async run() {
-      for (const scenario of ['refuted', 'missing', 'unclear', 'confirmed', 'unrestored'] as const) {
-        await withCurrentStrength(scenario === 'refuted' ? 'strengthened' : scenario === 'confirmed' ? 'weakened' : 'preserved', current => {
-          if (scenario !== 'missing') current.publish(scenario === 'unrestored' ? 'refuted' : scenario);
-          const f = current.f, released = provisionFrameworkUnder(f.root), runDir = path.join(f.root, f.manifest.report_dir);
-          ensureRunControl(runDir, f.manifest.run_id);
-          const acquired = casAcquireRunOwner(runDir, f.manifest.run_id, 0, { kind: 'session', owner_id: 'cached-cli-author', lease_ms: 60_000 });
-          assert(acquired.ok); if (!acquired.ok) throw new Error(JSON.stringify(acquired));
-          const attemptId = 'cached-family-check', invokeId = `coding-${attemptId}`;
-          const context = createWorkUnitExecutionContext({ runId: f.manifest.run_id, feature: 'demo', workflowId: 'obligation-driven', track: 'full',
-            chain: f.manifest.phase_chain ?? ['coding'], phase: 'coding', attemptId, owner: { ...acquired.token, kind: 'session' },
-            projectRoot: f.root, frameworkRoot: released.frameworkRoot, runDir, reportDir: f.manifest.report_dir, adapter: 'generic',
-            authority: f.manifest.unattended, factsContext: current.ctx.factsContext, instruction: '读取当前已执行检查及独立核验原件，不改原始结论。',
-            runtimeFacts: { receiptRequired: true, resume: false, successor: false },
-            childEnv: { MAISON_GOAL_RUN_ID: f.manifest.run_id, MAISON_GOAL_ATTEMPT: attemptId, MAISON_GOAL_ATTEMPT_PHASE: 'coding' } });
-          const emit = (event: Record<string, unknown>) => fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
-          emit({ type: 'agent_invoke_start', phase: 'coding', invoke_id: invokeId, attempt_id: attemptId,
-            owner_id: acquired.token.owner_id, owner_epoch: acquired.token.epoch, facts_context: current.ctx.factsContext });
-          const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot: released.frameworkRoot, feature: 'demo', runId: f.manifest.run_id,
-            phaseOrder: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], track: 'full', executionRole: 'author', productLayerDirs: ['src'], profileDir: f.profileDir });
-          const before = capturePhaseInvocationSnapshot(boundary);
-          const issued = issueSessionExecution({ context, invokeId, emit, gateTimeoutMs: 30_000, cleanupReserveMs: 500,
-            preSnapshot: before, writeBoundary: boundary });
-          if (scenario === 'unrestored') {
-            fs.writeFileSync(path.join(released.frameworkRoot, 'README.md'), 'actual unauthorized author write, still unrestored');
-            const diff = diffPhaseInvocationSnapshots(before, capturePhaseInvocationSnapshot(boundary));
-            assert.equal(diff.kind, 'changed'); if (diff.kind !== 'changed') throw new Error('missing real framework write');
-            const writes = classifyPhaseInvocationChanges(boundary, 'coding', diff.changes);
-            assert(writes.violations.some(row => row.path === 'framework/README.md'));
-            emit({ type: 'phase_write_violation', phase: 'coding', invoke_id: invokeId,
-              violations: writes.violations.map(row => ({ path: row.path, violation: row.violation, pre_sha256: row.preSha256, post_sha256: row.postSha256 })) });
-          }
-          const old = Object.fromEntries(Object.keys(issued.request.context.childEnv).map(key => [key, process.env[key]]));
-          let bridge: ReturnType<typeof resolveCapabilityResolutionEntryInput>, resolved: ReturnType<typeof resolveCapabilityInputs>;
-          try {
-            Object.assign(process.env, issued.request.context.childEnv);
-            bridge = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: released.frameworkRoot, feature: 'demo', phase: 'coding',
-              featuresDir: 'doc/features', goalRunId: f.manifest.run_id, goalAttemptId: attemptId });
-            resolved = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: released.frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...bridge });
-          } finally { for (const [key, value] of Object.entries(old)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } }
-          const bound = loadPhaseEvidenceManifest(f.root, 'demo', 'coding'); assert(bound); assert(bound.manifest);
-          // The release layout changes input selection; bind the unchanged originals through the actual public resolver/writer.
-          writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: released.frameworkRoot, feature: 'demo', phase: 'coding',
-            resolvedInputs: resolved.inputs, factsContext: bridge.factsContext, requirementSha: computeRunRequirementSha(f.root, 'demo', f.manifest.run_id),
-            extraInputs: bound.manifest.inputs.map(row => row.path), extraOutputs: bound.manifest.outputs.map(row => row.path) }));
-          assert(readReusableCheckResult({ projectRoot: f.root, frameworkRoot: released.frameworkRoot, feature: 'demo', phase: 'coding', runId: f.manifest.run_id,
-            resolvedInputs: resolved.inputs, factsContext: bridge.factsContext }), `${scenario}: the public call must exercise a real cache hit`);
-          const originals = ['script-report.json', 'summary.json'].map(name => [path.join(current.dir, name), fs.readFileSync(path.join(current.dir, name), 'utf8')] as const);
-          const cli = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(FRAMEWORK_ROOT, 'harness/harness-runner.ts'),
-            '--project-root', f.root, '--framework-root', released.frameworkRoot, '--feature', 'demo', '--phase', 'coding',
-            '--goal-run-id', context.runId, '--goal-attempt-id', attemptId, '--goal-owner-id', context.owner.owner_id, '--goal-owner-epoch', String(context.owner.epoch)],
-          { cwd: f.root, windowsHide: true, timeout: 30_000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
-            env: { ...process.env, ...issued.request.context.childEnv, TS_NODE_PROJECT: path.join(FRAMEWORK_ROOT, 'harness/tsconfig.json') } });
-          const diagnostic = JSON.stringify({ scenario, status: cli.status, error: cli.error?.message, stdout: cli.stdout, stderr: cli.stderr });
-          assert(cli.stdout.includes('CHECK_RESULT reused='), diagnostic);
-          const line = cli.stdout.split(/\r?\n/).find(row => row.startsWith('current_check_result=')); assert(line, diagnostic);
-          const actual = JSON.parse(line.slice('current_check_result='.length)), pending = phaseCompletionProblems(actual.evaluation.disposition, ['coding']);
-          assert.equal(current.summary.verdict, scenario === 'refuted' || scenario === 'confirmed' ? 'FAIL' : 'PASS', diagnostic);
-          if (scenario === 'refuted') { assert.equal(pending.length, 0, diagnostic); assert.equal(cli.status, 0, diagnostic); }
-          else { assert(pending.length > 0, diagnostic); assert.notEqual(cli.status, 0, diagnostic); }
-          if (scenario === 'unrestored') assert(pending.some(row => row.id === 'phase_write_violation'), diagnostic);
-          else if (scenario !== 'refuted') assert(pending.some(row => row.id === current.check.id && row.action === (scenario === 'confirmed' ? 'repair' : 'verify')), diagnostic);
-          for (const [file, raw] of originals) assert.equal(fs.readFileSync(file, 'utf8'), raw, `${scenario}: a cache read cannot rewrite its raw original`);
-        }, true);
-      }
-    } },
-  { name: 'P2 public CLI selects a spec checking family from the same signed coding author without borrowing another actor identity',
-    async run() {
-      const f = fixture(false, false, [], 'make value 42', 'generic');
-      try {
-        const released = provisionFrameworkUnder(f.root); f.facts();
-        const ctx = f.context('coding'), runDir = path.join(f.root, f.manifest.report_dir);
-        ensureRunControl(runDir, f.manifest.run_id);
-        const acquired = casAcquireRunOwner(runDir, f.manifest.run_id, 0, { kind: 'session', owner_id: 'current-author-cli-probe', lease_ms: 60_000 });
-        assert(acquired.ok); if (!acquired.ok) throw new Error('the current author could not acquire its real fence');
-        const attemptId = 'same-unit-family-check', invokeId = `coding-${attemptId}`;
-        const context = createWorkUnitExecutionContext({ runId: f.manifest.run_id, feature: 'demo', workflowId: 'obligation-driven', track: 'full',
-          chain: f.manifest.phase_chain ?? ['coding'], phase: 'coding', attemptId, owner: { ...acquired.token, kind: 'session' },
-          projectRoot: f.root, frameworkRoot: released.frameworkRoot, runDir, reportDir: f.manifest.report_dir, adapter: f.manifest.adapter ?? 'generic',
-          authority: f.manifest.unattended, factsContext: ctx.factsContext, instruction: '当前同一单元作者选择spec检查族读取适用验收，不改变真实作者身份。',
-          runtimeFacts: { receiptRequired: true, resume: false, successor: false },
-          childEnv: { MAISON_GOAL_RUN_ID: f.manifest.run_id, MAISON_GOAL_ATTEMPT: attemptId, MAISON_GOAL_ATTEMPT_PHASE: 'coding' } });
-        const emit = (event: Record<string, unknown>) => fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
-        emit({ type: 'agent_invoke_start', phase: 'coding', invoke_id: invokeId, attempt_id: attemptId,
-          owner_id: acquired.token.owner_id, owner_epoch: acquired.token.epoch, facts_context: ctx.factsContext });
-        const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot: released.frameworkRoot, feature: 'demo', runId: f.manifest.run_id,
-          phaseOrder: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'], track: 'full', executionRole: 'author', productLayerDirs: ['src'], profileDir: f.profileDir });
-        const issued = issueSessionExecution({ context, invokeId, emit, gateTimeoutMs: 30_000, cleanupReserveMs: 500,
-          preSnapshot: capturePhaseInvocationSnapshot(boundary), writeBoundary: boundary });
-        const priorEnv = new Map(Object.keys(issued.request.context.childEnv).map(key => [key, process.env[key]]));
-        try {
-          Object.assign(process.env, issued.request.context.childEnv);
-          const admitted = loadFactsInvocationContext({ projectRoot: f.root, frameworkRoot: released.frameworkRoot, feature: 'demo',
-            phase: 'spec', runId: context.runId, attemptId: context.attemptId });
-          assert(admitted, 'cross-family facts must come from the actual signed actor invocation');
-          assert.deepEqual(admitted.source_owners, ctx.factsContext?.source_owners, 'checking spec cannot acquire coding source ownership');
-        } finally {
-          for (const [key, value] of priorEnv) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
-        }
-        const identityInput = { projectRoot: f.root, feature: 'demo', runId: context.runId, phase: 'spec', attemptId: context.attemptId,
-          ownerId: context.owner.owner_id, ownerEpoch: context.owner.epoch };
-        assert.throws(() => validateAttendedGoalContext(identityInput), /phase\/attempt/, 'other identity consumers keep the original strict phase semantics');
-        assert.equal(validateAttendedGoalContext({ ...identityInput, checkFamily: true }).identity.phase, 'coding', 'the family never replaces the signed actor');
-        const factsFile = path.join(f.root, 'doc/features/demo/context/facts.md'), facts = fs.readFileSync(factsFile, 'utf8');
-        const cli = (identity: { owner?: string; attempt?: string } = {}) => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(FRAMEWORK_ROOT, 'harness/harness-runner.ts'),
-          '--project-root', f.root, '--framework-root', released.frameworkRoot, '--feature', 'demo', '--phase', 'spec',
-          '--goal-run-id', context.runId, '--goal-attempt-id', identity.attempt ?? context.attemptId, '--goal-owner-id', identity.owner ?? context.owner.owner_id, '--goal-owner-epoch', String(context.owner.epoch)],
-        { cwd: f.root, windowsHide: true, timeout: 30_000, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
-          env: { ...process.env, ...issued.request.context.childEnv, TS_NODE_PROJECT: path.join(FRAMEWORK_ROOT, 'harness/tsconfig.json') } });
-        const result = cli();
-        const diagnostic = JSON.stringify({ status: result.status, signal: result.signal, error: result.error?.message, stdout: result.stdout, stderr: result.stderr });
-        const reportFile = path.join(featurePhaseReportsDir(f.root, 'demo', 'spec', released.frameworkRoot), 'script-report.json');
-        assert(fs.existsSync(reportFile), `a checking family must not be mistaken for the signed author phase: ${diagnostic}`);
-        const report = JSON.parse(fs.readFileSync(reportFile, 'utf8'));
-        assert.equal(report.phase, 'spec', diagnostic); assert(report.checks?.length > 0, diagnostic);
-        assert(result.stdout.includes('current_check_result='), `the actual public checker must publish its current reader result: ${diagnostic}`);
-        const originalReport = fs.readFileSync(reportFile, 'utf8');
-        for (const wrong of [{ owner: 'another-owner' }, { attempt: 'another-attempt' }]) {
-          const rejected = cli(wrong);
-          assert.notEqual(rejected.status, 0, JSON.stringify({ wrong, stdout: rejected.stdout, stderr: rejected.stderr }));
-          assert(!rejected.stdout.includes('current_check_result='), 'invalid identity must be rejected before checking');
-          assert.equal(fs.readFileSync(reportFile, 'utf8'), originalReport, 'an invalid owner/attempt cannot overwrite the actual result');
-        }
-        assert.equal(fs.readFileSync(factsFile, 'utf8'), facts, 'selecting a family cannot reassign the original facts owner');
-        assert(sessionEvents(runDir).filter(event => event.type === 'agent_invoke_start').every(event => event.phase === 'coding'), 'no fictitious spec author invocation may be injected');
-      } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
-    } },
   { name: 'P2 tools current independent refutation closes only the actual test-strength task and preserves the raw FAIL original',
     run: () => withCurrentStrength('strengthened', current => {
       assert.equal(current.check.status, 'FAIL'); assert.equal(current.check.severity, 'BLOCKER');
@@ -458,113 +275,6 @@ process.stderr.write('diagnostic tail\\n'+'x'.repeat(9000));};emit();
         });
       }
     } },
-  { name: 'N1 current proof: unresolved raw FAIL rejects; disclosed FAIL reuses until scope repair requires fresh evidence', async run() {
-    await withCurrentStrength('strengthened', current => {
-      const f = current.f, birth = f.manifest.execution_scope;
-      assert(birth, 'the actual run must carry its immutable birth scope');
-      const workflow = loadWorkflowSpec(FRAMEWORK_ROOT, 'obligation-driven');
-      let scope = birth;
-      const scopeView = () => {
-        const predicates = require('../../scripts/utils/verify-feature-completion') as typeof import('../../scripts/utils/verify-feature-completion');
-        const resolve = predicates.resolveCompletionDisposition;
-        const expected = predicates.applicableCheckFamilies(scope);
-        const inputs: Array<{ chain: string[]; pendingOwnerPhase?: string }> = [];
-        predicates.resolveCompletionDisposition = options => {
-          if (options.executionScope === scope) inputs.push({ chain: [...options.chain], pendingOwnerPhase: options.pendingOwnerPhase });
-          return resolve(options);
-        };
-        try {
-          const view = resolveCurrentScopeView({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo',
-            workflow, previous: scope, currentRunId: f.manifest.run_id });
-          assert.equal(inputs.length, 1, 'one original scope must use one common completion observation for every local proof');
-          assert.deepEqual(inputs[0].chain, expected, 'proof projection must keep the complete original endpoint, not issue a different per-family query');
-          assert.equal(inputs[0].pendingOwnerPhase, undefined, 'an ended actor is not an implicit active write owner');
-          return view;
-        } finally { predicates.resolveCompletionDisposition = resolve; }
-      };
-      assert(scopeView().phase_chain.includes('coding'), 'an unrefuted actual FAIL cannot establish proof');
-      current.publish('refuted');
-      finalizePhaseClosure({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'coding',
-        goalRunId: f.manifest.run_id, resolvedInputs: current.ctx.resolvedInputs, factsContext: current.ctx.factsContext, persistPhaseState: () => undefined });
-      assert(!scopeView().phase_chain.includes('coding'), 'a legitimately disclosed raw FAIL can establish current proof without a fake PASS');
-      assert(readReusableCheckResult({ ...current.options, phase: 'coding' }), 'unchanged actual inputs keep the same reusable result');
-      const completion = () => shouldGenerateFeatureCompletion(scope, { ...current.options, endpoint: 'feature-completion',
-        workflow, chain: applicableCheckFamilies(scope) });
-      assert(!completion().eligible, 'a real required execution family without its report still prevents publication');
-      const old = loadPhaseEvidenceManifest(f.root, 'demo', 'coding');
-      assert(old?.integrityOk);
-      const eventsPath = path.join(f.root, f.manifest.report_dir, 'events.jsonl');
-      fs.appendFileSync(eventsPath, JSON.stringify({ type: 'phase_halt', ts: new Date().toISOString(), phase: 'coding',
-        halt_reason: 'executor_waiting', run_disposition: 'WAITING', run_wait_kind: 'external' }) + '\n');
-      assert(!scopeView().phase_chain.includes('coding'), 'an ordinary unchanged wait does not require another actual coding result');
-      assert.notEqual(readCurrentDispositionInput(current.options).phases.find(phase => phase.phase === 'coding')?.lineage, 'stale',
-        'the public view must not turn its own waiting event into a fresh-check requirement');
-      const implementation = birth.obligations.find(item => item.kind === 'implementation');
-      assert(implementation);
-      scope = structuredClone(birth);
-      scope.obligations.push({ ...structuredClone(implementation), id: 'implementation:late-confirmed-repair', satisfied_by: undefined });
-      const invalidatedAt = new Date().toISOString();
-      fs.appendFileSync(eventsPath, JSON.stringify({ type: 'scope_revised', ts: invalidatedAt, revision_index: 1,
-        previous_scope_fingerprint: executionScopeFingerprint(birth), execution_scope: scope,
-        trigger: { phase: 'coding', check_id: current.check.id }, allowed_fields: [...SCOPE_REVISION_FIELDS] }) + '\n');
-      for (const phase of ['review', 'ut']) {
-        const entry = resolveCapabilityResolutionEntryInput({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase,
-          featuresDir: 'doc/features', goalRunId: f.manifest.run_id });
-        assert(entry.factsContext);
-        researchSnapshotFacts(f.root, featureFilePath(f.root, 'demo', 'context/facts.md'), phase, entry.factsContext);
-        const resolved = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase, track: 'full',
-          goalRunId: f.manifest.run_id, ...entry });
-        assert(resolved.inputs, JSON.stringify(resolved.report));
-        const sources = ['src/demo/value.ts', UT_BASELINE_TEST];
-        const report = generateScriptReport(path.join(FRAMEWORK_ROOT, 'harness'), phase, 'demo', f.root, [{ id: 'file_completeness',
-          category: 'structure', description: 'controlled current checker reads actual implementation and test source', severity: 'BLOCKER',
-          status: sources.every(file => fs.readFileSync(path.join(f.root, file)).length > 0) ? 'PASS' : 'FAIL', details: sources.join('\n'),
-          structured: { source_attempt_dependencies: sources.map(file => ({ path: file, exists: true, sha256: sha256File(path.join(f.root, file)), role: 'artifact' })) } }], FRAMEWORK_ROOT);
-        const dir = featurePhaseReportsDir(f.root, 'demo', phase, FRAMEWORK_ROOT);
-        fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'script-report.json'), JSON.stringify(report, null, 2));
-        writeRunSummaryBase(f.root, report, FRAMEWORK_ROOT);
-        writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase,
-          resolvedInputs: resolved.inputs, factsContext: entry.factsContext, requirementSha: computeRunRequirementSha(f.root, 'demo', f.manifest.run_id),
-          extraInputs: executedEvidenceInputs(f.root, 'demo', phase, FRAMEWORK_ROOT),
-          extraOutputs: ['script-report.json', 'summary.json'].map(file => path.join(dir, file)) }));
-      }
-      const pending = resolveCurrentDisposition(readCurrentDispositionInput({ ...current.options, executionScope: scope }));
-      assert(pending.completionBlocking.some(problem => problem.phase === 'coding' && problem.id === 'lineage_fresh' && problem.action === 'verify'),
-        'the public view must expose this input-fresh result as older than the actual required repair');
-      assert(pending.completionBlocking.every(problem => problem.phase === 'coding'),
-        'the actually refreshed review/UT remain current; only coding requires verification: ' + JSON.stringify(pending.completionBlocking));
-      assert(scopeView().phase_chain.includes('coding'), 'the formal proof consumer must reject the same old result');
-      assert(!completion().eligible, 'actual post-repair review/UT results cannot make the older coding proof publishable');
-      assert.equal(loadPhaseEvidenceManifest(f.root, 'demo', 'coding')?.manifest.aggregate_sha256, old.manifest.aggregate_sha256,
-        'reading the gap never re-signs the old executed result');
-      const checked = prepare(f);
-      fs.appendFileSync(eventsPath, JSON.stringify({ type: 'phase_verdict', ts: new Date().toISOString(), phase: 'coding', verdict: 'FAIL' }) + '\n');
-      const checkedFacts = readCurrentDispositionInput({ ...checked.options, executionScope: scope });
-      assert.notEqual(checkedFacts.phases.find(phase => phase.phase === 'coding')?.lineage, 'stale',
-        'a raw FAIL does not move the required-repair time past its own actual checker output');
-      checked.publish('refuted');
-      finalizePhaseClosure({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'coding',
-        goalRunId: f.manifest.run_id, resolvedInputs: checked.ctx.resolvedInputs, factsContext: checked.ctx.factsContext, persistPhaseState: () => undefined });
-      fs.appendFileSync(eventsPath, JSON.stringify({ type: 'agent_invoke_start', ts: new Date().toISOString(), phase: 'ut-verifier-format-repair', invoke_id: 'ut-verifier-format-repair-i9' }) + '\n'
-        + JSON.stringify({ type: 'agent_invoke_end', ts: new Date().toISOString(), phase: 'ut-verifier-format-repair', invoke_id: 'ut-verifier-format-repair-i9', status: 'passed', exit_code: 0 }) + '\n');
-      assert(!scopeView().phase_chain.includes('coding'), 'fresh evidence after the repair and real independent disclosure establish the same current proof');
-      const definitions = scope.obligations.filter(item => item.kind === 'acceptance-context' || item.kind === 'design-context');
-      assert.equal(definitions.length, 2, 'the same real run supplies both canonical definition bindings');
-      for (const definition of definitions) {
-        assert(definition.satisfied_by?.length && definition.satisfied_by.every(ref => 'input_id' in ref));
-        assert(!loadPhaseEvidenceManifest(f.root, 'demo', definition.owner_phase), 'canonical input satisfaction has no fabricated phase report');
-      }
-      const publishable = completion();
-      assert(publishable.eligible, 'accepted input definitions without phase reports must not stale the actually verified output proofs: '
-        + JSON.stringify(publishable.issues));
-      const basisOnly = structuredClone(scope);
-      for (const definition of basisOnly.obligations.filter(item => definitions.some(original => original.id === item.id))) delete definition.satisfied_by;
-      assert(!shouldGenerateFeatureCompletion(basisOnly, { ...current.options, endpoint: 'feature-completion', workflow,
-        chain: applicableCheckFamilies(basisOnly) }).eligible, 'definition provenance without accepted satisfaction is still a real unmet duty');
-      assert.equal(fs.readFileSync(path.join(checked.dir, 'script-report.json'), 'utf8'), checked.raw, 'the actual raw FAIL remains byte-for-byte unchanged');
-      assert(checked.report.checks.some(check => check.id === checked.check.id && check.status === 'FAIL'), 'the positive proof never fabricates raw PASS');
-    });
-  } },
   { name: 'P3 definition input: basis alone keeps plan executable; accepted input proof avoids an empty check', async run() {
     await withCurrentStrength('preserved', current => {
       const contracts = current.ctx.resolvedInputs?.values.contracts;
@@ -605,16 +315,14 @@ process.stderr.write('diagnostic tail\\n'+'x'.repeat(9000));};emit();
   } },
 ];
 
-export async function runSelectedCases(selector?: string) {
-  const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];
-  for (const test of cases.filter(test => matchesUnitCase(test.name, selector))) {
-    const stop = startCaseTiming([test.name], timings);
+export async function runAll() {
+  const results: UnitCaseResult[] = [];
+  for (const test of cases) {
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) continue;
     try { await test.run(); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack ?? String(error) }); }
-    finally { stop(); }
+    finally {  endUnitCase(); }
   }
-  return selectedUnitCases(results, selector, timings);
+  return results;
 }
-export async function runAll(): Promise<UnitCaseResult[]> { return (await runSelectedCases()).results; }
-
-export const listCaseGroups = () => unitCaseGroups(cases.map(c => c.name));

@@ -24,7 +24,7 @@ i6 → i8 的 `fullFallback` 保全前后真实 landing 原值与来源引用，
 仓根定向复跑（不依赖原宿主）：
 
 ```powershell
-npm --prefix harness run test:unit -- --filter initial-design-repair --case "a920 real historical scope replay" --workers 1
+npm test -- --filter initial-design-repair
 ```
 
 需要重新核原件时，在仓根运行只读捕获；第二参数须指向保留的 R3 源码。捕获会核实调用已结束、写快照 clean、裁剪前后依赖计算一致，以及原件与最小投影在两套算法上的逐组选择一致。

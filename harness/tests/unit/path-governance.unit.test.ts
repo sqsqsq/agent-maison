@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 /**
  * path-governance 单测（round7 先行批 · plan 7c4e9f2a）：
  *   病灶＝共享 helper 与散点历史硬编码 doc/features，自定义 paths.features_dir 宿主
@@ -193,14 +194,5 @@ test('e1_assemble_ai_prompt_resolves_features_dir', () => {
 });
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

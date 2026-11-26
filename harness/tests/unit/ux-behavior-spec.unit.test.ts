@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
@@ -275,11 +276,13 @@ export function runAll(): UnitCaseResult[] {
     },
   };
   return Object.entries(cases).map(([name, test]) => {
+    const endUnitCase = beginUnitCase(name);
+    if (!endUnitCase) return discoveryResult(name);
     try {
       test();
       return { name, ok: true };
     } catch (error) {
       return { name, ok: false, error: (error as Error).stack ?? String(error) };
-    }
+    } finally { endUnitCase(); }
   });
 }

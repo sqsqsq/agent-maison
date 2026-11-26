@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // doc-freshness.unit.test.ts — v2.4 docs phase 纯函数单元回归
 // ============================================================================
@@ -17,7 +18,7 @@
 //        - source 在 inventory 里但仓库不存在 → 不计入 staleness，列入 missing
 //      这些边界一旦写错很难肉眼发现，所以全部圈住。
 //
-// 用法：cd framework/harness && npm run test:unit
+// 用法：npm test -- --filter doc-freshness
 // ============================================================================
 
 import {
@@ -266,14 +267,5 @@ const cases: Case[] = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (e) {
-      results.push({ name: c.name, ok: false, error: (e as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

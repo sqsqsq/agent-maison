@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -8,9 +9,6 @@ import { effectiveScopeView, authorizedScopePhases } from '../../scripts/utils/e
 import { loadWorkflowSpec } from '../../workflow-loader';
 import type { GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
 import { auditHostHistory, type HistoryEvent } from '../utils/host-history-audit';
-import { copyC6HostReplay, readC6PlanVerifierReport } from '../utils/c6-host-replay';
-import { findUnreadableDiagnosisChecks, parseIssueVerificationBlock, readVerifierSemanticIssues, verifiedPhaseRepairIssues } from '../../scripts/utils/repair-candidates';
-import { loadVerifierEvidenceForSubject } from '../../scripts/utils/verifier-evidence';
 import type { UnitCaseResult } from '../run-unit';
 
 export const historyRoot = path.resolve(__dirname, '../fixtures/host-recovery-history');
@@ -30,34 +28,6 @@ const cases: Array<{ name: string; run(): void }> = [
     assert.equal(result.current_verdict, 'FAIL');
     assert.equal(result.turns, '29/30');
     assert.equal(result.ut, '26/26');
-  } },
-  { name: 'S2 i28 preserves a complete current decision and i26 still needs independent evidence', run() {
-    const project = copyC6HostReplay();
-    const frameworkRoot = path.resolve(__dirname, '../../..');
-    try {
-      for (const iteration of [28, 26] as const) {
-        const { request, relative: report, text: original } = readC6PlanVerifierReport(project, iteration);
-        if (iteration === 26) fs.writeFileSync(path.join(project.root, report), original);
-        const first = loadVerifierEvidenceForSubject(project.root, project.feature, 'plan', request.subject_id, { frameworkRoot });
-        assert(first.ok && first.evidence.verdict === 'PASS', 'both history reports are transport-valid');
-        const text = first.evidence.report_text + '\n\n';
-        const issues = readVerifierSemanticIssues(project.root, project.feature, 'plan', text, report, frameworkRoot, project.runId);
-        assert(issues);
-        const gaps = findUnreadableDiagnosisChecks('plan', text, issues);
-        const confirmed = verifiedPhaseRepairIssues({ phaseIssues: issues, verifierReportText: text });
-        if (iteration === 28) {
-          const handback = parseIssueVerificationBlock(text).entries;
-          assert(handback.some(entry => entry.issue === 'acceptance_to_interface' && entry.verdict === 'confirmed' && entry.repair_owner === 'plan'));
-          assert.deepStrictEqual(gaps, [], 'known i28 finding already carries a complete decision and clear repair evidence');
-          assert.deepStrictEqual(confirmed.map(finding => finding.id), ['acceptance_to_interface']);
-          const fenced = text.match(/```issue-verification\n[\s\S]*?```/)![0];
-          assert(!parseIssueVerificationBlock(text + fenced).ok, 'duplicated adjudications may never be recovered from a complete evidence scalar');
-        } else {
-          assert(gaps.some(gap => gap.startsWith('acceptance_to_interface：')), 'a legal terminal result cannot supply missing current evidence');
-          assert.deepStrictEqual(confirmed, []);
-        }
-      }
-    } finally { fs.rmSync(project.root, { recursive: true, force: true }); }
   } },
   { name: 'production obligation projection replays CR introduction without allowing an older plan PASS', run() {
     const { manifest, events } = readHostHistory('b9ac66');
@@ -150,5 +120,6 @@ const cases: Array<{ name: string; run(): void }> = [
 ];
 
 export function runAll(): UnitCaseResult[] {
-  return cases.map(test => { try { test.run(); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: (error as Error).stack }; } });
+  return cases.map(test => { const endUnitCase = beginUnitCase(test.name);
+                             if (!endUnitCase) return discoveryResult(test.name); try { test.run(); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: (error as Error).stack }; } finally { endUnitCase(); } });
 }

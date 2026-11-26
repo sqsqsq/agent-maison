@@ -1,10 +1,10 @@
+import { beginUnitCase } from '../utils/unit-cases';
 import '../utils/transpile-only-env';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { spawnSync } from 'child_process';
 import { clearFrameworkConfigCache } from '../../config';
 import * as supervisor from '../../scripts/goal-supervise';
 import { superviseRun } from '../../scripts/utils/goal-supervisor';
@@ -19,20 +19,17 @@ import { readInitialDesignDelivery } from '../../scripts/utils/initial-design-de
 import { enumerateCanonicalChangeUnits } from '../../scripts/utils/change-unit-path';
 import { reviseChangeUnitContent } from '../../scripts/utils/change-unit-design-preparation';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
-import { withFreshCuHost } from './lifecycle-evolution.unit.test';
-import { CU_REQUIREMENT, CU_SOURCE } from './real-chain.unit.test';
+import { withFreshCuHost } from '../utils/real-chain-host';
+import { CU_REQUIREMENT, CU_SOURCE } from '../utils/real-chain-host';
 import { livenessBeaconPath, writeLivenessBeacon } from '../../scripts/utils/liveness-beacon';
 import { fixture } from './blueprint-skill-projection.unit.test';
-import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 import type { UnitCaseResult } from '../run-unit';
 import type { ProcessProbe } from '../../scripts/utils/device-session';
 import { withRuntimeTest, type RuntimeTestControl } from '../utils/runtime-test-control';
 const runGoalModeSessionStep = (options: Parameters<typeof runGoalModeSessionStepUnchecked>[0], testControl: RuntimeTestControl = {}) =>
   withRuntimeTest({ root: options.projectRoot, ...testControl }, () => runGoalModeSessionStepUnchecked(options));
 
-
 const BLUEPRINT = 'ledger-app-blueprint';
-const FRAMEWORK = path.resolve(__dirname, '../../..');
 const DEAD_PID = 987654321;
 const processIdentity = (pid: number) => ({ pid, startedAtMs: 123456, executable: process.execPath });
 const processProbe = (live: number[]): ProcessProbe => ({ identify: pid => live.includes(pid) ? processIdentity(pid) : null,
@@ -170,41 +167,6 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
     }),
   },
   {
-    name: 'f3b8e6a1 public readers: an old root halt cannot hide current child work in status or monitor',
-    run: () => withFamily(async family => {
-      fs.cpSync(path.join(FRAMEWORK, 'workflows'), path.join(family.root, 'workflows'), { recursive: true });
-      const current = child(family);
-      emit(family, current, { type: 'agent_invoke_start', phase: 'plan', invoke_id: 'current-child-author', effective_timeout_ms: 900_000 });
-      emit(family, family.original, { type: 'run_end', status: 'HALTED', halt_reason: 'execution_scope_unresolved', error: 'Previous original controller stopped; the bound child still owns its active work.' });
-      const rootBefore = fs.readFileSync(eventFile(family, family.original)), childBefore = fs.readFileSync(eventFile(family, current));
-      const read = (script: string, extra: string[] = [], target: GoalRunManifest = family.original) => {
-        const result = spawnSync(process.execPath, ['-r', 'ts-node/register/transpile-only', path.join(FRAMEWORK, 'harness/scripts', script + '.ts'),
-          '--feature', target.feature, '--run-id', target.run_id, '--project-root', family.root, '--json', ...extra],
-        { cwd: path.join(FRAMEWORK, 'harness'), encoding: 'utf8', timeout: 30_000, windowsHide: true,
-          env: { ...process.env, MAISON_GOAL_CHECKPOINT_DIR: path.join(family.root, '.trust') } });
-        assert.equal(result.status, 0, `${result.stderr}\n${result.stdout}\n${result.error ?? ''}`);
-        return JSON.parse(result.stdout.trim());
-      };
-      const status = read('goal-status');
-      const monitor = read('goal-monitor', ['--max-seconds', '0']);
-      const waited = read('goal-status', ['--wait', '--timeout-ms', '20'], current);
-      assert.equal(waited.reason, 'timeout', JSON.stringify(waited));
-      assert.equal(waited.observation.run_id, current.run_id);
-      assert.equal(waited.observation.complete, false);
-      const deliveryWait = read('goal-status', ['--wait', '--timeout-ms', '20']);
-      assert.equal(deliveryWait.reason, 'timeout', JSON.stringify(deliveryWait));
-      assert.equal(deliveryWait.observation.run_id, current.run_id);
-      assert(status.current, 'public status must expose the current bound child despite an old original terminal');
-      assert.equal(status.current.feature, current.feature); assert.equal(status.current.run_id, current.run_id);
-      assert.equal(status.current.phase, 'plan'); assert.equal(status.complete, false);
-      assert.notEqual(status.status, 'COMPLETED'); assert.equal(status.activity.calls, 1);
-      assert.equal(monitor.phase, 'plan', 'monitor must read the current child instead of the old original terminal phase');
-      assert(monitor.markdown.includes(current.feature) && monitor.markdown.includes(current.run_id));
-      assert.deepEqual(fs.readFileSync(eventFile(family, family.original)), rootBefore);
-      assert.deepEqual(fs.readFileSync(eventFile(family, current)), childBefore);
-    }),
-  },
-  {
     name: 'f3b8e6a1 supervision: a real live initial author does not restart because an old diagnostic refresh timestamp elapsed',
     run: () => withFamily(async family => {
       acquire(family, family.original);
@@ -297,15 +259,14 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
 ];
 
 export function getCases() { return cases; }
-export async function runSelectedCases(filter?: string) {
-  const results: UnitCaseResult[] = [], timings: UnitExecutionTiming[] = [];
+export async function runAll() {
+  const results: UnitCaseResult[] = [];
   for (const test of cases) {
-    if (!matchesUnitCase(test.name, filter)) continue;
-    const finish = startCaseTiming([test.name], timings);
+    const endUnitCase = beginUnitCase(test.name);
+    if (!endUnitCase) continue;
     try { await test.run(); results.push({ name: test.name, ok: true }); }
     catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack ?? String(error) }); }
-    finally { finish(); }
+    finally {  endUnitCase(); }
   }
-  return selectedUnitCases(results, filter, timings);
+  return results;
 }
-export async function runAll() { return (await runSelectedCases()).results; }

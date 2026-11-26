@@ -98,9 +98,9 @@ staging 时会对 zip 内 `package.json` **sanitize**：移除 `release:*` scrip
 
 ## 开发验收（BLOCKER）
 
-每轮开发执行 `npm run test:changed`，运行日常域按需计划且全部必选项通过；普通 plan 收口与中间候选包执行 `npm run test:daily` 日常全集（含 typecheck、全部有效 fixture）及本次必要验证。正式发版执行一次 `npm test`，完整覆盖日常与扩展域的全部有效 unit/profile/fixture。测试执行或分类基建变更须定向证明没有漏组、串 scope 或绕过正式晋升，不因此例行重跑数小时业务全量。已确认影响日常承诺的缺陷不得通过分层豁免；同一输入的有效结果按影响复用，纯计划/文字改动仍按验证比例处理。
+每轮开发和 plan 收口在仓根执行 `npm test`，一次 typecheck 后并行执行全部 unit、profile、有效 fixture 与根 `scripts/tests/*.unit.mjs`，逐例核对登记和实跑。单例 30 秒到期失败，整轮上限 30 分钟。本地排错可用 `npm test -- --filter <套件名>`，筛选不写全量证明。纯计划和文字改动按验证比例处理。
 
-`candidate:build` 使用日常全集，随后打包、同 zip 校验与消费者 lifecycle smoke；`candidate:promote` 保留 zip 身份、consumer golden 与发布 plan 门禁，并要求与候选发布内容一致、输入稳定的正式全量通过证明。主干前进后可用 `--source-root <保留的受测副本>` 补全量；含未提交改动的候选不能只凭 `source_commit` 还原来源，来源缺失时须重新构建。只有正式全量与 golden 均通过、仅 plan 门禁未过时才可标记 eligible。
+`candidate:build` 在稳定来源运行一次根全量，随后打包、同 zip 校验与消费者 lifecycle smoke，将受测输入和全量证明绑定到该候选。`candidate:promote` 核对构建时的全量通过、zip 与包内 manifest 身份、consumer golden 和发布 plan 门禁。旧候选缺少同源全量证明时重新构建。主干进入下一版本后可用 `--source-root <保留来源>` 选择候选版本及其发布门禁。只有全量、同 zip smoke、包身份和 golden 均通过，且仅 plan 门禁未过时才标记 eligible。`release:all` 也从仓根运行一次全量。
 
 maison 自身不走 feature phase skill 管线；`harness-runner` 在消费者实例工程内跑 phase 集成测试。
 

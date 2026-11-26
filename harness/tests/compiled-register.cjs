@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { pathToFileURL } = require('url');
-const outDir = path.resolve(__dirname, '../dist/test-runtime');
+const outDir = path.resolve(process.env.MAISON_TEST_BUILD_DIR);
 const build = JSON.parse(fs.readFileSync(path.join(outDir, 'source-index.json'), 'utf8'));
 if (build.version !== 1) throw new Error('unsupported test runtime build');
 const byHash = new Map(Object.values(build.sources).map(source => [source.hash, source]));

@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -113,10 +114,5 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
   } },
 ];
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const test of cases) {
-    try { await test.run(); results.push({ name: test.name, ok: true }); }
-    catch (error) { results.push({ name: test.name, ok: false, error: (error as Error).stack }); }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }

@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 /**
  * visual-render-faithfulness — v3 渲染忠实度判别块（coding 阶段源码解析，非图像采样）。
  * 覆盖四个导出 helper：全宽判定 / 多 Button 定位 / backgroundColor 采色 / tonal 实心化判定。
@@ -129,11 +130,13 @@ test('s1 icon.kind: 无 icon → false', () => assert.ok(!isUnclassifiedIcon(und
 
 export function runAll(): UnitCaseResult[] {
   return CASES.map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (e) {
       return { name: c.name, ok: false, error: e instanceof Error ? (e.stack ?? e.message) : String(e) };
-    }
+    } finally { endUnitCase(); }
   });
 }

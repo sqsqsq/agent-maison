@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../../../../../harness/tests/utils/unit-cases';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -66,4 +67,5 @@ const cases = [
     } finally { fs.rmSync(root, { recursive: true, force: true }); }
   } },
 ];
-export function runAll() { return cases.map(test => { try { test.run(); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: (error as Error).stack }; } }); }
+export function runAll() { return cases.map(test => { const endUnitCase = beginUnitCase(test.name);
+                                                      if (!endUnitCase) return discoveryResult(test.name); try { test.run(); return { name: test.name, ok: true }; } catch (error) { return { name: test.name, ok: false, error: (error as Error).stack }; } finally { endUnitCase(); } }); }

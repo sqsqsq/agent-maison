@@ -211,6 +211,18 @@ export function questioningRecoveryCases() {
     };
     {
       const { before, previous } = sample();
+      asRecords(previous.items).find(item => item.scope_ref === 'flow:target-flow')!.disposition = 'open_decision';
+      before.review_summary = { reader_guide: { source_digest: 'before', sections: [
+        { section: 'flows', prose: '数据流原说明', source_refs: ['/design_views/1/runtime_data_flows/0'] },
+      ] } };
+      const current = clone(before);
+      current.review_summary.reader_guide.source_digest = 'after';
+      expect(selectQuestioningScopes(before, current, previous), ['flow:target-flow'], '摘要刷新只保留未决流程');
+      current.review_summary.reader_guide.sections[0].prose = '数据流说明改变';
+      expect(selectQuestioningScopes(before, current, previous), ['view:runtime', 'flow:target-flow'], '说明变化追加其运行时视图');
+    }
+    {
+      const { before, previous } = sample();
       const finding = asRecords(previous.items).find(item => item.scope_ref === 'flow:target-flow')!;
       for (const disposition of ['blocker', 'open_decision']) {
         finding.disposition = disposition;

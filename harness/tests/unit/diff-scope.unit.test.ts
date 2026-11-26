@@ -1,3 +1,4 @@
+import { runUnitCases } from '../utils/unit-cases';
 // ============================================================================
 // diff-scope.unit.test.ts — 共享 diff-scope 契约单测（C1 feature-track，plan d4a7c1e8）
 // ============================================================================
@@ -16,8 +17,8 @@ import {
   isUnderLayerDir,
   resolveModulePathPrefixes,
 } from '../../scripts/utils/diff-scope';
-import { resolveChainFromEvents } from '../../scripts/utils/goal-progress';
 import type { GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
+import { resolveChainFromEvents } from '../../scripts/utils/goal-progress';
 
 export interface UnitCaseResult {
   name: string;
@@ -142,14 +143,5 @@ const cases: Array<{ name: string; run: () => void }> = [
   },];
 
 export function runAll(): UnitCaseResult[] {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).message });
-    }
-  }
-  return results;
+  return runUnitCases(cases);
 }

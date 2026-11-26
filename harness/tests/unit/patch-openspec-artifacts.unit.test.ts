@@ -1,3 +1,4 @@
+import { beginUnitCase } from '../utils/unit-cases';
 // f4b2c8e6 t2 — patch-openspec-artifacts 全目标原子性与幂等
 import * as fs from 'fs';
 import * as os from 'os';
@@ -16,8 +17,10 @@ const TARGETS = [
 const SCRIPT = path.resolve(__dirname, '..', '..', '..', 'scripts', 'patch-openspec-artifacts.mjs');
 
 function run(results: UnitCaseResult[], name: string, fn: () => void): void {
+  const endUnitCase = beginUnitCase(name);
+  if (!endUnitCase) return;
   try { fn(); results.push({ name, ok: true }); }
-  catch (err) { results.push({ name, ok: false, error: (err as Error).stack ?? String(err) }); }
+  catch (err) { results.push({ name, ok: false, error: (err as Error).stack ?? String(err) }); } finally { endUnitCase(); }
 }
 function assert(cond: boolean, msg: string): void { if (!cond) throw new Error(msg); }
 function anchor(rel: string): string {

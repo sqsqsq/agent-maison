@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // ============================================================================
 // coding 编译失败归因：classifyCodingCompileFailure 枚举与禁止历史 kind 字面
 // ============================================================================
@@ -177,7 +178,6 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-
 // ============================================================================
 // f9c2e6b4 t2 —— hvigor 配置错误按**路径存在性**分流（分类矩阵，不做散文元门禁）
 // 立项 run 20260803T103413Z-3f72a8：hvigor 23ms 配置失败，六条 resolve 正则不命中，
@@ -314,11 +314,13 @@ cases.push(
 
 export function runAll(): UnitCaseResult[] {
   return cases.map(c => {
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) return discoveryResult(c.name);
     try {
       c.run();
       return { name: c.name, ok: true };
     } catch (err) {
       return { name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message };
-    }
+    } finally { endUnitCase(); }
   });
 }

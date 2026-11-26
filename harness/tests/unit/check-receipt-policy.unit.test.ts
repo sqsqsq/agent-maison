@@ -1,3 +1,5 @@
+import { beginUnitCase } from '../utils/unit-cases';
+import { testCliArgs } from '../utils/test-cli-args';
 // ============================================================================
 // check-receipt-policy.unit.test.ts — C2 verification-matrix 端到端回归
 // （plan d4a7c1e8）
@@ -31,7 +33,6 @@ import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-diges
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { resolveExecutionScope } from '../../scripts/utils/execution-scope';
-import { matchesUnitCase, selectedUnitCases, unitCaseGroups } from '../utils/unit-case-selection';
 
 export interface UnitCaseResult {
   name: string;
@@ -245,12 +246,11 @@ function spawnCheckReceipt(
 ): { status: number | null; stdout: string; stderr: string } {
   const checker = path.join(HARNESS_ROOT, 'scripts', 'check-receipt.ts');
   const r = spawnSync(
-    process.platform === 'win32' ? 'npx.cmd' : 'npx',
-    ['ts-node', checker, '--feature', 'demo', '--phase', phase, '--project-root', root, '--skip-state-sync'],
+    process.execPath,
+    [...testCliArgs(checker), '--feature', 'demo', '--phase', phase, '--project-root', root, '--skip-state-sync'],
     {
       cwd: HARNESS_ROOT,
       encoding: 'utf-8',
-      shell: process.platform === 'win32',
       env: goal
         ? {
             ...process.env,
@@ -1185,21 +1185,18 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-function executeCases(selector?: string): UnitCaseResult[] {
+function executeCases(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
   for (const c of cases) {
-    if (!matchesUnitCase(c.name, selector)) continue;
+    const endUnitCase = beginUnitCase(c.name);
+    if (!endUnitCase) continue;
     try {
       c.run();
       results.push({ name: c.name, ok: true });
     } catch (err) {
       results.push({ name: c.name, ok: false, error: (err as Error).message });
-    }
+    } finally { endUnitCase(); }
   }
   return results;
 }
 export const runAll = () => executeCases();
-export const runSelectedCases = (selector?: string) => selectedUnitCases(executeCases(selector), selector, []);
-export const listCaseGroups = () => unitCaseGroups(cases.map(test => test.name))
-  .map(group => ({ ...group, releaseOnly: !group.caseNames.some(name =>
-    name.startsWith('goal sync-closure') || name.startsWith('full×strict（缺省') || name.startsWith('T4：current summary')) }));

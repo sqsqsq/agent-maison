@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 import assert from 'assert';
 import { adapterModelBinding, freezeModelPin } from '../../scripts/utils/adapter-model';
 import * as fs from 'fs';
@@ -14,7 +15,6 @@ import {
 } from '../../scripts/utils/agent-invoke';
 import { loadGoalCapability, routeGoalCapability } from '../../scripts/utils/goal-adapter-capability';
 import { resolveFinalModelPin } from '../../scripts/utils/goal-manifest-cli';
-import { validateAdapterModelPinValue } from '../../scripts/utils/goal-manifest';
 import { resolveTerminalEventParser } from '../../scripts/utils/codex-terminal-events';
 import { executeInitTask, type InitExecutionContext } from '../../scripts/utils/init-task-executor';
 import { emitInstanceSkillBridge } from '../../scripts/utils/instance-skill-bridge';
@@ -22,6 +22,7 @@ import { ensurePersonalSetup } from '../../scripts/utils/personal-setup-gate';
 import { resolveInvokeHardCliFailure } from '../../scripts/utils/vision-canary';
 import { formatHeadlessBinaryIssue, type ResolvedHeadlessBinary } from '../../scripts/utils/headless-binary-resolve';
 import type { UnitCaseResult } from '../run-unit';
+import { validateAdapterModelPinValue } from '../../scripts/utils/goal-manifest';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
 const ADAPTER = 'deepseek-harness';
@@ -334,10 +335,5 @@ cases.push({
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const item of cases) {
-    try { await item.run(); results.push({ name: item.name, ok: true }); }
-    catch (error) { results.push({ name: item.name, ok: false, error: (error as Error).stack }); }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }

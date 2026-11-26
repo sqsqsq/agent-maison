@@ -1,3 +1,4 @@
+import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // Legacy suite id retained as a regression anchor; behavior is now global assurance.
 import { assuranceSatisfies, validateMinimumAssurance } from '../../scripts/utils/skill-contract';
 import * as path from 'path';
@@ -32,5 +33,6 @@ const cases: TestCase[] = [
 ];
 
 export function runAll(): Array<{ name: string; ok: boolean; error?: string }> {
-  return cases.map((testCase) => { try { testCase.run(); return { name: testCase.name, ok: true }; } catch (error) { return { name: testCase.name, ok: false, error: (error as Error).message }; } });
+  return cases.map((testCase) => { const endUnitCase = beginUnitCase(testCase.name);
+                                   if (!endUnitCase) return discoveryResult(testCase.name); try { testCase.run(); return { name: testCase.name, ok: true }; } catch (error) { return { name: testCase.name, ok: false, error: (error as Error).message }; } finally { endUnitCase(); } });
 }

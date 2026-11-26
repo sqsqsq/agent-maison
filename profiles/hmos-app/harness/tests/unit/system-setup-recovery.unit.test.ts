@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../../../../../harness/tests/utils/unit-cases';
 import { issueManagedInvocation } from '../../../../../harness/tests/utils/managed-invocation';
 import assert from 'assert';
 import * as fs from 'fs';
@@ -225,4 +226,6 @@ test('395 self-check and formal gate use real UT provider once; cleared guide wi
   }
 });
 
-export async function runAll() { const out = []; for (const t of cases) { try { await t.run(); out.push({ name: t.name, ok: true }); } catch (e) { out.push({ name: t.name, ok: false, error: (e as Error).stack }); } } return out; }
+export async function runAll() {
+  return runUnitCasesAsync(cases);
+}

@@ -1,3 +1,4 @@
+import { runUnitCasesAsync } from '../utils/unit-cases';
 import { issueManagedInvocation } from '../utils/managed-invocation';
 /**
  * golden-nav-capture-wiring.unit.test.ts — c4e8b1d3 Todo 3 入口级接线
@@ -740,7 +741,6 @@ test('B08-V1 接线：真跑轮 holder.deviceRunReused=false；同键复用轮 h
   }
 });
 
-
 test('4c8 author and formal testing decide reuse before readiness and forced install; manual force with one leftover variable remains fresh', async () => {
   const c = setup(); const savedEnv = { ...process.env };
   const registry = require('../../capability-registry'); const oldInstall = registry.dispatchDeviceTestInstall;
@@ -879,14 +879,5 @@ test('395 testing 完整 checker：动作步骤被引导拦住，只报设备阻
 });
 
 export async function runAll(): Promise<UnitCaseResult[]> {
-  const results: UnitCaseResult[] = [];
-  for (const c of cases) {
-    try {
-      await c.run();
-      results.push({ name: c.name, ok: true });
-    } catch (err) {
-      results.push({ name: c.name, ok: false, error: (err as Error).stack ?? String(err) });
-    }
-  }
-  return results;
+  return runUnitCasesAsync(cases);
 }
