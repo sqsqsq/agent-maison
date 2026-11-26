@@ -179,7 +179,7 @@ export function renderDesignExtensionPreparation(result: DesignPreparation): str
   }
   for (const binding of prepared.bindings.filter(binding => binding.kind === 'action')) {
     const action = binding.ability === UX && binding.id === 'fill-missing'
-      ? `仅当本次请求涉及相应 UI 行为、用户未排除提取且没有适用旧稿时，由本次作者打开绑定的 Skill，先在 ${prepared.ux!.output_dir}/ 生成有效 UX、解析回读，再在蓝图用例和验收引用对应屏幕ID.元素ID。已有适用稿时报告复用；非 UI 或用户排除时报告原因并跳过。AI 推导稿保留证据强度与待决，原需求和上游原稿保持只读。`
+      ? `仅当本次请求涉及相应 UI 行为、用户未排除提取且适用旧稿仍缺本次所需的内容时，由本次作者打开绑定的 Skill，只补缺项，先在 ${prepared.ux!.output_dir}/ 生成有效 UX、解析回读，再在蓝图用例和验收引用对应屏幕ID.元素ID。旧稿已覆盖本次范围时报告复用；非 UI 或用户排除时报告原因并跳过。AI 推导稿保留证据强度与待决，原需求和上游原稿保持只读。`
       : '本次作者按当前请求范围和 Skill 适用条件执行。用户排除或不适用时报告跳过；缺少必需依赖时报告缺口。';
     lines.push(`设计前动作 ${selector(binding)} [${binding.path}]。 ${action}`);
   }
