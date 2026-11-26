@@ -26,7 +26,7 @@ function adaptersFromProject(projectRoot: string): string[] {
     .map(value => value.trim()))];
 }
 
-export function initExtension(projectRoot: string, frameworkDir: string): string[] {
+export function initExtension(projectRoot: string, frameworkDir: string, observeWrite?: ObserveExtensionWrite): string[] {
   const { root } = extensionLocation(projectRoot, frameworkDir);
   const templateRoot = path.join(frameworkDir, 'skills', 'project', 'extension', 'templates', 'extension-skeleton');
   const copies = [
@@ -39,8 +39,8 @@ export function initExtension(projectRoot: string, frameworkDir: string): string
   for (const [sourceRel, targetRel] of copies) {
     const target = ordinaryFile(root, targetRel);
     if (fs.existsSync(target)) continue;
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.copyFileSync(path.join(templateRoot, ...sourceRel.split('/')), target, fs.constants.COPYFILE_EXCL);
+    const bytes = fs.readFileSync(path.join(templateRoot, ...sourceRel.split('/')));
+    writeExtensionFileAtomic(target, bytes, true, observeWrite);
     written.push(relativeExtensionPath(projectRoot, target));
   }
   return written;
@@ -176,27 +176,24 @@ function main(): void {
   if (action === 'init') mutation = withExtensionWrite(projectRoot, frameworkDir, () => ({ filesWritten: initExtension(projectRoot, frameworkDir) }));
   if (action === 'materialize') mutation = withExtensionWrite(projectRoot, frameworkDir, () => materializeExtensions(projectRoot, frameworkDir));
   if (action === 'install' || action === 'enable' || action === 'disable' || action === 'uninstall') {
-    mutation = withExtensionWrite(projectRoot, frameworkDir, () => {
+    mutation = withExtensionWrite(projectRoot, frameworkDir, () => recordExtensionManagementWrites(projectRoot, observeWrite => {
       const sources = loadFrameworkConfigWithSources(projectRoot);
       const priorSections = buildAgentsTemplateVars(sources.projectRaw ?? {}, {
         entryFile: 'AGENTS.md', projectRoot, frameworkRoot: frameworkDir,
       }) as EntrySections;
-      const run = (observeWrite?: ObserveExtensionWrite) => {
-        const result = changeExtension(action, {
-          projectRoot, frameworkRoot: frameworkDir, source, ability, binding, observeWrite,
-        });
-        if (result.requestIds?.length) {
-          process.exitCode = 1;
-          return { ...result, message: action === 'install' ? '等待已有请求交回后重试安装。' : '等待已有请求交回后重试卸载。' };
-        }
-        return {
-          ...result,
-          ...(action === 'install' ? { skeletonFilesWritten: initExtension(projectRoot, frameworkDir) } : {}),
-          materialization: materializeExtensions(projectRoot, frameworkDir, priorSections, observeWrite),
-        };
+      const result = changeExtension(action, {
+        projectRoot, frameworkRoot: frameworkDir, source, ability, binding, observeWrite,
+      });
+      if (result.requestIds?.length) {
+        process.exitCode = 1;
+        return { ...result, message: action === 'install' ? '等待已有请求交回后重试安装。' : '等待已有请求交回后重试卸载。' };
+      }
+      return {
+        ...result,
+        ...(action === 'install' ? { skeletonFilesWritten: initExtension(projectRoot, frameworkDir, observeWrite) } : {}),
+        materialization: materializeExtensions(projectRoot, frameworkDir, priorSections, observeWrite),
       };
-      return action === 'enable' || action === 'disable' ? recordExtensionManagementWrites(projectRoot, run) : run();
-    });
+    }));
   }
   const inspection = inspectInstanceExtensions(projectRoot, frameworkDir, inspectOptions);
   const request = values.request ? inspectExtensionRequest(projectRoot, values.request, ability) : undefined;

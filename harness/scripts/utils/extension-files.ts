@@ -52,16 +52,18 @@ export function writeExtensionFileAtomic(
   const before = observe && !createOnly ? currentDigest(target) : null;
   fs.mkdirSync(path.dirname(target), { recursive: true });
   const temp = path.join(path.dirname(target), `.${path.basename(target)}.${randomUUID()}.tmp`);
-  fs.writeFileSync(temp, bytes, { flag: 'wx' });
+  const fd = fs.openSync(temp, 'wx');
   try {
+    try { fs.writeFileSync(fd, bytes); }
+    finally { fs.closeSync(fd); }
     if (createOnly) fs.linkSync(temp, target);
     else fs.renameSync(temp, target);
+    if (observe) {
+      const after = createHash('sha256').update(bytes).digest('hex');
+      if (before !== after) observe({ path: target, pre_sha256: before, post_sha256: after });
+    }
   } finally {
     fs.rmSync(temp, { force: true });
-  }
-  if (observe) {
-    const after = createHash('sha256').update(bytes).digest('hex');
-    if (before !== after) observe({ path: target, pre_sha256: before, post_sha256: after });
   }
 }
 

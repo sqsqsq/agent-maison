@@ -1,5 +1,6 @@
 import assert from 'assert';
 import { spawnSync } from 'child_process';
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -280,6 +281,35 @@ const cases = [
       assert.deepEqual(state(project, 'install', { source }).filesWritten.sort(),
         ['doc/extensions/' + skill, 'doc/extensions/' + reference]);
       assert.equal(fs.readFileSync(asset, 'utf8'), '# updated skill asset\n');
+    }),
+  },
+  {
+    name: '管理操作后段失败仍只记已经落盘的精确文件变化',
+    run: () => inProject((project, source) => {
+      fs.mkdirSync(path.join(project, 'CLAUDE.md'));
+      const signed = issueDesign(project, 'partial-install-author', 'local-ux', false, {
+        projectRoot: project, feature: 'opening', executionRole: 'author', phaseOrder: [], domains: [],
+        protectedRoots: ['doc/extensions', '.agents', '.claude', 'AGENTS.md'],
+        diagnostics: [], unresolvedSourcePhases: [],
+      });
+      const result = runCli(project, 'install', source, 'ux');
+      assert.equal(result.status, 1, result.stdout + result.stderr);
+      assert.match(result.stderr, /路径不是普通文件：CLAUDE\.md/);
+      const observations = fs.readFileSync(path.join(signed.runDir, 'events.jsonl'), 'utf8').trim().split('\n')
+        .map(line => JSON.parse(line))
+        .filter(event => event.type === 'phase_write_observed' && event.producer === 'extension-management');
+      assert.equal(observations.length, 1);
+      const receipt = observations[0];
+      assert.equal(receipt.invoke_id, 'partial-install-author');
+      assert.deepEqual(receipt.produced.map((row: { path: string }) => row.path).sort(), [
+        '.agents/skills/ux/SKILL.md', '.claude/commands/ux.md', 'AGENTS.md', 'doc/extensions/hooks/.gitkeep',
+        'doc/extensions/knowledge/.gitkeep', 'doc/extensions/knowledge/intake.md', 'doc/extensions/manifest.yaml',
+        'doc/extensions/skills/.gitkeep', 'doc/extensions/skills/ux/SKILL.md', 'doc/extensions/skills/ux/reference/stable.md',
+      ]);
+      for (const row of receipt.produced) {
+        assert.equal(row.pre_sha256, null);
+        assert.equal(row.post_sha256, createHash('sha256').update(fs.readFileSync(path.join(project, row.path))).digest('hex'));
+      }
     }),
   },
   {

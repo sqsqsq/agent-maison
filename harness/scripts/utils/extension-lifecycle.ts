@@ -10,7 +10,7 @@ import { scanExtensionSkills } from './instance-skill-bridge';
 import { activeExtensionRequests, activeExtensionResourceRequests } from './extension-requests';
 import { releaseLock, tryAcquireLock } from './goal-run-lock';
 import { isInsideProjectRoot, realProjectPath, validateProjectRelativePath } from './project-relative-path';
-import { ordinaryFile, ordinaryPath, relativeExtensionPath, writeExtensionFileAtomic, type ObserveExtensionWrite } from './extension-files';
+import { ordinaryFile, ordinaryPath, relativeExtensionPath, removeExtensionFile, writeExtensionFileAtomic, type ObserveExtensionWrite } from './extension-files';
 
 type Data = Record<string, unknown>;
 type Document = ReturnType<typeof YAML.parseDocument>;
@@ -366,13 +366,13 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
     for (const [hostRel, item] of plannedFiles) {
       if (!item.prior) continue;
       if (digest(fs.readFileSync(item.target)) !== item.prior) throw new Error(`安装期间文件已变化，保留：${hostRel}`);
-      writeExtensionFileAtomic(item.target, item.bytes);
+      writeExtensionFileAtomic(item.target, item.bytes, false, options.observeWrite);
       result.filesWritten.push(hostRel);
     }
     save();
     for (const [hostRel, item] of plannedFiles) {
       if (item.prior) continue;
-      writeExtensionFileAtomic(item.target, item.bytes, true);
+      writeExtensionFileAtomic(item.target, item.bytes, true, options.observeWrite);
       result.filesWritten.push(hostRel);
     }
     return result;
@@ -410,7 +410,7 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
       } else if (digest(fs.readFileSync(target)) !== sha256) {
         result.retained.push({ path: hostRel, reason: '文件已被宿主修改' });
       } else {
-        fs.unlinkSync(target);
+        removeExtensionFile(target, options.observeWrite);
         result.filesRemoved.push(hostRel);
       }
     }
