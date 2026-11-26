@@ -5,7 +5,9 @@ import { isDeepStrictEqual } from 'util';
 import * as YAML from 'yaml';
 
 import { loadFrameworkConfig } from '../../config';
-import { extensionSkillIdsForBridge, loadInstanceExtensions, loadInstanceExtensionSource } from '../../extension-loader';
+import {
+  extensionSkillIdsForBridge, loadInstanceExtensions, loadInstanceExtensionSource, validateExtensionManifestRoot,
+} from '../../extension-loader';
 import { scanExtensionSkills } from './instance-skill-bridge';
 import { activeExtensionRequests, activeExtensionResourceRequests } from './extension-requests';
 import { releaseLock, tryAcquireLock } from './goal-run-lock';
@@ -151,6 +153,10 @@ function migrateHost(doc: Document, bundle: Bundle, projectRoot: string, relativ
     }
   }
   doc.set('schema_version', '2.0');
+  const errors = validateExtensionManifestRoot(doc.toJS());
+  if (errors.length) {
+    throw new Error(`无法迁移宿主扩展清单：${errors.map(item => item.message).join('；')}。已保留原清单及资源。`);
+  }
 }
 
 function sourcesForInstall(input: {

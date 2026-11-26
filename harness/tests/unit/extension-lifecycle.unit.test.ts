@@ -147,6 +147,7 @@ const cases = [
       const yaml = path.join(extensionDir, 'manifest.yaml');
       const manifest = () => YAML.parse(fs.readFileSync(yaml, 'utf8'));
       assert.equal(manifest().schema_version, '2.0');
+      assert(loadInstanceExtensions(project, undefined, { frameworkRoot }).manifestUsable);
       assert.equal(manifest().name, 'Existing name');
       assert.deepEqual(manifest().provides.skills, ['8_Story', 'ux']);
       assert.deepEqual(manifest().provides.knowledge, [{ path: 'knowledge/host.md', audience: 'none' }]);
@@ -168,6 +169,28 @@ const cases = [
       assert.deepEqual(publishedBindings(project).map(b => [b.id, b.enabled]), [
         ['read', true], ['fill', false], ['new', false],
       ]);
+    }),
+  },
+  {
+    name: '旧 1.0 清单含 2.0 不识别的宿主顶层字段时，安装拒绝迁移且保持清单和资源字节',
+    run: () => inProject((project, source, extensionDir) => {
+      const manifest = path.join(extensionDir, 'manifest.yaml');
+      const story = path.join(extensionDir, 'skills/story/SKILL.md');
+      write(manifest, '# 旧宿主扩展注释\nschema_version: "1.0"\nname: wallet\nx-wallet-maintainer-note: 自有备注\n');
+      write(story, '# Existing story\n');
+      const manifestBefore = fs.readFileSync(manifest);
+      const storyBefore = fs.readFileSync(story);
+      assert.deepEqual(cli(project, 'verify').inspection.manifestErrors, []);
+
+      const attempted = runCli(project, 'install', source, 'ux');
+      assert.equal(attempted.status, 1, attempted.stderr + attempted.stdout);
+      assert.match(attempted.stderr, /manifest 2\.0 不支持字段：x-wallet-maintainer-note/);
+      assert.deepStrictEqual(fs.readFileSync(manifest), manifestBefore);
+      assert.deepStrictEqual(fs.readFileSync(story), storyBefore);
+      assert(!fs.existsSync(path.join(extensionDir, 'skills/ux')));
+      assert(!fs.existsSync(path.join(extensionDir, 'knowledge')));
+      assert(!fs.existsSync(path.join(project, 'AGENTS.md')));
+      assert.deepEqual(cli(project, 'verify').inspection.manifestErrors, []);
     }),
   },
   {

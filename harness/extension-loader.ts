@@ -201,6 +201,52 @@ export function loadInstanceExtensionSource(sourceRoot: string, projectRoot: str
   return readExtensionManifest(path.resolve(sourceRoot), projectRoot, options, true);
 }
 
+/** Validate the shared root contract without loading any contribution resources. */
+export function validateExtensionManifestRoot(raw: unknown, manifestPath?: string): ExtensionValidationError[] {
+  const errors: ExtensionValidationError[] = [];
+  const add = (code: string, message: string) => {
+    errors.push({ severity: 'MAJOR', code, message, path: manifestPath });
+  };
+  if (!isRecord(raw)) {
+    add('manifest_not_object', 'manifest 根必须是 object');
+    return errors;
+  }
+
+  const sv = raw.schema_version;
+  const schemaVersion = typeof sv === 'string' ? sv.trim() : '';
+  if (!schemaVersion) {
+    add('manifest_schema_version', '缺少或非法 schema_version（须为非空字符串）');
+  } else if (schemaVersion !== '1.0' && schemaVersion !== '1.1' && schemaVersion !== '2.0') {
+    add(
+      'manifest_schema_version_unsupported',
+      `不支持的 schema_version="${schemaVersion}"（当前支持 1.0 / 1.1 / 2.0）`,
+    );
+  }
+
+  const name = raw.name;
+  if (typeof name !== 'string' || !name.trim()) {
+    add('manifest_name', 'name 必须为非空字符串');
+  } else if (schemaVersion === '1.1' && !SAFE_ID.test(name.trim())) {
+    add('manifest_name', 'manifest 1.1 name 必须是小写 slug');
+  }
+
+  if (errors.length > 0) return errors;
+
+  const modern = schemaVersion !== '1.0';
+  const native = schemaVersion === '2.0';
+  if (modern) {
+    const allowed = ['schema_version', 'name', 'version', 'description', 'framework_compat', 'provides', 'phase_bindings'];
+    if (native) allowed.push('bindings', 'installations');
+    for (const key of unknownKeys(raw, allowed)) {
+      add('manifest_unknown_field', `manifest ${schemaVersion} 不支持字段：${key}`);
+    }
+  }
+  if (native && raw.installations !== undefined && !isRecord(raw.installations)) {
+    add('installations_shape', 'installations 必须是能力 ID 映射');
+  }
+  return errors;
+}
+
 function readExtensionManifest(extRoot: string, projectRoot: string, options: LoadOptions | undefined,
   sourceOnly: boolean): ExtensionBundle {
   if (!fs.existsSync(extRoot) || !fs.statSync(extRoot).isDirectory()) return emptyBundle(null);
@@ -218,51 +264,14 @@ function readExtensionManifest(extRoot: string, projectRoot: string, options: Lo
     return rejectManifest(bundle);
   }
 
-  if (!isRecord(raw)) {
-    pushError(bundle, 'manifest_not_object', 'manifest 根必须是 object', manifestPath);
-    return rejectManifest(bundle);
-  }
+  bundle.errors.push(...validateExtensionManifestRoot(raw, manifestPath));
+  if (!isRecord(raw) || bundle.errors.length > 0) return rejectManifest(bundle);
 
-  const sv = raw.schema_version;
-  const schemaVersion = typeof sv === 'string' ? sv.trim() : '';
-  if (!schemaVersion) {
-    pushError(bundle, 'manifest_schema_version', '缺少或非法 schema_version（须为非空字符串）', manifestPath);
-  } else if (schemaVersion !== '1.0' && schemaVersion !== '1.1' && schemaVersion !== '2.0') {
-    pushError(
-      bundle,
-      'manifest_schema_version_unsupported',
-      `不支持的 schema_version="${schemaVersion}"（当前支持 1.0 / 1.1 / 2.0）`,
-      manifestPath,
-    );
-  }
-
-  const name = raw.name;
-  if (typeof name !== 'string' || !name.trim()) {
-    pushError(bundle, 'manifest_name', 'name 必须为非空字符串', manifestPath);
-  } else if (schemaVersion === '1.1' && !SAFE_ID.test(name.trim())) {
-    pushError(bundle, 'manifest_name', 'manifest 1.1 name 必须是小写 slug', manifestPath);
-  }
-
-  if (bundle.errors.length > 0) {
-    return rejectManifest(bundle);
-  }
-  const version = schemaVersion as '1.0' | '1.1' | '2.0';
+  const version = (raw.schema_version as string).trim() as NonNullable<ExtensionBundle['manifestVersion']>;
   const modern = version !== '1.0';
   const native = version === '2.0';
-  if (modern) {
-    const allowed = ['schema_version', 'name', 'version', 'description', 'framework_compat', 'provides', 'phase_bindings'];
-    if (native) allowed.push('bindings', 'installations');
-    for (const key of unknownKeys(raw, allowed)) {
-      pushError(bundle, 'manifest_unknown_field', `manifest ${version} 不支持字段：${key}`, manifestPath);
-    }
-  }
-  if (native && raw.installations !== undefined && !isRecord(raw.installations)) {
-    pushError(bundle, 'installations_shape', 'installations 必须是能力 ID 映射', manifestPath);
-  }
-  if (bundle.errors.length) return rejectManifest(bundle);
-
   bundle.manifestVersion = version;
-  const manifestName = (name as string).trim();
+  const manifestName = (raw.name as string).trim();
   const legacyAbility = SAFE_SKILL.test(manifestName) ? manifestName : `legacy-${legacyBindingId('hook', manifestName).slice(5)}`;
   bundle.manifestName = manifestName;
   const frameworkRoot = options?.frameworkRoot ?? FRAMEWORK_ROOT;
