@@ -374,6 +374,16 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
       const handoff = require(path.join(project.harnessDir, 'scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
       const origin = require(path.join(project.harnessDir, 'scripts/utils/delivery-origin')) as typeof import('../../scripts/utils/delivery-origin');
+      const configFile = path.join(project.root, 'framework.config.json');
+      fs.writeFileSync(configFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(configFile, 'utf8')), materialized_adapters: ['claude'] }) + '\n');
+      clearFrameworkConfigCache();
+      const otherSource = path.join(path.dirname(project.root), 'other-extension');
+      const otherSkill = 'skills/unrelated-helper/SKILL.md';
+      fs.mkdirSync(path.join(otherSource, path.dirname(otherSkill)), { recursive: true });
+      fs.writeFileSync(path.join(otherSource, otherSkill), '# Independent helper\n');
+      fs.writeFileSync(path.join(otherSource, 'manifest.yaml'), YAML.stringify({
+        schema_version: '2.0', name: 'other-source', provides: { skills: ['unrelated-helper'] },
+      }));
       const source = path.resolve(__dirname, '../../../extensions');
       const extension = path.join(project.root, 'doc/extensions');
       fs.mkdirSync(extension, { recursive: true });
@@ -418,24 +428,44 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
         [binding.id, binding.delivery]), [['read-upstream', 'inline'], ['fill-missing', 'action']]);
       assert.deepEqual(originalDesign.extension_preparation.ux.candidates, []);
       assert(originalDesign.knowledge.entries.some((item: { content?: string }) => item.content?.includes('蓝图设计前复用已有稿')));
-      const mutation = () => spawnSync(process.execPath, ['-r', 'ts-node/register/transpile-only', 'scripts/extension.ts',
-        'disable', 'ux-behavior-spec', '--project-root', project.root, '--json'], { cwd: project.harnessDir, encoding: 'utf8',
-        env: { ...process.env, MAISON_GOAL_RUN_ID: '', MAISON_GOAL_ATTEMPT: '' } });
-      const stopped = mutation();
-      assert.equal(stopped.status, 0, stopped.stderr + stopped.stdout);
-      assert.equal(JSON.parse(stopped.stdout).mutation.changed, true);
+      const invokeExtension = (args: string[], childEnv: Readonly<Record<string, string>> = {}) =>
+        spawnSync(process.execPath, ['-r', 'ts-node/register/transpile-only', 'scripts/extension.ts',
+          ...args, '--project-root', project.root, '--json'], { cwd: project.harnessDir, encoding: 'utf8', timeout: 30_000,
+          env: { ...process.env, MAISON_GOAL_RUN_ID: '', MAISON_GOAL_ATTEMPT: '', ...childEnv } });
+      const mutate = (...args: string[]) => {
+        const result = invokeExtension(args);
+        assert.equal(result.status, 0, result.stderr + result.stdout);
+        const mutation = JSON.parse(result.stdout).mutation;
+        assert.equal(mutation.changed, true, args.join(' '));
+        return mutation;
+      };
+      mutate('disable', 'ux-behavior-spec');
+      const installedPath = `doc/extensions/${otherSkill}`;
+      const bridgePath = '.claude/commands/unrelated-helper.md';
+      const installation = mutate('install', otherSource, 'unrelated-helper');
+      assert(installation.filesWritten.includes(installedPath));
+      assert(installation.skeletonFilesWritten.includes('doc/extensions/knowledge/.gitkeep'));
+      assert(fs.existsSync(path.join(project.root, bridgePath)));
+      assert.equal(fs.readFileSync(path.join(project.root, installedPath), 'utf8'), '# Independent helper\n');
       const binding_snapshot = handoff.capturePhaseBinding(prepared.runDir, issued);
+      assert(binding_snapshot);
       fs.appendFileSync(path.join(prepared.runDir, 'events.jsonl'), JSON.stringify({ type: 'agent_process_bound',
         phase: issued.request.context.phase, invoke_id: issued.request.invoke_id, owner_id: issued.request.context.owner.owner_id,
         owner_epoch: issued.request.context.owner.epoch, pid: 42, binding_snapshot, ts: new Date().toISOString() }) + '\n');
+      const denied = invokeExtension(['uninstall', 'unrelated-helper'], issued.request.context.childEnv);
+      assert.equal(denied.status, 1, denied.stderr + denied.stdout);
+      assert.match(denied.stderr, /宿主管理入口/);
+      assert(fs.existsSync(path.join(project.root, installedPath)), 'the author cannot invoke the management writer');
+      const uninstall = mutate('uninstall', 'unrelated-helper');
+      assert(uninstall.filesRemoved.includes(installedPath));
+      assert(!fs.existsSync(path.join(project.root, bridgePath)));
+      assert(!fs.existsSync(path.join(project.root, installedPath)));
       const repeated = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
       assert.deepEqual(repeated.request, reference);
       assert.equal(repeated.deadline, first.deadline);
       assert.deepEqual(fs.readFileSync(reference.path), bytes);
       const events = () => handoff.sessionEvents(prepared.runDir);
       assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, 1);
-      assert(events().some(event => event.type === 'phase_write_observed' && 'producer' in event && event.producer === 'extension-management'
-        && event.invoke_id === issued.request.invoke_id), 'the authorized CLI records its actual files against this request');
       const wrongPhase = issued.request.context.phase === 'ut' ? 'coding' : 'ut';
       await assert.rejects(() => withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path,
         report: { status: 'passed', phase: wrongPhase, details: 'wrong request/phase must be rejected before acceptance' } })), /phase|execution result/);
@@ -443,6 +473,19 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const report = { status: 'passed' as const, phase: issued.request.context.phase, details: 'Author exited normally but produced no design.' };
       const continued = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path, report }));
       assert.equal(continued.type, 'phase_execute_request', 'native completion without a real design/current Q remains unknown work: ' + JSON.stringify(continued.result));
+      assert.equal(handoff.acceptedSessionReport(prepared.runDir, issued)?.event.status, 'passed');
+      assert(!events().some(event => event.type === 'phase_write_violation' && event.invoke_id === issued.request.invoke_id));
+      const managedWrites = events().flatMap(event => event.type === 'phase_write_observed' && 'producer' in event
+        && event.producer === 'extension-management' && event.invoke_id === issued.request.invoke_id
+        && 'produced' in event && Array.isArray(event.produced) ? event.produced : []);
+      for (const file of [installedPath, bridgePath]) {
+        const changes = managedWrites.filter(row => row.path === file);
+        assert.equal(changes.length, 2, `installation and removal were both observed for ${file}`);
+        assert.equal(changes[0].pre_sha256, null);
+        assert.match(changes[0].post_sha256, /^[0-9a-f]{64}$/);
+        assert.equal(changes[1].pre_sha256, changes[0].post_sha256);
+        assert.equal(changes[1].post_sha256, null);
+      }
       assert(!events().some(event => event.type === 'run_end' && event.halt_reason === 'no_progress_guard'), 'an incomplete design/Q packet cannot manufacture no-progress acceptance');
       const duplicate = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path, report }));
       assert.equal(duplicate.type, 'goal_session_report_received'); assert.equal(duplicate.duplicate, true);
