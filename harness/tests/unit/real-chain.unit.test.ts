@@ -35,9 +35,9 @@ import {
 } from '../utils/real-chain-host';
 import { runGoalRuntimeChain, requestVia, claudeReadEventLine, writeAgentEvents } from './goal-runner-testing-integrity.unit.test';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
-import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
-import { parseVerifierRequest, renderVerifierRequest, type VerifierRequest } from '../../scripts/utils/verifier-request';
-import { verifierReportMdFilename, normalizeEol } from '../../scripts/utils/verifier-subject';
+import { parseDeliveredFixtureRequest, publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import type { VerifierRequest } from '../../scripts/utils/verifier-request';
+import { verifierReportMdFilename } from '../../scripts/utils/verifier-subject';
 import { loadVerifierEvidenceForSubject } from '../../scripts/utils/verifier-evidence';
 import * as YAML from 'yaml';
 import { fixture as seedChangeUnitBlueprint } from './blueprint-skill-projection.unit.test';
@@ -256,14 +256,12 @@ export function readDeliveredVerifierRequest(p: RealChainProject, ctx: { phase: 
   const summary = readSummary(p, phase);
   const requestPath = path.resolve(p.root, summary?.verifier_request ?? '');
   assert(requestPath.startsWith(path.resolve(p.root) + path.sep) && fs.existsSync(requestPath), 'current verifier request must exist in this isolated project');
-  const request = parseVerifierRequest(fs.readFileSync(requestPath, 'utf8'));
-  assert(request && request.feature === p.feature && ctx.phase === request.phase + '-verifier-format-repair', 'model must consume the actual current verifier request');
-  assert(normalizeEol(ctx.prompt).includes(renderVerifierRequest(request!).trimEnd()), 'the complete current verifier request must actually be delivered; a disk-only request is not a task');
-  assert(summary?.verifier_subject_id === request!.subject_id, 'model must not answer a historical subject');
-  const promptPath = path.resolve(p.root, request!.prompt_path);
+  const request = parseDeliveredFixtureRequest(fs.readFileSync(requestPath, 'utf8'), ctx.prompt, { feature: p.feature, phase });
+  assert(summary?.verifier_subject_id === request.subject_id, 'model must not answer a historical subject');
+  const promptPath = path.resolve(p.root, request.prompt_path);
   assert(promptPath.startsWith(path.resolve(p.root) + path.sep), 'model reads only this isolated project');
   fs.readFileSync(promptPath, 'utf8');
-  return request!;
+  return request;
 }
 
 export function checksDisplayedBankRows(test: string): boolean {

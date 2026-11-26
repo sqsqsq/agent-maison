@@ -515,31 +515,6 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       } finally { reader.readCurrentCheckObservation = observeCheck; classifier.evaluateCompletionProgress = evaluate; fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
     },
   })), {
-  name: 'c6 verifier model consumes the complete current request with process or session transport and rejects an undelivered or wrong request',
-  async run() {
-    const { buildVerifierRequest, renderVerifierRequest, verifierRequestFilename } = await import('../../scripts/utils/verifier-request');
-    const { publishRequestedVerifier } = await import('./real-chain.unit.test');
-    const { root } = makeVerifierProject();
-    try {
-      const promptPath = 'doc/features/demo/plan/reports/ai-prompt.md';
-      const dir = path.join(root, path.dirname(promptPath)); fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(root, promptPath), 'Read the current isolated acceptance evidence.');
-      const request = buildVerifierRequest({ feature: 'demo', phase: 'plan', prompt_path: promptPath,
-        prompt_sha256: '1'.repeat(64), material_sha256: '2'.repeat(64), gate_fingerprint: null, source_commit_sha: null, worktree_digest: null });
-      const text = renderVerifierRequest(request);
-      fs.writeFileSync(path.join(dir, verifierRequestFilename(request.subject_id)), text);
-      fs.writeFileSync(path.join(dir, 'summary.json'), JSON.stringify({ verifier_subject_id: request.subject_id,
-        verifier_request: path.posix.join(path.posix.dirname(promptPath), verifierRequestFilename(request.subject_id)) }));
-      const project = { root, frameworkRoot: FRAMEWORK_SOURCE_ROOT, harnessDir: path.join(FRAMEWORK_SOURCE_ROOT, 'harness'), feature: 'demo', module: 'app', modulePath: 'app' };
-      const ctx = { phase: 'plan-verifier-format-repair', runId: 'transport-check' };
-      assert(publishRequestedVerifier(project, { ...ctx, prompt: `Verify the current request:\n${text.trimEnd()}` }));
-      assert(publishRequestedVerifier(project, { ...ctx, prompt: `Verify the current request:\r\n${text.replace(/\n/g, '\r\n')}\r\n执行本次命令时同时传递 context.childEnv 中的冻结标识。` }));
-      assert.throws(() => publishRequestedVerifier(project, { ...ctx, prompt: 'The request exists on disk; use it without receiving its contents.' }), /actually be delivered/);
-      const wrong = renderVerifierRequest(buildVerifierRequest({ ...request, material_sha256: '3'.repeat(64) }));
-      assert.throws(() => publishRequestedVerifier(project, { ...ctx, prompt: wrong }), /actually be delivered/);
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
-  },
-}, {
   name: 'c6 no-progress guidance names the current verification subject gap and preserves content-repair wording selection',
   run() {
     const issue = { phase: 'plan', owner: 'plan', id: 'open_finding:pending-evidence', action: 'verify' as const,

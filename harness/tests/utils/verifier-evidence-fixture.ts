@@ -12,11 +12,26 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { parseVerifierRequest, renderVerifierRequest, type VerifierRequest } from '../../scripts/utils/verifier-request';
 import {
+  normalizeEol,
   RESULT_BLOCK_CLOSE,
   RESULT_BLOCK_OPEN,
   verifierReportMdFilename,
 } from '../../scripts/utils/verifier-subject';
+
+export function parseDeliveredFixtureRequest(
+  currentRequestText: string, deliveredPrompt: string, expected: Pick<VerifierRequest, 'feature' | 'phase'>,
+): VerifierRequest {
+  const request = parseVerifierRequest(currentRequestText);
+  if (!request || request.feature !== expected.feature || request.phase !== expected.phase) {
+    throw new Error('model must consume the actual current verifier request');
+  }
+  if (!normalizeEol(deliveredPrompt).includes(renderVerifierRequest(request).trimEnd())) {
+    throw new Error('the complete current verifier request must actually be delivered; a disk-only request is not a task');
+  }
+  return request;
+}
 
 /** 任意但形态合法的 64 hex subject（同一 seed 恒定，便于断言）。 */
 export function fixtureSubjectId(seed = 'fixture'): string {

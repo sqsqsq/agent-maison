@@ -14,6 +14,7 @@
 //   E  repair_candidates 的 subject 锚定与闭环重算
 // ============================================================================
 
+import { deepStrictEqual, throws } from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
@@ -50,7 +51,7 @@ import { resolveResumedBudget, loadAuthoritativeEvents } from '../../scripts/uti
 import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { finalizePhaseClosure, preparePhaseRepairFeedback } from '../../scripts/utils/phase-closure-finalizer';
-import { publishFixtureVerifierEvidence, renderResultBlock } from '../utils/verifier-evidence-fixture';
+import { parseDeliveredFixtureRequest, publishFixtureVerifierEvidence, renderResultBlock } from '../utils/verifier-evidence-fixture';
 import { makeVerifierProject, reportsDirOf, rmDir, writeFile } from '../utils/verifier-project-fixture';
 import { selectExecutionBlock, selectedExecutionBlocks, timeExecutionBlock } from '../utils/unit-case-selection';
 import type { CheckContext, CheckResult, HarnessRunSummary, Phase, ScriptReport, UseCaseBranch } from '../../scripts/utils/types';
@@ -221,7 +222,15 @@ function caseB_requestParsingIsStrict(): void {
     source_commit_sha: null,
     worktree_digest: null,
   });
-  const doc = JSON.parse(renderVerifierRequest(req)) as Record<string, unknown>;
+  const current = renderVerifierRequest(req);
+  const receive = (prompt: string) => parseDeliveredFixtureRequest(current, prompt, req);
+  deepStrictEqual(receive(`Verify the current request:\n${current.trimEnd()}`), req);
+  deepStrictEqual(receive(`Verify the current request:\r\n${current.replace(/\n/g, '\r\n')}\r\n执行本次命令时同时传递 context.childEnv 中的冻结标识。`), req);
+  throws(() => receive(`Read ${req.prompt_path} for ${req.subject_id}`), /actually be delivered/);
+  const other = buildVerifierRequest({ ...req, material_sha256: 'c'.repeat(64) });
+  throws(() => receive(renderVerifierRequest(other)), /actually be delivered/);
+
+  const doc = JSON.parse(current) as Record<string, unknown>;
   assert(parseVerifierRequest(JSON.stringify(doc)) !== null, '构造性前提：合法 request 必须能过');
   assert(
     parseVerifierRequest(`  \n${JSON.stringify(doc)}\n `) !== null,
