@@ -109,7 +109,7 @@ export function retainRequestFailures(reportDir: string): void {
 export interface DesignRequestOptions {
   projectRoot: string; frameworkRoot: string; blueprintId: string;
   sessionRef?: string; requestFile?: string; reportDir?: string; targets?: string[];
-  requirementSources?: string[]; readonly?: boolean; captureInitialDirty?: boolean;
+  requirementSources?: string[]; readonly?: boolean; captureDirtyAtPrepare?: boolean;
   write?: DesignPreparationWrite;
   originRequest?: string;
 }
@@ -132,14 +132,14 @@ export function prepareDesignRequest(options: DesignRequestOptions): PreparedDes
     const { prepareRequestInput } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
     const parsed = prepareRequestInput({ projectRoot: root, frameworkRoot: options.frameworkRoot, phase: 'component-design', requestFile: path.relative(root, existingFile!),
       reportDir: options.reportDir ?? path.relative(root, path.dirname(existingFile!)) });
-    if (options.sessionRef === undefined && options.targets === undefined && !options.captureInitialDirty) readonlyIntake = parsed.intake_context;
+    if (options.sessionRef === undefined && options.targets === undefined && !options.captureDirtyAtPrepare) readonlyIntake = parsed.intake_context;
   }
   const location = resolveRequestSessionReference(options.sessionRef ?? (previous?.intake_context as RequestIntake | undefined)?.session_ref, root);
   let intake: RequestIntake | undefined, originGap = location.gap;
   if (location.sessionRef) try {
     intake = readonlyIntake?.session_ref === location.sessionRef ? readonlyIntake : readRequestIntake({ projectRoot: root, frameworkRoot: options.frameworkRoot, sessionRef: location.sessionRef,
       explicitTargets: options.targets ?? (previous?.intake_context as RequestIntake | undefined)?.explicit_targets ?? (previous?.targets as { files?: string[] } | undefined)?.files,
-      previous: previous?.intake_context as RequestIntake | undefined, captureInitialDirty: options.captureInitialDirty });
+      previous: previous?.intake_context as RequestIntake | undefined, captureDirtyAtPrepare: !previous && !options.readonly && options.captureDirtyAtPrepare });
     if (!intake.targets.length && intake.source_reads.length) intake = readRequestIntake({ projectRoot: root, frameworkRoot: options.frameworkRoot,
       sessionRef: intake.session_ref, explicitTargets: intake.source_reads.filter(file => {
         const { isProductTarget } = require('./request-intake') as typeof import('./request-intake');
@@ -153,10 +153,12 @@ export function prepareDesignRequest(options: DesignRequestOptions): PreparedDes
   if (!previous && fs.existsSync(requestFile)) {
     previous = JSON.parse(fs.readFileSync(requestFile, 'utf8')) as Record<string, unknown>;
     if (previous.phase !== 'component-design') throw new Error('design request path belongs to another subject');
-    if (previous.intake_context) {
-      if (!intake) throw new Error('existing design request origin cannot be replaced by an unverified request');
+    const retained = previous.intake_context as RequestIntake | undefined;
+    if (retained && !intake) throw new Error('existing design request origin cannot be replaced by an unverified request');
+    if (intake && (retained || intake.baseline.dirty_digests_at === 'prepare')) {
       intake = readRequestIntake({ projectRoot: root, frameworkRoot: options.frameworkRoot, sessionRef: intake.session_ref,
-        explicitTargets: options.targets ?? (previous.intake_context as RequestIntake).explicit_targets ?? (previous.targets as { files?: string[] } | undefined)?.files, previous: previous.intake_context as RequestIntake });
+        explicitTargets: retained ? options.targets ?? retained.explicit_targets ?? (previous.targets as { files?: string[] } | undefined)?.files : intake.explicit_targets,
+        previous: retained });
     }
   }
   if (!origin && typeof previous?.origin_request === 'string') origin = readDesignGoalOrigin(root, previous.origin_request);
@@ -252,7 +254,7 @@ export function prepareAutomaticRequest(projectRoot: string, frameworkRoot: stri
   let intake: RequestIntake | undefined;
   let sourceGap = location.gap;
   if (location.sessionRef) try { intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: location.sessionRef,
-    explicitTargets: targets.length ? targets : design?.intake?.explicit_targets, previous: design?.intake, captureInitialDirty: args['prepare-request'] === true }); }
+    explicitTargets: targets.length ? targets : design?.intake?.explicit_targets, previous: design?.intake, captureDirtyAtPrepare: !design }); }
   catch (error) { sourceGap = String(error); }
   if (!intake) {
     if (!targets.length && !list(args['test-target']).length) throw new Error('自动request需要原生 --session-ref 或局部显式 --target/--test-target；来源未核不能签完整通过');
@@ -284,8 +286,12 @@ export function prepareAutomaticRequest(projectRoot: string, frameworkRoot: stri
   if (fs.existsSync(file)) {
     previous = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (!previous?.intake_context) throw new Error('自动request路径已有其它文件，不能覆盖');
-    intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: intake.session_ref,
-      explicitTargets: targets.length ? targets : design?.intake?.explicit_targets, previous: previous.intake_context as RequestIntake });
+    const retained = previous.intake_context as RequestIntake;
+    if (design?.intake) {
+      if (retained.session_id !== intake.session_id || retained.user.id !== intake.user.id
+        || retained.baseline.base && intake.baseline.base && retained.baseline.base !== intake.baseline.base) throw new Error('原request不属于本次定位的请求，不能重置基线或覆盖选择');
+    } else intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: intake.session_ref,
+      explicitTargets: targets.length ? targets : undefined, previous: retained });
   }
   if (design?.intake) intake = { ...intake, control: design.intake.control, policy: design.intake.policy };
   if (intake.control.excluded.includes(phase)) throw new Error(`用户已明确排除${phase}，保留未执行，不以能力调用重加验证`);

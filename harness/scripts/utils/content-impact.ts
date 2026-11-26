@@ -95,7 +95,8 @@ export function deriveContentImpact(root: string, intake: RequestIntake): Conten
   for (const file of intake.targets) {
     const entry = diff?.entries.find(item => item.path === file);
     if (intake.baseline.dirty_digests && Object.prototype.hasOwnProperty.call(intake.baseline.dirty_digests, file) && intake.attribution_unknown.includes(file)) {
-      add('behavior', file, '初始脏文件的字节或存在性再次变化，写前原件待核', '原作者核对本次新增影响并完成适用验证', 'unknown');
+      const detail = intake.baseline.dirty_digests_at === 'prepare' ? '初始脏文件仅有首次准备摘要，开工时原件待核' : '初始脏文件的字节或存在性再次变化，写前原件待核';
+      add('behavior', file, detail, '原作者核对本次新增影响并完成适用验证', 'unknown');
       continue;
     }
     let before = '';

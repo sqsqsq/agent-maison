@@ -139,7 +139,7 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     assert.equal(automaticRequestChecks(unverified, f.root)[0].status, 'WARN');
     assert.match(automaticRequestChecks(unverified, f.root)[0].details, /src\/format\.js.*缺少可信写前/);
   } },
-  { name: 'The first formal prepare binds dirty file bytes before a shell write and a historical prepare cannot backfill them', run(f) {
+  { name: 'The first formal prepare tracks later dirty file changes without proving their opening attribution', run(f) {
     const file = 'src/format.js', absolute = path.join(f.root, file);
     fs.writeFileSync(absolute, 'exports.format = 0;\n');
     const s = setup(f);
@@ -148,13 +148,14 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     s.rows.splice(12);
     fs.writeFileSync(path.join(f.root, 'src/value.js'), 'exports.value = 41;\n');
     fs.writeFileSync(absolute, 'exports.format = 1;\n');
+    s.tool('pwsh', { command: 'Get-Location; git diff --stat | Out-String' }, 'done');
     s.flush();
     const args = ['--phase', 'ut', '--session-ref', s.ref, '--target', 'src/value.js', '--test-target', 'tests/value.test.cjs', '--prepare-request'];
-    const prep = cli(f, args);
-    assert.equal(prep.status, 0, prep.stdout + prep.stderr);
-    const relative = JSON.parse(prep.stdout).requestFile;
-    const previous = JSON.parse(fs.readFileSync(relative, 'utf8')).intake_context;
+    const prep = prepareAutomaticRequest(f.root, f.framework, { phase: 'ut', 'session-ref': s.ref, target: 'src/value.js', 'test-target': 'tests/value.test.cjs' });
+    const requestFile = path.join(f.root, prep.requestFile);
+    const previous = JSON.parse(fs.readFileSync(requestFile, 'utf8')).intake_context;
     assert.match(previous.baseline.dirty_digests[file], /^[0-9a-f]{64}$/);
+    assert.equal(previous.baseline.dirty_digests_at, 'prepare');
     assert.equal(previous.baseline.preimages?.[file], undefined);
     s.tool('Bash', { command: 'node format-operation.cjs' }, 'done');
     const result = s.rows.pop();
@@ -168,9 +169,22 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     s.rows.push(result);
     const changed = read();
     assert.deepEqual(changed.attribution_unknown, [file]);
-    assert.match(changed.attribution_disclosures![0].reason, /摘要证实/);
+    assert.match(changed.attribution_disclosures![0].reason, /首次准备后.*已变化.*核实开工状态/);
     assert(deriveContentImpact(f.root, changed).some(impact => impact.state === 'unknown' && impact.files.includes(file)));
-    const historical = cli(f, [...args, '--report-dir', 'doc/reports/historical']);
+    fs.unlinkSync(absolute);
+    assert(read().attribution_unknown.includes(file), 'a deletion after prepare is still a change');
+    fs.writeFileSync(absolute, 'exports.format = 2;\n');
+    const repeated = cli(f, args);
+    assert.equal(repeated.status, 0, repeated.stdout + repeated.stderr);
+    const repeatedIntake = JSON.parse(repeated.stdout).intake_context;
+    assert.equal(repeatedIntake.baseline.dirty_digests[file], previous.baseline.dirty_digests[file]);
+    assert(repeatedIntake.attribution_unknown.includes(file));
+    const legacy = JSON.parse(fs.readFileSync(requestFile, 'utf8'));
+    delete legacy.intake_context.baseline.dirty_digests_at;
+    assert.match(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, previous: legacy.intake_context }).attribution_disclosures![0].reason, /写前摘要证实/);
+    delete legacy.intake_context.baseline.dirty_digests;
+    fs.writeFileSync(requestFile, JSON.stringify(legacy));
+    const historical = cli(f, args);
     assert.equal(historical.status, 0, historical.stdout + historical.stderr);
     const old = JSON.parse(historical.stdout).intake_context;
     assert.equal(old.baseline.dirty_digests?.[file], undefined);
@@ -179,9 +193,9 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     s.tool('Edit', { file_path: absolute, old_string: '1', new_string: '2' }, 'updated');
     s.flush();
     const afterProductWrite = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref,
-      explicitTargets: ['src/value.js'], captureInitialDirty: true });
-    assert.equal(afterProductWrite.baseline.dirty_digests?.[file], undefined);
-    assert(afterProductWrite.attribution_unknown.includes(file), 'a prior product write cannot supply its own before digest');
+      explicitTargets: ['src/value.js'], captureDirtyAtPrepare: true });
+    assert.equal(afterProductWrite.baseline.dirty_digests_at, 'prepare');
+    assert(afterProductWrite.attribution_unknown.includes(file), 'a prior product write remains in scope without opening proof');
   } },
   { name: 'Claude and CodeAgent distinguish an independent pending call from a mismatched native edit result', run(f) {
     const s = setup(f);

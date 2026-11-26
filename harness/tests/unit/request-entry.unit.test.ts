@@ -199,6 +199,9 @@ exports.runRequestTests=ctx=>{
     const tool = (name: string, input: object, output: string) => { const id = `tool-${++count}`; add({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] } }); add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: output }] } }); };
     tool('Bash', { command: 'git rev-parse HEAD' }, git('rev-parse', 'HEAD'));
     tool('Bash', { command: 'git status --porcelain' }, git('status', '--porcelain'));
+    tool('pwsh', { command: 'Get-Location; git diff --stat | Out-String' }, '先查当前工作区');
+    tool('read_image', { path: 'requirements/value.png' }, '需求参考');
+    tool('job_output', { job_id: 'inspect-design-inputs' }, '调研结果');
     for (const file of ['src/value.js', 'tests/value.test.cjs', requirement]) tool('Read', { file_path: path.join(f.root, file) }, fs.readFileSync(path.join(f.root, file), 'utf8'));
     add({ type: 'assistant', message: { role: 'assistant', content: '本请求仅调整value；Q1=否；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是。依据 src/value.js、requirements/value.txt。' } });
     const blueprintContent = YAML.stringify(bp);
@@ -220,7 +223,9 @@ exports.runRequestTests=ctx=>{
       assert(designOutput.next[0].command.includes(subject));
       const designRequest = JSON.parse(fs.readFileSync(path.join(f.root, subject), 'utf8'));
       assert.match(designRequest.intake_context.baseline.dirty_digests?.[dirtyFile] ?? '', /^[a-f0-9]{64}$/, '首次蓝图检查须绑定初始脏文件摘要');
-      assert(!designRequest.intake_context.attribution_disclosures?.length);
+      assert.equal(designRequest.intake_context.baseline.dirty_digests_at, 'prepare');
+      assert.deepEqual(designRequest.intake_context.attribution_disclosures?.map((item: { path: string }) => item.path), [dirtyFile]);
+      assert.deepEqual(designRequest.intake_context.attribution_unknown, []);
       assert.deepEqual(designRequest.blueprint.acceptance_ids, ['AC-1', 'AC-2', 'AC-3', 'AC-4'], '原设计绑定仍须保完整验收，不能改协议缩成UT分母');
       add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'design-check', content: design.stdout }] } });
       tool('Edit', { file_path: sourceFile, old_string: '41', new_string: '42' }, 'success'); fs.writeFileSync(sourceFile, sourceAfter);
@@ -232,6 +237,9 @@ exports.runRequestTests=ctx=>{
       assert(compilation.execution.executed && compilation.execution.command === 'node --check src/value.js' && compilation.architecture_analyzed === 1);
       const run = (phase: string, extra: string[] = []) => invoke('harness-runner.ts', ['--phase', phase, '--request-file', subject, ...extra]);
       const actual = run('ut', ['--test-target', 'tests/value.test.cjs']); assert.equal(actual.status, 0, actual.stderr + actual.stdout);
+      const unitBaseline = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/request.json'), 'utf8')).intake_context.baseline;
+      assert.equal(unitBaseline.dirty_digests_at, 'prepare');
+      assert.deepEqual(unitBaseline.dirty_digests, designRequest.intake_context.baseline.dirty_digests);
       const report = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/design/ut/script-report.json'), 'utf8'));
       assert(report.checks.some((check: CheckResult) => check.id === 'request_test_execution' && check.status === 'PASS'));
       assert(report.checks.some((check: CheckResult) => check.id === 'request_expectation_source' && check.status === 'PASS'));

@@ -7,7 +7,6 @@ import { resolveDeliveryPolicy, type DeliveryFacts, type DeliveryPolicy, type De
 import { realProjectPath, isInsideProjectRoot } from './project-relative-path';
 import { loadFrameworkConfig, featuresDirPath } from '../../config';
 import { projectImplementationModules } from './diff-scope';
-import { componentBlueprintPath } from './component-blueprint-path';
 
 interface NativeMessage { id: string; role: string; text: string; at?: string; line: number; origin?: { store?: string; parentId?: string } }
 interface NativeRead { path: string; content: string; complete: boolean; exact?: boolean }
@@ -41,7 +40,7 @@ export interface RequestIntake {
     transport?: { mode: 'attended' | 'unattended'; source: string } };
   facts: DeliveryFacts;
   policy: DeliveryPolicy;
-  baseline: { base?: string; head: 'WORKTREE'; source: 'captured' | 'reflog' | 'unknown'; detail: string; initial_dirty: string[] | 'unknown'; preimages?: Record<string, { content: string; source_line: number }>; initially_absent?: string[]; dirty_digests?: Record<string, string | null> };
+  baseline: { base?: string; head: 'WORKTREE'; source: 'captured' | 'reflog' | 'unknown'; detail: string; initial_dirty: string[] | 'unknown'; preimages?: Record<string, { content: string; source_line: number }>; initially_absent?: string[]; dirty_digests?: Record<string, string | null>; dirty_digests_at?: 'prepare' };
   explicit_targets?: string[];
   targets: string[];
   attribution_unknown: string[];
@@ -69,24 +68,6 @@ function initialEvidenceRead(tool: NativeTool, root: string): boolean {
 }
 function nativePath(root: string, file: string): string {
   return realProjectPath(root, path.relative(root, path.resolve(root, file)).replace(/\\/g, '/'), 'native source');
-}
-
-function isCanonicalBlueprintWrite(tool: NativeTool, root: string, frameworkRoot: string, dirtyProduct: string[]): boolean {
-  if (!/^(?:Write|Edit)$/i.test(tool.name) || !native.toolSucceeded(tool)) return false;
-  const [file] = native.editedPaths([tool]);
-  if (!file || !path.isAbsolute(file) || file.split(/[\\/]/).includes('..')) return false;
-  const input = tool.input as { file_path?: unknown; filePath?: unknown; path?: unknown; target_file?: unknown; notebook_path?: unknown };
-  if ([input.file_path, input.filePath, input.path, input.target_file, input.notebook_path].some(value => value !== undefined && value !== file)) return false;
-  try {
-    const absolute = path.resolve(file);
-    const parts = path.relative(featuresDirPath(root), absolute).split(path.sep);
-    if (parts.length !== 3 || path.relative(absolute, componentBlueprintPath(root, parts[0])) !== '') return false;
-    if (path.relative(absolute, nativePath(root, file)) !== '' || isInsideProjectRoot(frameworkRoot, absolute)
-      || path.relative(root, absolute).split(path.sep).some(part => part.toLowerCase() === '.git')
-      || dirtyProduct.some(item => isInsideProjectRoot(path.resolve(root, item), absolute))) return false;
-    const stat = fs.lstatSync(absolute);
-    return stat.isFile() && stat.nlink === 1;
-  } catch { return false; }
 }
 
 function toolLocation(tool: NativeTool): string {
@@ -157,7 +138,7 @@ export function resolveRequestSessionReference(requested?: string, projectRoot?:
   return located.file ? { sessionRef: located.file } : { gap: located.gap };
 }
 
-export function readRequestIntake(options: { projectRoot: string; frameworkRoot: string; sessionRef?: string; explicitTargets?: string[]; previous?: RequestIntake; captureInitialDirty?: boolean }): RequestIntake {
+export function readRequestIntake(options: { projectRoot: string; frameworkRoot: string; sessionRef?: string; explicitTargets?: string[]; previous?: RequestIntake; captureDirtyAtPrepare?: boolean }): RequestIntake {
   const root = fs.realpathSync(options.projectRoot);
   const location = resolveRequestSessionReference(options.sessionRef ?? options.previous?.session_ref, root);
   if (!location.sessionRef) throw new Error(location.gap);
@@ -293,21 +274,13 @@ export function readRequestIntake(options: { projectRoot: string; frameworkRoot:
   if (previousBaseline?.dirty_digests && previousBaseline.base === baseline.base
     && JSON.stringify(previousBaseline.initial_dirty) === JSON.stringify(dirty)) {
     baseline.dirty_digests = previousBaseline.dirty_digests;
-  } else if (options.captureInitialDirty && !previousBaseline && session.userControlVerified !== false && status && baseline.base
-    && dirtyProduct.some(file => !baseline.preimages?.[file] && !baseline.initially_absent?.includes(file))) {
-    const safeBeforePrepare = tools.every((tool, index) => {
-      if (initialEvidenceRead(tool, root)) return true;
-      if (isCanonicalBlueprintWrite(tool, root, options.frameworkRoot, dirtyProduct)) return true;
-      const command = native.toolInput(tool).trim();
-      if (/[\r\n;&|<>`$]/.test(command)) return false;
-      return index === tools.length - 1 && tool.completed === false
-        && (/^(?:npm(?:\.cmd)?\s+(?:--prefix\s+\S+\s+)?run\s+check:component-blueprint\b|node\s+.+\bcheck-component-blueprint\.[cm]?[jt]s\b)/i.test(command)
-          || /^(?:npm(?:\.cmd)?\s+(?:--prefix\s+\S+\s+)?run\s+check\s|node\s+.+\bharness-runner\.[cm]?[jt]s\b)/i.test(command) && /\s--prepare-request(?:\s|$)/.test(command));
-    });
-    if (safeBeforePrepare && git(root, ['rev-parse', 'HEAD']) === baseline.base) {
-      const digests = Object.fromEntries(dirtyProduct.filter(file => !baseline.preimages?.[file] && !baseline.initially_absent?.includes(file)
-        && ![...statuses.keys()].some(key => key === `${file}/`)).map(file => [file, digest(file)]));
-      if (Object.keys(digests).length) baseline.dirty_digests = digests;
+    if (previousBaseline.dirty_digests_at === 'prepare') baseline.dirty_digests_at = 'prepare';
+  } else if (options.captureDirtyAtPrepare && !previousBaseline && session.userControlVerified !== false && status && baseline.base) {
+    const digests = Object.fromEntries(dirtyProduct.filter(file => !baseline.preimages?.[file] && !baseline.initially_absent?.includes(file)
+      && !statuses.has(`${file}/`)).map(file => [file, digest(file)]));
+    if (Object.keys(digests).length) {
+      baseline.dirty_digests = digests;
+      baseline.dirty_digests_at = 'prepare';
     }
   }
   const changedDirty = new Set<string>();
@@ -317,12 +290,16 @@ export function readRequestIntake(options: { projectRoot: string; frameworkRoot:
     if (before || absent) {
       const beforeDigest = before ? crypto.createHash('sha256').update(before.content).digest('hex') : null;
       if (beforeDigest !== digest(file)) changedDirty.add(file);
-    } else if (Object.prototype.hasOwnProperty.call(baseline.dirty_digests ?? {}, file)) {
-      if (baseline.dirty_digests![file] !== digest(file)) {
-        changedDirty.add(file);
-        attribution_disclosures.push({ path: file, reason: '写前摘要证实路径再次变化，缺少用于归属和影响核验的写前原件' });
-      }
-    } else attribution_disclosures.push({ path: file, reason: '初始状态只有脏路径，缺少可信写前存在性或字节依据' });
+      continue;
+    }
+    const hasDigest = Object.prototype.hasOwnProperty.call(baseline.dirty_digests ?? {}, file);
+    const changed = hasDigest && baseline.dirty_digests![file] !== digest(file);
+    if (changed) changedDirty.add(file);
+    if (hasDigest && baseline.dirty_digests_at === 'prepare') {
+      const change = changed ? '首次准备后字节或存在性已变化' : '仅核实首次准备时的字节或存在性';
+      attribution_disclosures.push({ path: file, reason: `${change}，缺少可信写前存在性或字节依据来核实开工状态` });
+    } else if (changed) attribution_disclosures.push({ path: file, reason: '写前摘要证实路径再次变化，缺少用于归属和影响核验的写前原件' });
+    else if (!hasDigest) attribution_disclosures.push({ path: file, reason: '初始状态只有脏路径，缺少可信写前存在性或字节依据' });
   }
   const candidates = [...new Set([...explicit, ...edits, ...changedDirty, ...(diff?.entries ?? []).filter(entry => dirty !== 'unknown' && !dirty.includes(entry.path) || overlaps.has(entry.path)).map(entry => entry.path)])];
   const targets = candidates.filter(file => product(file) && (explicit.includes(file) || !dirtyProduct.includes(file) || changedDirty.has(file)

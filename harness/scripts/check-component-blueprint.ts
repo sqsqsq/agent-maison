@@ -324,7 +324,7 @@ ${renderKnowledge(knowledge)}`);
       prepared = prepareDesignRequest({ projectRoot: root, frameworkRoot: args['framework-root'] ?? resolveProbeFrameworkRoot(root, __dirname),
         blueprintId: args.blueprint, sessionRef: args['session-ref'], requestFile: args['request-file'], reportDir: args['report-dir'],
         targets: list(args.target), requirementSources: list(args['requirement-source']), readonly: readonlyDesign,
-        captureInitialDirty: !readonlyDesign, write: preparation.write });
+        captureDirtyAtPrepare: !readonlyDesign, write: preparation.write });
       context = { requestIntake: prepared.intake, requestSourceItems: prepared.currentScopeItems };
       if (args['prepare-source'] && !prepared.originGap) prepareCanonicalBlueprintSource(root, args.blueprint, context,
         { requestFile: prepared.requestFile, write: preparation.write });
