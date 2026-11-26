@@ -368,7 +368,7 @@ type ExtensionBridgeKind = 'skill_stub' | 'command';
 
 interface ExtensionBridgeOwnership {
   kind: ExtensionBridgeKind;
-  adapter: string;
+  adapter?: string;
   bridgeId: string;
   sourceRel: string;
 }
@@ -388,7 +388,7 @@ function readOwnership(body: string): ExtensionBridgeOwnership | null {
     const value = JSON.parse(line.slice(OWNERSHIP_PREFIX.length)) as Partial<ExtensionBridgeOwnership>;
     if (
       (value.kind === 'skill_stub' || value.kind === 'command')
-      && typeof value.adapter === 'string'
+      && (value.adapter === undefined || typeof value.adapter === 'string')
       && typeof value.bridgeId === 'string'
       && typeof value.sourceRel === 'string'
     ) {
@@ -460,7 +460,7 @@ export function inspectInstanceSkillBridgeArtifacts(options: {
   const expected = new Map<string, { ownership: ExtensionBridgeOwnership; body: string }>();
   const roots: Array<{ base: string; kind: ExtensionBridgeKind }> = [];
   const add = (absPath: string, kind: ExtensionBridgeKind, bridgeId: string, sourceRel: string) => {
-    const ownership = { kind, adapter: agentAdapter, bridgeId, sourceRel };
+    const ownership = { kind, bridgeId, sourceRel };
     const targetRel = path.relative(repoRoot, absPath).replace(/\\/g, '/');
     expected.set(absPath, { ownership, body: canonicalOwnedBridge(ownership, targetRel, frameworkDir, repoRoot) });
   };
@@ -494,9 +494,10 @@ export function inspectInstanceSkillBridgeArtifacts(options: {
       ? 'present'
       : !ownership
         ? (current.includes(OWNERSHIP_PREFIX) ? 'drifted' : 'unowned')
-        : current === canonicalOwnedBridge(ownership, targetRel, frameworkDir, repoRoot)
-          ? 'stale'
-          : 'drifted';
+        : current !== canonicalOwnedBridge(ownership, targetRel, frameworkDir, repoRoot)
+          ? 'drifted'
+          : ownership.kind === item.ownership.kind && ownership.bridgeId === item.ownership.bridgeId
+            && ownership.sourceRel === item.ownership.sourceRel ? 'present' : 'stale';
     out.push({ adapter: agentAdapter, bridgeId: item.ownership.bridgeId, sourceRel: item.ownership.sourceRel, path: targetRel, state });
   }
   for (const { base, kind } of roots) {
@@ -561,7 +562,6 @@ export function emitInstanceSkillBridge(options: {
     const targetRel = path.relative(repoRoot, absPath).replace(/\\/g, '/');
     expected.set(absPath, canonicalOwnedBridge({
       kind,
-      adapter: agentAdapter,
       bridgeId,
       sourceRel,
     }, targetRel, frameworkDir, repoRoot));

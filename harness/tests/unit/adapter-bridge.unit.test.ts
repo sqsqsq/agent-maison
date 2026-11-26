@@ -162,6 +162,48 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: 'Chrys 与 Generic 共享桥目录，旧标记只迁一次、双方检视生效且漂移保留',
+    run: () => {
+      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-ext-shared-bridge-'));
+      try {
+        const adapters = ['chrys', 'generic'];
+        write(path.join(root, 'framework.config.json'), JSON.stringify({
+          schema_version: '1.1', project_name: 'extension-shared', materialized_adapters: adapters,
+          architecture: minimalArch(), paths: { features_dir: 'doc/features', agent_bundle_root: '.agents' },
+        }));
+        const sourceRel = 'doc/extensions/skills/shared-extension/SKILL.md';
+        const targetRel = '.agents/skills/shared-extension/SKILL.md';
+        const target = path.join(root, targetRel);
+        const options = (agentAdapter: string) => ({ repoRoot: root, frameworkDir: FRAMEWORK_DIR, agentAdapter });
+        const writeShared = () => adapters.flatMap(adapter => emitInstanceSkillBridge(options(adapter)).filesWritten);
+        write(path.join(root, sourceRel), '# Shared extension\n');
+        assert.deepStrictEqual(writeShared(), [targetRel]);
+        const canonical = fs.readFileSync(target, 'utf8');
+        const legacy = canonical.replace('"kind":"skill_stub",', '"kind":"skill_stub","adapter":"generic",');
+        assert.notStrictEqual(legacy, canonical);
+        write(target, legacy);
+
+        for (const adapter of adapters) {
+          assert(inspectInstanceSkillBridgeArtifacts(options(adapter)).some(row => row.path === targetRel && row.state === 'present'));
+        }
+        assert.deepStrictEqual(writeShared(), [targetRel]);
+        assert.strictEqual(fs.readFileSync(target, 'utf8'), canonical);
+        assert.deepStrictEqual(writeShared(), []);
+
+        write(target, legacy + '\n手写扩展内容\n');
+        for (const adapter of adapters) {
+          const result = emitInstanceSkillBridge(options(adapter));
+          assert(result.driftedFiles.includes(targetRel));
+          assert.deepStrictEqual(result.filesWritten, []);
+        }
+        assert.strictEqual(fs.readFileSync(target, 'utf8'), legacy + '\n手写扩展内容\n');
+      } finally {
+        fs.rmSync(root, { recursive: true, force: true });
+        clearFrameworkConfigCache();
+      }
+    },
+  },
+  {
     name: 'ownership 三态：规范孤儿清理、漂移保留、无标记不接管',
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fw-ext-ownership-'));
