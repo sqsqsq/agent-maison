@@ -211,6 +211,48 @@ const cases = [
     }),
   },
   {
+    name: '纯手动能力无 bindings 映射时可同源重装并按归属分别卸载',
+    run: () => inProject((project, source, extensionDir) => {
+      write(path.join(source, 'manifest.yaml'), YAML.stringify({
+        schema_version: '2.0', name: 'manual-pair', provides: { skills: ['qa-before', 'qa-after'] },
+      }));
+      write(path.join(source, 'skills/qa-before/notes.md'), 'original notes\n');
+      for (const ability of ['qa-before', 'qa-after']) {
+        write(path.join(source, 'skills', ability, 'SKILL.md'), `# ${ability}\n`);
+        assert(state(project, 'install', { source, ability }).changed);
+      }
+      const manifest = path.join(extensionDir, 'manifest.yaml');
+      const before = fs.readFileSync(manifest, 'utf8');
+      assert.equal(YAML.parse(before).bindings, undefined);
+      const repeated = state(project, 'install', { source, ability: 'qa-before' });
+      assert.equal(repeated.changed, false);
+      assert.deepEqual(repeated.filesWritten, []);
+      assert.equal(fs.readFileSync(manifest, 'utf8'), before);
+
+      const notes = path.join(extensionDir, 'skills/qa-before/notes.md');
+      write(notes, 'host notes\n');
+      write(path.join(source, 'skills/qa-before/added.md'), 'new asset\n');
+      const repaired = state(project, 'install', { source, ability: 'qa-before' });
+      assert.deepEqual(repaired.filesWritten, ['doc/extensions/skills/qa-before/added.md']);
+      assert.equal(fs.readFileSync(notes, 'utf8'), 'host notes\n');
+
+      const removed = state(project, 'uninstall', { ability: 'qa-before' });
+      assert.deepEqual(removed.filesRemoved.sort(),
+        ['doc/extensions/skills/qa-before/SKILL.md', 'doc/extensions/skills/qa-before/added.md']);
+      assert.equal(fs.readFileSync(notes, 'utf8'), 'host notes\n');
+      assert(!fs.existsSync(path.join(extensionDir, 'skills/qa-before/SKILL.md')));
+      assert.equal(fs.readFileSync(path.join(extensionDir, 'skills/qa-after/SKILL.md'), 'utf8'), '# qa-after\n');
+      const remaining = YAML.parse(fs.readFileSync(manifest, 'utf8'));
+      assert.deepEqual(remaining.provides.skills, ['qa-after']);
+      assert.deepEqual(Object.keys(remaining.installations), ['qa-after']);
+      assert.equal(remaining.bindings, undefined);
+      write(manifest, YAML.stringify({ ...remaining, bindings: {} }));
+      assert.deepEqual(state(project, 'uninstall', { ability: 'qa-after' }).filesRemoved,
+        ['doc/extensions/skills/qa-after/SKILL.md']);
+      assert.deepEqual(YAML.parse(fs.readFileSync(manifest, 'utf8')).bindings, {});
+    }),
+  },
+  {
     name: '生命周期拒绝无归属或越界目标，并保护宿主修改与原地来源',
     run: () => inProject((project, source, extensionDir) => {
       const target = path.join(extensionDir, 'knowledge/intake.md');

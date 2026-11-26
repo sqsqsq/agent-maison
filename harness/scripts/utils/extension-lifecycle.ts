@@ -99,6 +99,11 @@ function nativeBindings(doc: Document, ability: string): Data {
   return mapping(own(mapping(rawManifest(doc).bindings), ability));
 }
 
+function deleteNativeBindings(doc: Document, ability: string): void {
+  // YAML deleteIn throws when the optional bindings map is absent.
+  if (own(mapping(rawManifest(doc).bindings), ability) !== undefined) doc.deleteIn(['bindings', ability]);
+}
+
 function readInstallation(doc: Document, ability: string): Installation | undefined {
   const value = own(mapping(rawManifest(doc).installations), ability);
   if (value === undefined) return undefined;
@@ -289,9 +294,9 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
   if (!bundle.manifestUsable) throw new Error(`宿主扩展清单不可用：${bundle.errors.map(item => item.message).join('；')}`);
   const result: ExtensionLifecycleResult = { abilities: [], changed: false, filesWritten: [], filesRemoved: [], retained: [] };
   const manifestPath = ordinaryFile(root, MANIFEST);
-  const save = (): void => {
+  const save = (serialized?: string): void => {
     if (isDeepStrictEqual(before, doc.toJS())) return;
-    writeExtensionFileAtomic(manifestPath, doc.toString(), false, options.observeWrite);
+    writeExtensionFileAtomic(manifestPath, serialized ?? doc.toString(), false, options.observeWrite);
     result.changed = true;
   };
   const declared = declaredAbilities(bundle, projectRoot, relative, doc);
@@ -366,7 +371,7 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
       });
       if (ability.skill) setSkill(id, true);
       if (ability.bindings !== undefined) doc.setIn(['bindings', id], ability.bindings);
-      else if (previous && !input.inPlace) doc.deleteIn(['bindings', id]);
+      else if (previous && !input.inPlace) deleteNativeBindings(doc, id);
       result.abilities.push(id);
     }
     const blockers = activeExtensionResourceRequests(projectRoot, [...changedOwnedResources]);
@@ -405,6 +410,16 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
     const requestIds = activeExtensionRequests(projectRoot, ability, selection.source);
     if (requestIds.length > 0) return { ...result, requestIds };
     migrateHost(doc, bundle, projectRoot, relative);
+    // Leave compatibility declarations intact; their original meaning is preserved by the host selection.
+    const legacyBindings = bundle.bindings.some(row => row.ability === ability && own(nativeBindings(doc, ability), row.id) === undefined);
+    if (legacyBindings || selection.in_place) {
+      doc.setIn(['installations', ability], { ...selection, enabled: false, files: {}, in_place: true });
+    } else {
+      doc.deleteIn(['installations', ability]);
+      setSkill(ability, false);
+      deleteNativeBindings(doc, ability);
+    }
+    const serialized = doc.toString();
     for (const [hostRel, sha256] of Object.entries(selection.files)) {
       let target: string;
       try {
@@ -430,8 +445,6 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
       const ref = `${relativeExtensionPath(projectRoot, manifestPath)}#provides.mcp_actions.${binding.ref}`;
       if (!result.retained.some(item => item.path === ref)) result.retained.push({ path: ref, reason: '保留可能由其他宿主声明使用的 MCP 配置' });
     }
-    // Leave compatibility declarations intact; their original meaning is preserved by the host selection.
-    const legacyBindings = bundle.bindings.some(row => row.ability === ability && own(nativeBindings(doc, ability), row.id) === undefined);
     const skillDirectory = path.join(root, 'skills', ability);
     const listRemaining = (directory: string): void => {
       if (!fs.lstatSync(directory, { throwIfNoEntry: false })?.isDirectory()) return;
@@ -448,14 +461,7 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
     catch {
       result.retained.push({ path: relativeExtensionPath(projectRoot, skillDirectory), reason: '无法安全枚举，保留原路径' });
     }
-    if (legacyBindings || selection.in_place) {
-      doc.setIn(['installations', ability], { ...selection, enabled: false, files: {}, in_place: true });
-    } else {
-      doc.deleteIn(['installations', ability]);
-      setSkill(ability, false);
-      doc.deleteIn(['bindings', ability]);
-    }
-    save();
+    save(serialized);
     return result;
   }
 
