@@ -50,7 +50,7 @@ description: Create or continue component design using the unified request envel
 本节取代 M7“每项正式需求一律完整交接/不设档位”的现行适用范围，M7 历史裁决和已完成产物不改写。只使用同一蓝图协议，不恢复 lite 或新增可手填档位状态。
 
 - **设计写入前准备**。新写或修订蓝图时，在 P1 事实发现及首次写作前执行。受管作者使用本次签发的 `extension_preparation`、知识正文与来源。直接作者在 `framework/harness` 运行 `npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint "<blueprint-id>" --prepare-design`。ID 取调用实参，或传入 `--request-file <已准备请求>` 使用正式绑定。已知本地需求及 UX 稿分别传 `--requirement-source <项目相对文件>`、`--ux-source <项目相对*.ux.yaml>`，每项可重复。用户说本次别提取时传 `--skip-extension-action ux-behavior-spec:fill-missing`。纯查看沿原只读路径，也可用兼容查询 `--design-knowledge`。
-- **读取与取用**。按返回的知识正文及引用核源。超内联预算时按路径分段读取；适用稿先核对需求范围、屏、流转及原始出处。仅在准备发放了 `fill-missing`、本次涉及相应 UI 行为、用户允许且已有稿仍缺本次所需的内容时，打开绑定的 Skill 并在指定蓝图目录的 `ux/` 只补缺项、解析回读，然后把适用的 `屏幕ID.元素ID` 引用到用例和验收。AI 推导稿按证据强度记录，待决项沿用例、流程及验收保持待决，原需求和上游稿只读。缺依赖时按具体诊断交回。
+- **读取与取用**。按返回的知识正文及引用核源。超内联预算时按路径分段读取；适用稿先核对需求范围、屏、流转及原始出处。仅在准备发放了 `fill-missing`、本次涉及相应 UI 行为、用户允许且已有稿仍缺本次所需的内容时，打开绑定的 Skill 并在指定蓝图目录的 `ux/` 只补缺项、解析回读，然后把适用的 `屏幕ID.元素ID` 引用到用例和验收。本次生成稿是辅助材料，其元素用于用例、验收或验证引用。产品权威结论的 `provenance.source_ref` 直接指向原始 PRD 条款或已有明确授权的裁决。已获上游确认的稿件可循其出处采用。缺权威依据时记推断或未知，待决项沿用例、流程及验收保持待决。原需求和上游稿只读。缺依赖时按具体诊断交回。
 - **实际交回**。用已绑定 ID 定位 `canonical_path` 并写入本次正式草稿。对参加本次处理的绑定，在已有作者交回中保留一行 `extension-result: {"ability":"能力ID","binding":"绑定ID","status":"read|reused|generated|skipped|failed","artifacts":["项目相对路径"],"reason":"本次真实结果或原因"}`，并指出已引用的元素。受管会话传入原交回的 `details`。小型请求沿原 checker，完整蓝图人读稿沿 `--write-review`。
 
 ## 支持范围（诚实声明）

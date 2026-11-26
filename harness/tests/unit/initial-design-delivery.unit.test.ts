@@ -407,6 +407,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert(instruction.includes('尚无蓝图'));
       assert(instruction.includes('独立宿主背景必须送到本次真实作者。') && instruction.includes('doc/design.jpg'));
       assert(instruction.includes('设计前动作 ux-behavior-spec:fill-missing') && instruction.includes('生成有效 UX、解析回读'));
+      assert.match(instruction, /屏幕ID\.元素ID 放在用例、验收或验证引用中/);
+      assert.match(instruction, /provenance\.source_ref 直接引用可核对的原始 PRD 条款或已有明确授权的裁决/);
+      assert.match(instruction, /缺少权威依据时记为推断或未知，保留待决项/);
       const designInputs = (request: typeof issued.request) =>
         (request.context.workInput?.material.segments as Array<Record<string, any>>).find(item => item.extension_preparation);
       const originalDesign = designInputs(issued.request)!;

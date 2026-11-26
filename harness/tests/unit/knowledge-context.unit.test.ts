@@ -225,6 +225,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.equal(output.canonical_path, path.join(root, 'doc/features/approved-id/blueprint/component-blueprint.yaml'));
       assert.deepEqual(output.extension_preparation.bindings.map((binding: { id: string }) => binding.id), ['read-upstream']);
       assert.deepEqual(output.extension_preparation.reference_images, ['doc/inputs/card.jpg']);
+      assert.match(output.knowledge.extensionInstructions, /已获上游确认的 UX 原稿可沿其原始出处和裁决作为有据材料/);
+      assert.match(output.knowledge.extensionInstructions, /provenance\.source_ref 直接引用可核对的原始 PRD 条款或已有明确授权的裁决/);
       assert.equal(output.knowledge.entries[0].content, '独立宿主背景：卡类型决策来自业务数据。');
       assert(output.knowledge.entries.find((entry: { path: string }) => entry.path === ux).content.includes('card_type_sheet'));
       assert(output.knowledge.notices.some((entry: string) => entry.includes('on_context_loda')));

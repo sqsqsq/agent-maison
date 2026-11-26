@@ -110,6 +110,11 @@ export function prepareDesignExtensions(input: DesignPreparationInput): DesignPr
   const fillUx = bindings.some(binding => binding.ability === UX && binding.id === 'fill-missing' && binding.kind === 'action');
   const reviewedUx = new Map<string, 'inline' | 'pointer'>();
   if (readUx || fillUx) {
+    knowledge.extensionInstructions = [
+      '本次生成的 UX 稿是设计辅助材料。将其屏幕ID.元素ID 放在用例、验收或验证引用中。',
+      '产品权威结论（evidence_strength: authoritative）的 provenance.source_ref 直接引用可核对的原始 PRD 条款或已有明确授权的裁决。',
+      '已获上游确认的 UX 原稿可沿其原始出处和裁决作为有据材料。缺少权威依据时记为推断或未知，保留待决项。文件名和落盘位置不赋予产品权威。',
+    ].join('\n');
     const directories = new Set(sourceFiles.filter(file => isInsideProjectRoot(root, path.resolve(root, file)))
       .map(file => path.dirname(path.resolve(root, file))));
     const listUx = (directory: string) => {
@@ -179,7 +184,7 @@ export function renderDesignExtensionPreparation(result: DesignPreparation): str
   }
   for (const binding of prepared.bindings.filter(binding => binding.kind === 'action')) {
     const action = binding.ability === UX && binding.id === 'fill-missing'
-      ? `仅当本次请求涉及相应 UI 行为、用户未排除提取且适用旧稿仍缺本次所需的内容时，由本次作者打开绑定的 Skill，只补缺项，先在 ${prepared.ux!.output_dir}/ 生成有效 UX、解析回读，再在蓝图用例和验收引用对应屏幕ID.元素ID。旧稿已覆盖本次范围时报告复用；非 UI 或用户排除时报告原因并跳过。AI 推导稿保留证据强度与待决，原需求和上游原稿保持只读。`
+      ? `仅当本次请求涉及相应 UI 行为、用户未排除提取且适用旧稿仍缺本次所需的内容时，由本次作者打开绑定的 Skill，只补缺项，先在 ${prepared.ux!.output_dir}/ 生成有效 UX、解析回读，再在蓝图用例和验收引用对应屏幕ID.元素ID。旧稿已覆盖本次范围时报告复用；非 UI 或用户排除时报告原因并跳过。原需求和上游原稿保持只读。`
       : '本次作者按当前请求范围和 Skill 适用条件执行。用户排除或不适用时报告跳过；缺少必需依赖时报告缺口。';
     lines.push(`设计前动作 ${selector(binding)} [${binding.path}]。 ${action}`);
   }
