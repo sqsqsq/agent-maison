@@ -2,21 +2,60 @@
  * Ad-hoc UI reset hints (Nav stack pollution / rerun discipline).
  */
 import * as fs from 'fs';
+import { V1_RESULT_PROTOCOL } from './hylyre-result-protocol';
 
 export type StepsBatchResult = {
+  result_protocol?: string;
   total?: number;
   executed?: number;
-  results?: Array<{ index?: number; status?: string; error?: string }>;
+  results: Array<{ index?: number; status?: string; error?: string; step_result?: unknown }>;
 };
 
-export function parseStepsBatchFromRunOut(runOut: string): StepsBatchResult | null {
-  try {
-    const jsonMatch = runOut.match(/\{[\s\S]*"results"[\s\S]*\}/);
-    if (!jsonMatch) return null;
-    return JSON.parse(jsonMatch[0]) as StepsBatchResult;
-  } catch {
-    return null;
+type StepsRunResult = { batch: StepsBatchResult } | { rejection: { code: string; summary: string } };
+
+export function parseStepsRunOut(runOut: string, { native = false }: { native?: boolean } = {}): StepsRunResult | null {
+  // Consume whole containers, including arrays, so a nested object cannot become a batch.
+  const start = /\{(?=\s*["}])|\[(?=\s*(?:[\[\]{"\d-]|true\b|false\b|null\b))/g;
+  let batch: StepsBatchResult | null = null;
+  let ambiguous = false;
+  for (let match = start.exec(runOut); match; match = start.exec(runOut)) {
+    let depth = 1;
+    let quoted = false;
+    let end = match.index + 1;
+    for (; depth && end < runOut.length; end++) {
+      const char = runOut[end];
+      if (quoted && char === '\\') end++;
+      else if (char === '"') quoted = !quoted;
+      else if (!quoted && (char === '{' || char === '[')) depth++;
+      else if (!quoted && (char === '}' || char === ']')) depth--;
+    }
+    if (depth) return null;
+    start.lastIndex = end;
+    if (match[0] !== '{') continue;
+    if (native) {
+      const lineStart = runOut.lastIndexOf('\n', match.index - 1) + 1;
+      const lineEnd = runOut.indexOf('\n', end);
+      if (runOut.slice(lineStart, match.index).trim() || runOut.slice(end, lineEnd < 0 ? runOut.length : lineEnd).trim()) continue;
+    }
+    try {
+      const candidate = JSON.parse(runOut.slice(match.index, end)) as StepsBatchResult & {
+        command_status?: string; phase?: string; rejection?: { domain?: string; code?: string; summary?: string };
+      };
+      const rejection = candidate.rejection;
+      if (candidate.result_protocol === V1_RESULT_PROTOCOL && candidate.command_status === 'rejected' && candidate.phase === 'pre_run_validation'
+        && rejection?.domain === 'contract' && typeof rejection.code === 'string' && typeof rejection.summary === 'string') return { rejection: { code: rejection.code, summary: rejection.summary } };
+      if ((native && candidate.result_protocol !== V1_RESULT_PROTOCOL) || !Array.isArray(candidate.results)
+        || !candidate.results.every(row => row && typeof row === 'object' && !Array.isArray(row))) continue;
+      if (batch) ambiguous = true;
+      batch = candidate;
+    } catch { /* A balanced logging fragment need not be JSON. */ }
   }
+  return batch && !ambiguous ? { batch } : null;
+}
+
+export function parseStepsBatchFromRunOut(runOut: string): StepsBatchResult | null {
+  const parsed = parseStepsRunOut(runOut);
+  return parsed && 'batch' in parsed ? parsed.batch : null;
 }
 
 /** Index of first non-ok step; null if all ok or no batch. */

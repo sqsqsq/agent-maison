@@ -2,7 +2,7 @@ import { effectiveForceDevice } from '../../../../harness/scripts/utils/managed-
 import * as fs from 'fs';
 import * as path from 'path';
 import { ensureHylyreReady, runHylyreDeviceTest, NATIVE_RESULT_PROTOCOL } from './device-test-run';
-import { parseStepsBatchFromRunOut } from '../../../../harness/scripts/utils/adhoc-ui-reset-meta';
+import { parseStepsRunOut } from '../../../../harness/scripts/utils/adhoc-ui-reset-meta';
 import type { StepResultV1, CaseResultV1 } from '../../../../harness/scripts/utils/hylyre-result-protocol';
 import type { RequestCheckContext, CheckResult } from '../../../../harness/scripts/utils/types';
 import type { NormalizedDeviceTestCase } from '../../../../harness/scripts/utils/device-test-case-kernel';
@@ -24,8 +24,9 @@ import { extractAcceptanceIdRefs } from '../../../../harness/scripts/utils/check
 import { collectRequestDeviceAcceptance } from '../../../../harness/scripts/utils/acceptance-layering';
 import type { AcceptanceSpec } from '../../../../harness/scripts/utils/types';
 
-function reject(details: string, failure_kind?: string): never {
+function reject(details: string, failure_kind?: string, logFile?: string): never {
   throw new CheckExecutionError({ id: 'request_device_native', category: 'structure', severity: 'BLOCKER', status: failure_kind ? 'SKIP' : 'FAIL', description: '专项设备测试未满足执行条件', details,
+    ...(logFile ? { affected_files: [logFile] } : {}),
     ...(failure_kind ? { failure_kind, blocking_class: failure_kind === 'framework_bug' ? 'framework_internal' : 'externalBlocked' } : {}) });
 }
 
@@ -112,8 +113,19 @@ export async function runRequestTests(ctx: RequestCheckContext) {
     const run = reuse ? { executed: true, exitCode: JSON.parse(fs.readFileSync(path.join(reportDir, 'device-test-run.meta.json'), 'utf8')).exit_code as number, logPath: path.join(reportDir, 'device-test-run.log') } : runHylyreDeviceTest({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, harnessRoot: ctx.harnessRoot, phase: 'testing', reportDir, pythonPath: ready.pythonPath,
       derivedPlanPath: ctx.request.inputs.test_plan, stepsFilePath, reportOutPath: path.join(reportDir, 'native-report.md'), traceOutPath: path.join(reportDir, 'native-trace.json'),
       bundleName, deviceSn: process.env.HARNESS_HDC_TARGET, coldRestart: true, skipPageSave: true, appSnapshotCacheAbs: resolveAppSnapshotCacheAbs(ctx.projectRoot) });
-    const batch = parseStepsBatchFromRunOut(fs.readFileSync(run.logPath, 'utf8')) as { result_protocol?: string; total?: number; executed?: number; results?: Array<{ index?: number; step_result?: StepResultV1 }> } | null;
-    if (!run.executed || !batch || batch.result_protocol !== NATIVE_RESULT_PROTOCOL || !Number.isInteger(batch.executed) || batch.executed! < 1 || batch.executed! > plan.steps.length || batch.total !== plan.steps.length || batch.results?.length !== plan.steps.length) reject('native request batch incomplete or failed; inspect device-test-run.log', 'capability_missing');
+    const logFile = path.relative(ctx.projectRoot, run.logPath).replace(/\\/g, '/');
+    if (!run.executed) reject(`${plan.row.tc_id}: native request did not execute; inspect ${logFile}`, 'capability_missing', logFile);
+    const parsed = parseStepsRunOut(fs.readFileSync(run.logPath, 'utf8'), { native: true });
+    if (parsed && 'rejection' in parsed) {
+      reject(`${plan.row.tc_id}: native request rejected before execution (${parsed.rejection.code}): ${parsed.rejection.summary}; inspect ${logFile}`, undefined, logFile);
+    }
+    const batch = parsed?.batch;
+    if (!batch || batch.result_protocol !== NATIVE_RESULT_PROTOCOL || typeof batch.executed !== 'number'
+      || !Number.isInteger(batch.executed) || batch.executed < 1 || batch.executed > plan.steps.length
+      || batch.total !== plan.steps.length || batch.results.length !== plan.steps.length) {
+      if (run.exitCode === 0) reject(`${plan.row.tc_id}: native request exited successfully without a readable, complete v1 batch; inspect ${logFile}`, 'framework_bug', logFile);
+      reject(`${plan.row.tc_id}: native request batch incomplete or failed (exit=${run.exitCode}); inspect ${logFile}`, 'capability_missing', logFile);
+    }
     const actual = batch.results.map((row, index) => {
       const step = readStep(row.step_result);
       if (step.index !== index || row.index !== index) reject('invalid native request step index', 'framework_bug');

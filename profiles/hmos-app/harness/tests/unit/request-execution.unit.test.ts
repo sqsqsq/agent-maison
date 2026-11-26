@@ -282,7 +282,7 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
         const result = step(nativeInternal ? 'failed-internal-unexpected-exception' : failed ? 'failed-assertion-mismatch-presence' : 'passed-assertion-presence', 1);
         const setup = { ...step('passed-action-no-selector-wait'), kind: 'back' };
         const logPath = path.join(opts.reportDir, 'device-test-run.log');
-        fs.writeFileSync(logPath, JSON.stringify({ result_protocol: native.NATIVE_RESULT_PROTOCOL, total: 2, executed: 2, results: [{ index: 0, step_result: setup }, { index: 1, step_result: result }] }));
+        fs.writeFileSync(logPath, 'extend value: {}\n' + JSON.stringify({ result_protocol: native.NATIVE_RESULT_PROTOCOL, total: 2, executed: 2, results: [{ index: 0, step_result: setup }, { index: 1, step_result: result }] }, null, 2));
         fs.writeFileSync(path.join(opts.reportDir, 'device-test-run.meta.json'), JSON.stringify({ exit_code: failed ? 1 : 0 }));
         fs.writeFileSync(path.join(opts.reportDir, 'native-trace.json'), JSON.stringify({ steps: [result] }));
         fs.writeFileSync(path.join(opts.reportDir, 'native-report.md'), 'native execution report');
@@ -341,6 +341,37 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       const outside = await run();
       assert(outside.some(check => check.id === 'request_device_native' && check.status === 'FAIL' && check.details.includes('AC-3')));
       assert.equal(executions, beforeGroup + 1);
+      f.ctx.forceDevice = true;
+      bindPlan('AC-1');
+      let execution = { executed: true, exitCode: 0 as number | null };
+      let originalLog = 'extend value: {}\n{"results":[]}\n';
+      patch(native, 'runHylyreDeviceTest', (opts: { reportDir: string }) => {
+        const logPath = path.join(opts.reportDir, 'device-test-run.log');
+        fs.writeFileSync(logPath, originalLog);
+        return { ...execution, logPath };
+      }, restores);
+      const previousAssertions = assertions;
+      for (const [executed, exitCode, kind] of [[true, 0, 'framework_bug'], [true, 1, 'capability_missing'], [false, null, 'capability_missing']] as const) {
+        execution = { executed, exitCode };
+        const checks = await run();
+        const gap = checks.find(check => check.id === 'request_device_native');
+        assert(gap, JSON.stringify(checks));
+        assert.equal(gap.failure_kind, kind, JSON.stringify(checks));
+        assert.equal(gap.status, 'SKIP');
+        const logFile = gap.affected_files?.[0];
+        assert(logFile);
+        assert(logFile.endsWith('device-test-run.log'));
+        assert.equal(fs.readFileSync(path.resolve(f.root, logFile), 'utf8'), originalLog);
+      }
+      execution = { executed: true, exitCode: 0 };
+      originalLog = JSON.stringify({ result_protocol: native.NATIVE_RESULT_PROTOCOL, command_status: 'rejected', phase: 'pre_run_validation',
+        rejection: { domain: 'contract', code: 'contract.invalid_step', summary: 'invalid step' } });
+      const rejection = (await run()).find(check => check.id === 'request_device_native');
+      assert(rejection);
+      assert.equal(rejection.status, 'FAIL');
+      assert.equal(rejection.failure_kind, undefined);
+      assert.match(rejection.details, /contract\.invalid_step/);
+      assert.equal(assertions, previousAssertions);
     } finally { restores.reverse().forEach(restore => restore()); if (old === undefined) delete process.env.HARNESS_HDC_TARGET; else process.env.HARNESS_HDC_TARGET = old; fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {

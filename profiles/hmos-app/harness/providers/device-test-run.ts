@@ -46,6 +46,7 @@ import { runHylyreUtf8RoundTrip } from '../hylyre-utf8-roundtrip';
 import {
   computeLastFailedStepIndex,
   parseStepsBatchFromRunOut,
+  parseStepsRunOut,
   uiResetHintForOutcome,
 } from '../../../../harness/scripts/utils/adhoc-ui-reset-meta';
 import type { CapabilityProvider } from './types';
@@ -1705,9 +1706,16 @@ export function synthesizeTraceFromStepsBatchRun(args: {
   tracePath: string;
   reportPath: string;
 }): { lastStepIndex: number | null; uiResetHint: string | null } {
-  const batch = parseStepsBatchFromRunOut(args.runOut);
+  const parsed = parseStepsRunOut(args.runOut);
+  const batch = parsed && 'batch' in parsed ? parsed.batch : null;
   const results = batch?.results ?? [];
-  const anyErr = results.some(r => r.status !== 'ok');
+  const gap = parsed && 'rejection' in parsed
+    ? `Rejected before execution (${parsed.rejection.code}): ${parsed.rejection.summary}`
+    : !batch ? 'Readable steps-file batch missing; inspect device-test-run.log'
+      : batch.executed === 0 || !results.length ? 'No steps executed; inspect device-test-run.log' : undefined;
+  const stepErrors = results.filter(r => r.status !== 'ok');
+  const anyErr = !!gap || stepErrors.length > 0;
+  const notes = [gap, ...stepErrors.map(r => r.error ?? 'step error')].filter(Boolean).join('; ').slice(0, 500);
   const lastStepIndex = computeLastFailedStepIndex(batch);
   const outcome = anyErr ? 'failed' : 'success';
   const uiResetHint = uiResetHintForOutcome(outcome, lastStepIndex);
@@ -1723,13 +1731,7 @@ export function synthesizeTraceFromStepsBatchRun(args: {
         status: anyErr ? '失败' : '通过',
         priority: 'P0',
         ac_ref: 'ad-hoc',
-        notes: anyErr
-          ? results
-              .filter(r => r.status !== 'ok')
-              .map(r => r.error ?? 'step error')
-              .join('; ')
-              .slice(0, 500)
-          : '',
+        notes,
         name: 'adhoc steps batch',
       },
     ],
@@ -1751,7 +1753,7 @@ export function synthesizeTraceFromStepsBatchRun(args: {
     '',
     '| 用例编号 | 状态 | 备注 |',
     '|----------|------|------|',
-    `| TC-001 | ${anyErr ? '失败' : '通过'} | steps-file batch |`,
+    `| TC-001 | ${anyErr ? '失败' : '通过'} | ${gap ? notes.replace(/\s+/g, ' ').replace(/\|/g, '\\|') : 'steps-file batch'} |`,
     '',
   ].join('\n');
   fs.mkdirSync(path.dirname(args.reportPath), { recursive: true });
