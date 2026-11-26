@@ -518,6 +518,11 @@ const cases: Case[] = [
           assert(!bundle.manifestUsable && bundle.bindings.length === 0 && bundle.skills.length === 0, content);
           assert(checkExtensionManifest(bundle).some(check => check.status === 'FAIL' && check.severity === 'BLOCKER'), content);
         }
+        write(file, 'description: both required fields missing');
+        const bundle = loadInstanceExtensions(project);
+        assert(!bundle.manifestUsable, 'missing root fields');
+        assert(bundle.errors.some(error => error.code === 'manifest_schema_version'), 'missing schema_version diagnosed');
+        assert(bundle.errors.some(error => error.code === 'manifest_name'), 'missing name diagnosed alongside schema_version');
       } finally {
         fs.rmSync(project, { recursive: true, force: true });
       }

@@ -27,9 +27,9 @@ export const checker: PhaseChecker = {
             ? `扩展目录存在但未提供 manifest.yaml（跳过 provides）`
             : '未检测到实例扩展目录（零影响）',
       });
-    } else for (const [index, e] of inspection.manifestErrors.entries()) {
+    } else for (const e of inspection.manifestErrors) {
       results.push({
-        id: `extension_manifest_${e.code}_${index}`,
+        id: `extension_manifest_${e.code}`,
         category: 'structure',
         description: `扩展 manifest / provides 校验失败：${e.message}`,
         severity: 'BLOCKER',
