@@ -5,7 +5,7 @@ import { loadFrameworkConfig } from '../../config';
 import { readInvokeFinalText } from './agent-invoke';
 import { classifyGoalRunsDir } from './fidelity-shared';
 import { assertFencedOwner, readRunControl } from './goal-run-control';
-import { relativeExtensionPath, type ExtensionFileChange, type ObserveExtensionWrite } from './extension-files';
+import { ordinaryFile, relativeExtensionPath, type ExtensionFileChange, type ObserveExtensionWrite } from './extension-files';
 import { invocationOutputLogPath, loadAuthoritativeEvents } from './goal-runner-phase';
 import { realProjectPath } from './project-relative-path';
 import { acceptedSessionReport, readExecutionRequestOriginal } from './session-execution-handoff';
@@ -23,30 +23,42 @@ function directories(root: string): string[] {
     .map(item => path.join(root, item.name));
 }
 
-function* designRequests(projectRoot: string, requested?: string, activeOnly = false) {
+const AUTHOR_PHASES = new Set(['initial-design-author', 'work-unit-author']);
+
+function* authorRequests(projectRoot: string, requested?: string, activeOnly = false) {
   const features = realProjectPath(projectRoot, loadFrameworkConfig(projectRoot).paths.features_dir, 'paths.features_dir');
-  for (const workspace of directories(features)) {
-    // The initial-design author runs at the blueprint workspace's own Goal boundary.
-    const runsDir = path.join(workspace, 'goal-runs');
+  const ownerDirectories = directories(features).flatMap(workspace => [
+    workspace,
+    // A canonical CU uses one child of the blueprint workspace as its Feature carrier.
+    ...directories(workspace).filter(dir => fs.lstatSync(path.join(dir, 'change-unit.yaml'), { throwIfNoEntry: false })?.isFile()),
+  ]);
+  for (const directory of ownerDirectories) {
+    const runsDir = path.join(directory, 'goal-runs');
     if (!fs.lstatSync(runsDir, { throwIfNoEntry: false })?.isDirectory()) continue;
     const { runs } = classifyGoalRunsDir(runsDir);
     for (const runId of runs) {
       const runDir = path.join(runsDir, runId);
       const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
       const finished = new Set(events.filter(event => event.type === 'agent_invoke_end').map(event => event.invoke_id));
-      const starts = new Set(events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'initial-design-author')
-        .map(event => event.invoke_id).filter((id): id is string => Boolean(id)));
-      for (const requestId of starts) {
+      const starts = events.filter(event => event.type === 'agent_invoke_start' && event.invoke_id
+        && event.phase && AUTHOR_PHASES.has(event.phase));
+      for (const start of starts) {
+        const requestId = start.invoke_id!;
         if (activeOnly && finished.has(requestId)) continue;
-        if (requested && !requested.includes('/') && requested !== requestId) continue;
+        if (requested && !requested.includes('/') && requested !== requestId && requested !== `${runId}:${requestId}`) continue;
         const issued = readExecutionRequestOriginal(runDir, requestId, events);
-        if (!issued) continue;
-        const requestFile = path.relative(projectRoot, path.join(runDir, issued.reference.path)).replace(/\\/g, '/');
-        if (requested && requested !== requestId && requested !== requestFile) continue;
+        if (!issued || issued.request.invoke_id !== requestId || issued.request.context.runId !== runId
+          || issued.request.context.phase !== start.phase) continue;
+        const requestFile = relativeExtensionPath(projectRoot, path.join(runDir, issued.reference.path));
+        if (requested && requested !== requestId && requested !== `${runId}:${requestId}` && requested !== requestFile) continue;
         const segments = issued.request.context.workInput?.material.segments ?? [];
-        const preparation = segments.map(item => record(record(item).extension_preparation))
-          .find(item => item.at === 'component-design.before_discovery@1');
-        const bindings = Array.isArray(preparation?.bindings) ? preparation.bindings.map(record) : [];
+        const bindings = segments.flatMap(segment => {
+          const data = record(segment);
+          const design = record(data.extension_preparation);
+          const rows = start.phase === 'work-unit-author' ? data.extension_feature_bindings
+            : design.at === 'component-design.before_discovery@1' ? design.bindings : undefined;
+          return Array.isArray(rows) ? rows.map(record) : [];
+        });
         yield { requestId, requestFile, runId, runDir, events, issued, bindings, settled: finished.has(requestId) };
       }
     }
@@ -54,15 +66,18 @@ function* designRequests(projectRoot: string, requested?: string, activeOnly = f
 }
 
 export function activeExtensionRequests(projectRoot: string, ability: string, source: string): string[] {
-  return [...new Set([...designRequests(projectRoot, undefined, true)]
-    .filter(request => request.bindings.some(binding => binding.ability === ability && binding.source === source))
-    .map(request => request.requestId))].sort();
+  const matches = [...authorRequests(projectRoot, undefined, true)]
+    .filter(request => request.bindings.some(binding => binding.ability === ability && binding.source === source));
+  return [...new Set(matches.map(request => matches.some(other => request.requestId === other.requestId && request.runId !== other.runId)
+    ? `${request.runId}:${request.requestId}` : request.requestId))].sort();
 }
 
 export function recordExtensionManagementWrites<T>(
   projectRoot: string, work: (observe?: ObserveExtensionWrite) => T,
 ): T {
-  const active = [...designRequests(projectRoot, undefined, true)];
+  const active = [...authorRequests(projectRoot, undefined, true)].filter(({ issued: { request } }) =>
+    request.context.phase === 'initial-design-author' || (request.context.phase === 'work-unit-author'
+      && !request.purpose && request.write_boundary?.executionRole === 'author'));
   if (!active.length) return work();
   const produced: ExtensionFileChange[] = [];
   try {
@@ -70,10 +85,10 @@ export function recordExtensionManagementWrites<T>(
   } finally {
     if (produced.length) for (const actor of active) {
       const { owner, feature, phase } = actor.issued.request.context;
-      const eventsPath = path.join(actor.runDir, 'events.jsonl');
+      const eventsPath = ordinaryFile(actor.runDir, 'events.jsonl');
       if (loadAuthoritativeEvents(eventsPath).some(event => event.type === 'agent_invoke_end' && event.invoke_id === actor.requestId)) continue;
       const current = readRunControl(actor.runDir, owner.run_id);
-      if (current?.owner?.owner_id !== owner.owner_id || current.current_epoch !== owner.epoch) continue;
+      if (current?.owner?.owner_id !== owner.owner_id || current.current_epoch !== owner.epoch || current.owner.state !== 'active') continue;
       assertFencedOwner(actor.runDir, owner, 'extension_management_observed');
       const observation = {
         ts: new Date().toISOString(), type: 'phase_write_observed', producer: 'extension-management', phase,
@@ -94,9 +109,9 @@ function resultLines(text: string, bindings: Data[]): Data[] {
       if (bindings.some(binding => binding.ability === item.ability && binding.id === item.binding)
         && ['reused', 'generated', 'skipped', 'failed', 'read'].includes(String(item.status))) {
         results.push({
-          ability: item.ability, binding: item.binding, status: item.status,
+          ability: item.ability, binding: item.binding, status: item.status, evidence: 'author-report',
           ...(typeof item.reason === 'string' ? { reason: item.reason } : {}),
-          ...(Array.isArray(item.artifacts) ? { artifacts: item.artifacts.filter(value => typeof value === 'string') } : {}),
+          ...(Array.isArray(item.artifacts) ? { reportedArtifacts: item.artifacts.filter(value => typeof value === 'string') } : {}),
         });
       }
     } catch { /* A malformed result line does not establish participation. */ }
@@ -109,7 +124,7 @@ export function inspectExtensionRequest(projectRoot: string, request: string, ab
   if (reference.includes('/')) {
     reference = path.relative(projectRoot, realProjectPath(projectRoot, reference, 'extension --request')).replace(/\\/g, '/');
   }
-  const matches = [...designRequests(projectRoot, reference)];
+  const matches = [...authorRequests(projectRoot, reference)];
   if (matches.length !== 1) return {
     request,
     message: matches.length > 1

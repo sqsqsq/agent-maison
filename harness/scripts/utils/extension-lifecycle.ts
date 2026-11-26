@@ -168,12 +168,27 @@ function sourcesForInstall(input: {
   if (source.manifestVersion !== '1.0' && Array.isArray(rawSkills)) {
     for (const id of rawSkills) if (typeof id === 'string' && TOKEN.test(id)) skills.add(id);
   }
-  const ids = input.ability ? [input.ability] : [...new Set([...skills, ...Object.keys(mapping(raw.bindings))])].sort();
+  const native = mapping(raw.bindings);
+  const legacy = new Map<string, Data>();
+  for (const binding of source.bindings) {
+    if (!binding.legacy || !binding.kind || binding.issue) continue;
+    legacy.set(binding.ability, {
+      ...legacy.get(binding.ability),
+      [binding.id]: {
+        at: binding.at, kind: binding.kind, ref: binding.ref, phase: binding.phase, enabled_by_default: true,
+      },
+    });
+  }
+  const ids = input.ability ? [input.ability]
+    : [...new Set([...skills, ...Object.keys(native), ...legacy.keys()])].sort();
   if (ids.length === 0) throw new Error('来源没有可安装的能力');
   const abilities = ids.map(id => {
     const skill = skills.has(id);
-    const value = own(mapping(raw.bindings), id);
-    if (!TOKEN.test(id) || (value === undefined && !skill)) throw new Error(`来源没有能力：${id}`);
+    const declared = own(native, id);
+    const migrated = legacy.get(id);
+    const value = input.root === sourceRoot ? declared
+      : migrated && (declared === undefined || declared === mapping(declared)) ? { ...migrated, ...mapping(declared) } : declared;
+    if (!TOKEN.test(id) || (value === undefined && !skill && !migrated)) throw new Error(`来源没有能力：${id}`);
     const mcpActions: Data = {};
     const files = new Map<string, InstallFile>();
     const addFile = (relative: string): void => {
@@ -292,7 +307,7 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
         const hostRel = relativeExtensionPath(projectRoot, target);
         const prior = own(previous?.files ?? {}, hostRel);
         const other = owners().filter(([owner, entry]) => owner !== id && own(entry.files, hostRel));
-        if (other.some(([, entry]) => entry.source !== input.name || entry.files[hostRel] !== item.sha256)) {
+        if (other.some(([, entry]) => entry.files[hostRel] !== item.sha256)) {
           throw new Error(`文件被其他能力拥有，保留：${hostRel}`);
         }
         const actual = fs.existsSync(target) ? digest(fs.readFileSync(target)) : undefined;
@@ -382,14 +397,29 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
     }
     // Leave compatibility declarations intact; their original meaning is preserved by the host selection.
     const legacyBindings = bundle.bindings.some(row => row.ability === ability && own(nativeBindings(doc, ability), row.id) === undefined);
-    if (selection.in_place) {
-      const skillDirectory = ordinaryPath(root, `skills/${ability}`, 'extension skill');
-      if (fs.existsSync(skillDirectory)) result.retained.push({ path: relativeExtensionPath(projectRoot, skillDirectory), reason: '原地来源或宿主已有文件' });
+    const skillDirectory = path.join(root, 'skills', ability);
+    const listRemaining = (directory: string): void => {
+      if (!fs.lstatSync(directory, { throwIfNoEntry: false })?.isDirectory()) return;
+      for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+        const file = path.join(directory, entry.name);
+        const hostRel = relativeExtensionPath(projectRoot, file);
+        if (entry.isDirectory()) listRemaining(file);
+        else if (!own(selection.files, hostRel)) {
+          result.retained.push({ path: hostRel, reason: '原地来源或不属于本次安装' });
+        }
+      }
+    };
+    try { listRemaining(ordinaryPath(root, relativeExtensionPath(root, skillDirectory), 'extension skill')); }
+    catch {
+      result.retained.push({ path: relativeExtensionPath(projectRoot, skillDirectory), reason: '无法安全枚举，保留原路径' });
     }
-    if (legacyBindings) doc.setIn(['installations', ability], { ...selection, enabled: false, files: {}, in_place: true });
-    else doc.deleteIn(['installations', ability]);
-    setSkill(ability, false);
-    doc.deleteIn(['bindings', ability]);
+    if (legacyBindings || selection.in_place) {
+      doc.setIn(['installations', ability], { ...selection, enabled: false, files: {}, in_place: true });
+    } else {
+      doc.deleteIn(['installations', ability]);
+      setSkill(ability, false);
+      doc.deleteIn(['bindings', ability]);
+    }
     save();
     return result;
   }

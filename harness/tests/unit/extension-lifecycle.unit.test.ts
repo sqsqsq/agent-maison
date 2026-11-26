@@ -78,15 +78,18 @@ function publishedBindings(projectRoot: string) {
   return loadInstanceExtensions(projectRoot, 'doc/extensions', { frameworkRoot }).bindings;
 }
 
-function issueDesign(projectRoot: string, requestId: string, source: string) {
+function issueDesign(projectRoot: string, requestId: string, source: string, cu = false) {
   const feature = 'opening';
   const runId = '20261125T000000Z-abc123';
-  const reportDir = `doc/features/${feature}/goal-runs/${runId}`;
+  const workspace = cu ? `${feature}/unit-1` : feature;
+  if (cu) write(path.join(projectRoot, 'doc/features', workspace, 'change-unit.yaml'), 'id: unit-1\n');
+  const reportDir = `doc/features/${workspace}/goal-runs/${runId}`;
   const runDir = path.join(projectRoot, reportDir);
   fs.mkdirSync(runDir, { recursive: true });
-  const phase = 'initial-design-author';
+  const phase = cu ? 'work-unit-author' : 'initial-design-author';
   const issuedAt = '2026-11-25T00:01:00Z';
   const owner = { run_id: runId, owner_id: 'writer', epoch: 1, kind: 'session' as const };
+  const binding = { source, ability: 'ux', id: 'fill', at, kind: 'action', ref: 'ux', delivery: 'action' };
   const material = writePhaseExecutionRequestMaterial({
     invokeId: requestId, issuedAt, gateTimeoutMs: 60_000, cleanupReserveMs: 2000,
     preSnapshot: null, writeBoundary: null,
@@ -96,9 +99,8 @@ function issueDesign(projectRoot: string, requestId: string, source: string) {
       runtimeFacts: { receiptRequired: false, resume: false, successor: false },
       workInput: { material: {
         purpose: phase,
-        segments: [{ extension_preparation: { at, role: 'author', blueprint_id: feature, bindings: [
-          { source, ability: 'ux', id: 'fill', at, kind: 'action', ref: 'ux', delivery: 'action' },
-        ] } }],
+        segments: cu ? [{ extension_feature_bindings: [binding] }]
+          : [{ extension_preparation: { at, role: 'author', blueprint_id: feature, bindings: [binding] } }],
       } },
     },
   });
@@ -168,9 +170,11 @@ const cases = [
       fs.unlinkSync(path.dirname(target));
       state(project, 'install', { source });
       write(target, '# host edit\n');
+      write(path.join(extensionDir, 'skills/ux/hand-written.md'), 'host extra\n');
       assert.throws(() => state(project, 'install', { source }), /已被宿主修改/);
       const exit = state(project, 'uninstall');
       assert(exit.retained.some(item => item.path === 'doc/extensions/knowledge/intake.md'));
+      assert(exit.retained.some(item => item.path === 'doc/extensions/skills/ux/hand-written.md'));
       assert.equal(fs.readFileSync(target, 'utf8'), '# host edit\n');
       assert(fs.existsSync(path.join(source, 'skills/ux/SKILL.md')));
       assert(!fs.existsSync(path.join(extensionDir, 'skills/ux/SKILL.md')));
@@ -196,6 +200,32 @@ const cases = [
       assert.equal(inspectExtensionRequest(project, signed.path, 'ux').settled, true);
       assert(state(project, 'uninstall').filesRemoved.includes('doc/extensions/skills/ux/SKILL.md'));
       assert(!fs.existsSync(path.join(extensionDir, 'skills/ux/SKILL.md')));
+    }),
+  },
+  {
+    name: 'CU 作者的已有签发原件占用同一已安装资源，交回后才能清理',
+    run: () => inProject((project, source, extensionDir) => {
+      state(project, 'install', { source });
+      const signed = issueDesign(project, 'cu-author', 'local-ux', true);
+      assert.deepEqual(state(project, 'uninstall').requestIds, ['cu-author']);
+      assert.equal(inspectExtensionRequest(project, signed.path, 'ux').requestId, 'cu-author');
+      signed.append({ type: 'agent_invoke_end', invoke_id: 'cu-author', phase: signed.phase, exit_code: 0 });
+      state(project, 'uninstall');
+      assert(!fs.existsSync(path.join(extensionDir, 'skills/ux/SKILL.md')));
+    }),
+  },
+  {
+    name: '原地来源卸载只撤回参与，保留源声明和字节',
+    run: () => inProject((project, source, extensionDir) => {
+      fs.cpSync(source, extensionDir, { recursive: true });
+      state(project, 'install', { source: extensionDir });
+      const exit = state(project, 'uninstall');
+      assert(exit.retained.some(item => item.path === 'doc/extensions/skills/ux/SKILL.md'));
+      assert.equal(exit.filesRemoved.length, 0);
+      const manifest = YAML.parse(fs.readFileSync(path.join(extensionDir, 'manifest.yaml'), 'utf8'));
+      assert(manifest.bindings.ux.fill);
+      assert.equal(manifest.installations.ux.enabled, false);
+      assert(publishedBindings(project).every(b => !b.enabled));
     }),
   },
   {
