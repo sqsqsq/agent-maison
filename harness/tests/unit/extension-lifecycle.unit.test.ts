@@ -226,10 +226,31 @@ const cases = [
       assert.throws(() => state(project, 'install', { source }), /junction|符号链接/);
       assert.deepEqual(fs.readdirSync(outside), []);
       fs.unlinkSync(path.dirname(target));
+      const manifest = path.join(extensionDir, 'manifest.yaml');
+      const resource = 'doc/extensions/knowledge/intake.md';
+      const ownedHash = () => YAML.parse(fs.readFileSync(manifest, 'utf8')).installations.ux.files[resource];
       state(project, 'install', { source });
+      const importHash = ownedHash();
       write(target, '# host edit\n');
       write(path.join(extensionDir, 'skills/ux/hand-written.md'), 'host extra\n');
-      assert.throws(() => state(project, 'install', { source }), /已被宿主修改/);
+      write(path.join(source, 'skills/ux/reference/added.md'), 'new independent file\n');
+      const update = state(project, 'install', { source });
+      assert(update.retained.some(item => item.path === resource && item.reason.includes('来源内容未变')));
+      assert.deepStrictEqual(update.filesWritten, ['doc/extensions/skills/ux/reference/added.md']);
+      assert.equal(fs.readFileSync(target, 'utf8'), '# host edit\n');
+      assert.equal(fs.readFileSync(path.join(extensionDir, 'skills/ux/reference/added.md'), 'utf8'), 'new independent file\n');
+      assert.equal(ownedHash(), importHash, '原归属仍用于识别宿主定制');
+
+      const beforeConflict = fs.readFileSync(manifest);
+      const sourceResource = path.join(source, 'knowledge/intake.md');
+      write(sourceResource, '# independent source edit\n');
+      write(path.join(source, 'skills/ux/reference/conflict-pending.md'), 'should not be copied\n');
+      assert.throws(() => state(project, 'install', { source }), /宿主修改且来源已有不同内容/);
+      assert.equal(fs.readFileSync(target, 'utf8'), '# host edit\n');
+      assert.equal(fs.readFileSync(sourceResource, 'utf8'), '# independent source edit\n');
+      assert.deepStrictEqual(fs.readFileSync(manifest), beforeConflict);
+      assert(!fs.existsSync(path.join(extensionDir, 'skills/ux/reference/conflict-pending.md')));
+
       const exit = state(project, 'uninstall');
       assert(exit.retained.some(item => item.path === 'doc/extensions/knowledge/intake.md'));
       assert(exit.retained.some(item => item.path === 'doc/extensions/skills/ux/hand-written.md'));

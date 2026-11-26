@@ -333,7 +333,13 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
         }
         const actual = fs.existsSync(target) ? digest(fs.readFileSync(target)) : undefined;
         if (actual && !prior && !other.length) throw new Error(`已有文件无本次安装归属，保留：${hostRel}`);
-        if (actual && actual !== item.sha256 && actual !== prior) throw new Error(`文件已被宿主修改，保留：${hostRel}`);
+        if (actual && actual !== item.sha256 && actual !== prior) {
+          if (item.sha256 === prior) {
+            result.retained.push({ path: hostRel, reason: '文件已被宿主修改，来源内容未变' });
+            continue;
+          }
+          throw new Error(`文件已被宿主修改且来源已有不同内容，保留：${hostRel}`);
+        }
         if (plannedFiles.get(hostRel)?.sha256 !== undefined && plannedFiles.get(hostRel)?.sha256 !== item.sha256) {
           throw new Error(`多个能力声明了不同的文件内容：${hostRel}`);
         }
