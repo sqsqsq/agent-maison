@@ -2,10 +2,10 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
-import { fixture, facts } from './request-entry.unit.test';
+import { fixture, facts, review } from './request-entry.unit.test';
 import { resolveDeliveryPolicy, readScopeUserControlSource, type DeliveryFacts } from '../../scripts/utils/execution-scope';
 import { readRequestIntake, requestStartFromReflog } from '../../scripts/utils/request-intake';
-import { prepareAutomaticRequest, prepareDesignRequest } from '../../scripts/utils/automatic-request';
+import { automaticRequestChecks, prepareAutomaticRequest, prepareDesignRequest } from '../../scripts/utils/automatic-request';
 import { prepareExplicitRequest } from '../../scripts/utils/capability-resolution-entry-input';
 import { deriveContentImpact } from '../../scripts/utils/content-impact';
 import { extractExportSurface } from '../../scripts/utils/export-surface';
@@ -65,6 +65,164 @@ exports.profileCodingHost={sourceFileSuffixes:['.js'],runStructureChecks:()=>[],
 compileProject(ctx){const run=cp.spawnSync(process.execPath,['--check',path.join(ctx.projectRoot,'src/value.js')],{encoding:'utf8'});fs.writeFileSync(path.join(ctx.reportDir,'node-check.log'),run.stdout+run.stderr);return{checks:[{id:'coding_compile',category:'structure',severity:'BLOCKER',status:run.status===0?'PASS':'FAIL',description:'Node syntax',details:run.stdout+run.stderr}],execution:{executed:true,exitCode:run.status,command:'node --check src/value.js'}}}};`);
 }
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
+  { name: 'Review discloses unrelated initial dirt and keeps explicit target and full diff attribution gaps', run(f) {
+    const file = 'src/format.js', absolute = path.join(f.root, file);
+    fs.writeFileSync(absolute, 'exports.format = 0;\n');
+    const s = setup(f);
+    const status = s.rows[4] as { message: { content: Array<{ content: string }> } };
+    status.message.content[0].content = ` M ${file}\n`;
+    fs.writeFileSync(absolute, 'exports.format = 1;\n');
+    s.flush();
+    function runReview(name: string, targets: string[], acceptance?: string) {
+      const generated = prepareAutomaticRequest(f.root, f.framework, { phase: 'review', 'session-ref': s.ref, target: targets, 'report-dir': `doc/reports/${name}` });
+      if (acceptance) {
+        const request = path.join(f.root, generated.requestFile), raw = JSON.parse(fs.readFileSync(request, 'utf8'));
+        raw.inputs.acceptance = acceptance;
+        fs.writeFileSync(request, JSON.stringify(raw));
+      }
+      const prepared = prepareExplicitRequest({ projectRoot: f.root, frameworkRoot: f.framework, phase: 'review', ...generated });
+      review(prepared);
+      if (targets.includes(file)) {
+        const report = prepared.inputs.review_report;
+        fs.writeFileSync(report, fs.readFileSync(report, 'utf8').replace('src/value.js\n', `src/value.js\n${file}\n`));
+      }
+      const result = cli(f, ['--phase', 'review', '--request-file', generated.requestFile, '--report-dir', generated.reportDir]);
+      const report = JSON.parse(fs.readFileSync(path.join(prepared.reportDir, 'script-report.json'), 'utf8')) as { checks: Array<{ id: string; details: string; status: string }> };
+      return { result, report, inputGap: report.checks.find(check => check.id === 'request_input_unresolved') };
+    }
+    const local = runReview('review-local', ['src/value.js']);
+    assert.equal(local.result.status, 0, local.result.stderr + JSON.stringify(local.report.checks));
+    assert.equal(local.inputGap, undefined);
+    assert(local.report.checks.some(check => check.id === 'request_intake_reconciliation' && check.status === 'WARN' && check.details.includes(file)));
+    const explicit = runReview('review-target', ['src/value.js', file]);
+    assert.equal(explicit.result.status, 1);
+    assert.match(explicit.inputGap?.details ?? '', /src\/format\.js.*缺少可信写前/);
+    const acceptance = 'doc/acceptance-source.yaml';
+    fs.writeFileSync(path.join(f.root, acceptance), JSON.stringify({ feature: 'value', source: 'native user', version: '1',
+      criteria: [{ id: 'AC-1', prd_function: null, priority: 'P0', description: '保持用户可见格式', testable: true, verification_steps: ['检查格式'],
+        expected_result: '保留已核格式', ut_layer: 'device', device_focus: '显示格式', requirement_ref: { source_path: file, snippet: 'exports.format = 1;' } }], boundaries: [] }));
+    const bound = runReview('review-acceptance', ['src/value.js'], acceptance);
+    assert.equal(bound.result.status, 1, bound.result.stderr + JSON.stringify(bound.report.checks));
+    assert.match(bound.inputGap?.details ?? '', /src\/format\.js.*缺少可信写前/);
+    s.add({ type: 'user', uuid: 'review-full-user', message: { role: 'user', content: '本次要求核清完整 diff 归属。' } });
+    s.add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务，原始user消息定位 user-1，本请求仍核验 value。' } });
+    s.flush();
+    const full = runReview('review-full', ['src/value.js']);
+    assert.equal(full.result.status, 1);
+    assert.match(full.inputGap?.details ?? '', /src\/format\.js.*缺少可信写前/);
+  } },
+  { name: 'Dirty shell attribution follows exact before bytes, exposes unbound paths, and ignores unchanged preimages', run(f) {
+    const file = 'src/format.js', absolute = path.join(f.root, file);
+    fs.writeFileSync(absolute, 'exports.format = 0;\n');
+    const s = setup(f);
+    const status = s.rows[4] as { message: { content: Array<{ content: string }> } };
+    status.message.content[0].content = ` M ${file}\n`;
+    fs.writeFileSync(absolute, 'exports.format = 1;\n');
+    s.tool('Read', { file_path: absolute }, 'exports.format = 1;\n');
+    const [read, result] = s.rows.splice(-2);
+    s.rows.splice(5, 0, read, result);
+    s.tool('Bash', { command: 'node format-codemod.cjs' }, 'done');
+    const resultAfterShell = s.rows.pop();
+    const intake = () => { s.flush(); return readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref, explicitTargets: ['src/value.js'] }); };
+    const unchanged = intake();
+    assert(!unchanged.targets.includes(file)); assert(!unchanged.attribution_disclosures?.length);
+    fs.writeFileSync(absolute, 'exports.format = 2;\n');
+    assert(intake().targets.includes(file), 'working bytes show the write before the shell result');
+    s.rows.push(resultAfterShell);
+    const changed = intake();
+    assert(changed.targets.includes(file) && !changed.attribution_unknown.includes(file));
+    assert(deriveContentImpact(f.root, changed).some(item => item.files.includes(file)));
+    s.rows.splice(5, 2);
+    const unverified = intake();
+    assert.deepEqual(unverified.attribution_disclosures?.map(item => item.path), [file]);
+    assert(!unverified.attribution_unknown.length && !unverified.gaps.length, 'no overlap blocks the independent local run');
+    assert.equal(automaticRequestChecks(unverified, f.root)[0].status, 'WARN');
+    assert.match(automaticRequestChecks(unverified, f.root)[0].details, /src\/format\.js.*缺少可信写前/);
+  } },
+  { name: 'The first formal prepare binds dirty file bytes before a shell write and a historical prepare cannot backfill them', run(f) {
+    const file = 'src/format.js', absolute = path.join(f.root, file);
+    fs.writeFileSync(absolute, 'exports.format = 0;\n');
+    const s = setup(f);
+    const status = s.rows[4] as { message: { content: Array<{ content: string }> } };
+    status.message.content[0].content = ` M ${file}\n`;
+    s.rows.splice(12);
+    fs.writeFileSync(path.join(f.root, 'src/value.js'), 'exports.value = 41;\n');
+    fs.writeFileSync(absolute, 'exports.format = 1;\n');
+    s.flush();
+    const args = ['--phase', 'ut', '--session-ref', s.ref, '--target', 'src/value.js', '--test-target', 'tests/value.test.cjs', '--prepare-request'];
+    const prep = cli(f, args);
+    assert.equal(prep.status, 0, prep.stdout + prep.stderr);
+    const relative = JSON.parse(prep.stdout).requestFile;
+    const previous = JSON.parse(fs.readFileSync(relative, 'utf8')).intake_context;
+    assert.match(previous.baseline.dirty_digests[file], /^[0-9a-f]{64}$/);
+    assert.equal(previous.baseline.preimages?.[file], undefined);
+    s.tool('Bash', { command: 'node format-operation.cjs' }, 'done');
+    const result = s.rows.pop();
+    const read = () => { s.flush(); return readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, previous }); };
+    assert(!read().targets.includes(file), 'only the native call is present and working bytes are unchanged');
+    s.rows.push(result);
+    assert(!read().targets.includes(file), 'a completed readonly shell is harmless');
+    s.rows.pop();
+    fs.writeFileSync(absolute, 'exports.format = 2;\n');
+    assert(read().targets.includes(file), 'changed bytes enter the affected scope before the shell result');
+    s.rows.push(result);
+    const changed = read();
+    assert.deepEqual(changed.attribution_unknown, [file]);
+    assert.match(changed.attribution_disclosures![0].reason, /摘要证实/);
+    assert(deriveContentImpact(f.root, changed).some(impact => impact.state === 'unknown' && impact.files.includes(file)));
+    const historical = cli(f, [...args, '--report-dir', 'doc/reports/historical']);
+    assert.equal(historical.status, 0, historical.stdout + historical.stderr);
+    const old = JSON.parse(historical.stdout).intake_context;
+    assert.equal(old.baseline.dirty_digests?.[file], undefined);
+    assert.deepEqual(old.attribution_disclosures.map((item: { path: string }) => item.path), [file]);
+  } },
+  { name: 'Claude and CodeAgent distinguish an independent pending call from a mismatched native edit result', run(f) {
+    const s = setup(f);
+    s.add({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'frontend-self', name: 'Bash', input: { command: 'run the check' } }] } });
+    s.add({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'pending-edit', name: 'Edit', input: { file_path: path.join(f.root, 'src/value.js') } }] } });
+    s.flush();
+    process.env.CODEAGENT3_CONFIG_DIR = path.join(f.root, '.native-codeagent');
+    const codeagent = path.join(process.env.CODEAGENT3_CONFIG_DIR, 'projects', 'same-pairing', 'intake-test.jsonl');
+    fs.mkdirSync(path.dirname(codeagent), { recursive: true });
+    const both = () => {
+      fs.copyFileSync(s.file, codeagent);
+      return [s.ref, `${codeagent}#user-1`].map(sessionRef => readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef }));
+    };
+    for (const intake of both()) {
+      assert.equal(intake.gaps.length, 0);
+      assert(intake.source_results?.some(item => item.detail.includes('frontend-self')));
+    }
+    s.add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'wrong-edit-id', content: 'updated' }] } });
+    s.flush();
+    for (const intake of both()) {
+      assert(intake.gaps.some(gap => gap.includes('wrong-edit-id')));
+      assert(intake.source_results?.some(item => item.detail.includes('pending-edit') && item.paths.includes('src/value.js')));
+    }
+  } },
+  { name: 'The request terminal check consumes a late required native result alongside one real 11/11 test execution', run(f) {
+    const s = setup(f);
+    (s.rows[0] as { message: { content: string } }).message.content += ' 按小型处理。';
+    s.rows.splice(5, 6);
+    const id = 'required-source';
+    s.add({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name: 'Read', input: { file_path: path.join(f.root, 'src/value.js') } }] } });
+    s.flush();
+    const terminalResult = JSON.stringify({ sessionId: 'intake-test', type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'exports.value = 42;\n' }] } });
+    const calls = path.join(f.root, 'doc/reports/provider.calls');
+    fs.mkdirSync(path.dirname(calls), { recursive: true });
+    fs.writeFileSync(path.join(f.root, 'tests/value.test.cjs'), `const {appendFileSync}=require('fs'),test=require('node:test'),assert=require('node:assert/strict');
+appendFileSync(${JSON.stringify(calls)}, 'test-execution\\n');
+appendFileSync(${JSON.stringify(s.file)}, ${JSON.stringify(terminalResult + '\n')});
+for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/value.js').value,42));\n`);
+    const prepared = prepareAutomaticRequest(f.root, f.framework, { phase: 'ut', 'session-ref': s.ref, target: 'src/value.js', 'test-target': 'tests/value.test.cjs' });
+    const before = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
+    assert(before.gaps.some(gap => gap.includes(id) && gap.includes('src/value.js')));
+    const run = cli(f, ['--phase', 'ut', '--request-file', prepared.requestFile, '--report-dir', prepared.reportDir]);
+    assert.equal(run.status, 0, run.stdout + run.stderr);
+    const report = JSON.parse(fs.readFileSync(path.join(f.root, prepared.reportDir, 'script-report.json'), 'utf8'));
+    assert(report.checks.some((check: { id: string; status: string; details: string }) => check.id === 'request_test_execution' && check.status === 'PASS' && check.details === 'total=11, failed=0'));
+    assert(report.checks.some((check: { id: string; status: string }) => check.id === 'request_intake_reconciliation' && check.status === 'PASS'));
+    assert.equal(fs.readFileSync(calls, 'utf8'), 'test-execution\n');
+  } },
   { name: '3ec91fa7 transport follows the native user choice and cannot come from assistant text or autonomy alone', run(f) {
     const session = setup(f);
     session.add({ type: 'assistant', message: { role: 'assistant', content: '用户希望无人值守，后台继续。' } });
@@ -491,6 +649,16 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const intake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework });
     assert.equal(intake.user.id, 'native-user'); assert(!intake.control.exempt); assert(!intake.control.fixed); assert.equal(intake.baseline.base, s.head); assert.deepEqual(intake.baseline.initial_dirty, []);
     assert.equal(intake.policy.selected, 'trivial');
+    assert(!intake.gaps.length);
+    records.push({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', call_id: 'pending-codex', arguments: JSON.stringify({ cmd: 'run foreground check' }) } });
+    flush();
+    assert(!readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework }).gaps.length);
+    records.push({ type: 'response_item', payload: { type: 'function_call_output', call_id: 'wrong-codex', output: 'unused' } });
+    flush();
+    const mismatch = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework });
+    assert(mismatch.gaps.some(gap => gap.includes('wrong-codex')));
+    assert(mismatch.source_results?.some(item => item.detail.includes('pending-codex')));
+    records.splice(-2); flush();
     const source = native.readNativeSession(file, f.root);
     assert.deepEqual(source.messages.filter((message: { role: string }) => message.role === 'user').map((message: { id: string }) => message.id), ['native-user']);
     for (const id of ['injected', 'desktop-injected', 'environment-injected']) assert.throws(() => native.readNativeSession(`${file}#${id}`, f.root), /找不到定位的真实 user/);

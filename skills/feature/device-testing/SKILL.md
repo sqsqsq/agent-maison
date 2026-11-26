@@ -27,7 +27,7 @@
 - 真正需要设备操作才读 `framework/profiles/<project_profile.name>/skills/device-testing/profile-addendum.md`，确认工具与目标应用。bundle/ability 优先从明确目标应用的工程配置解析，存在多候选才问用户。
 - 构建只采用所选 product 且同目录同 basename signed/unsigned 配对未陈旧的包；配对未知/不可读保留验证缺口，不装机。主应用复用还须当前报告的成功记录绑定路径、完整摘要和 product/buildMode；缺记录回正常增量构建。打包装机使用 no-daemon 并保留增量；UT 策略不因此扩大。失败引用实际命令、环境选择、配对与原日志，按现有共同处置交合法作者，不猜签名服务根因或自动求人。
 - 验证修复前确认设备安装的版本来自本次目标工作树；需要当前构建时复用 `adhoc-device-test --install-current-build`，按原安装权限执行，保留构建/安装 meta；不能用旧包结果归给新代码。
-- testing request 的 cases 沿现有 adhoc case 格式，`inputs.test_plan` 使用既有 Hylyre 派生格式；同一 TC 的步骤与预期一致。执行语法取现有 derive hint/step catalog，写后走现有 lint，不发明另一套 case 协议。
+- 独立 testing request 的 cases 沿现有 adhoc case 格式。小型原 request 直接取短蓝图的 device/both 验收，准备结果的 `device_acceptance` 给出操作、预期和设备关注点。用 `inputs.test_plan` 路径准备既有 Hylyre 派生格式，或用 `--test-plan` 复用现有计划。在「关联 AC」列为实际覆盖的 TC 登记一个或多个原验收 ID，同一 TC 的步骤和断言须能核对每项所列预期。执行语法取现有 derive hint/step catalog，写后走现有 lint。
 - 导航/观察使用现有即席链；业务预期使用 request/provider 的原生断言和 expected check。touch 成功、截图存在或页面出现均不自动证明全部业务预期。
 - 缺设备/视觉/断言能力时保留已设计内容及未执行项；真实失败不洗绿。默认不修改产品、测试或构建声明，缺陷按所属责任交回。
 

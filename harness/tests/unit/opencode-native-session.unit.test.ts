@@ -56,6 +56,23 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     } finally { if (oldData === undefined) delete process.env.XDG_DATA_HOME; else process.env.XDG_DATA_HOME = oldData; }
   };
   try {
+    await check('OpenCode intake discloses a pending native part and rejects a conflicting call identity', () => {
+      const f = scenario('ses_mismatch');
+      const git = (args: string[]) => execFileSync('git', args, { cwd: project, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      git(['init', '-q']);
+      git(['-c', 'user.name=OpenCode fixture', '-c', 'user.email=opencode@example.invalid', 'commit', '--allow-empty', '-qm', 'baseline']);
+      nativeTool(f, 'source-before-edit', 23, 23, 24, 'read', { filePath: 'src/value.js' }, 'exports.value=1;');
+      assistantText(f, 'facts-before-edit', 26, 27, factText());
+      nativeTool(f, 'base-head', 21, 21, 22, 'bash', { command: 'git rev-parse HEAD' }, git(['rev-parse', 'HEAD']));
+      nativeTool(f, 'base-status', 22, 22, 23, 'bash', { command: 'git status --porcelain' }, '');
+      part('pending-edit-part', f.assistant, 30, { type: 'tool', tool: 'edit', callID: 'overlapping-id', state: { status: 'running', input: { filePath: 'src/value.js' }, time: { start: 30 } } }, f.sid);
+      const pending = consume(f);
+      assert.equal(pending.gaps.length, 0);
+      assert(pending.source_results?.some((item: { detail: string }) => item.detail.includes('pending-edit-part')));
+      part('conflicting-edit-part', f.assistant, 34, { type: 'tool', tool: 'edit', callID: 'overlapping-id', state: { status: 'completed', input: { filePath: 'src/value.js' }, time: { start: 34, end: 35 } } }, f.sid);
+      const mismatch = consume(f);
+      assert(mismatch.gaps.some((gap: string) => /overlapping-id.*pending-edit-part.*conflicting-edit-part/.test(gap)));
+    });
     await check('OpenCode current call follows assistant.parentID instead of latest user and stable ref survives later calls', () => {
       const current = native.currentOpenCodeSession(env);
       const value = native.readOpenCodeSession(current.file, project, env);

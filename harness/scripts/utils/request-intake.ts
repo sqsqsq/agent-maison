@@ -10,18 +10,20 @@ import { projectImplementationModules } from './diff-scope';
 
 interface NativeMessage { id: string; role: string; text: string; at?: string; line: number; origin?: { store?: string; parentId?: string } }
 interface NativeRead { path: string; content: string; complete: boolean; exact?: boolean }
-interface NativeTool { name: string; input: unknown; output: string; line: number; resultLine?: number; error?: boolean; completed?: boolean; startedTime?: number; completionTime?: number; read?: NativeRead; readExact?(): NativeRead | undefined; origin?: { store?: string; parentId?: string; partId?: string; callId?: string } }
-interface NativeSession { file: string; sessionId: string; cwd: string; request: NativeMessage; messages: NativeMessage[]; tools: NativeTool[]; userControlVerified?: boolean; gaps?: string[]; origin?: { store?: string } }
+interface NativeOrigin { store?: string; parentId?: string; partId?: string; callId?: string; callSeq?: number; resultSeq?: number }
+interface NativeTool { name: string; input: unknown; output: string; line: number; resultLine?: number; error?: boolean; completed?: boolean; startedTime?: number; completionTime?: number; read?: NativeRead; readExact?(): NativeRead | undefined; origin?: NativeOrigin }
+interface NativeAssociation { line: number; origin?: NativeOrigin; detail: string }
+interface NativeSession { file: string; sessionId: string; cwd: string; request: NativeMessage; messages: NativeMessage[]; tools: NativeTool[]; associations?: NativeAssociation[]; userControlVerified?: boolean; gaps?: string[]; origin?: { store?: string } }
 const native = require('../../../agents/shared/native-request.cjs') as {
   currentNativeSession(env?: NodeJS.ProcessEnv, projectRoot?: string): { file?: string; cwd?: string; gap?: string };
   samePath(left: string, right: string): boolean;
   toolSucceeded(tool: NativeTool): boolean;
   toolCompletedBefore(tool: NativeTool, message: NativeMessage | number): boolean;
-  isEditingTool(tool: NativeTool): boolean;
+  isEditCall(tool: NativeTool): boolean;
   readNativeSession(reference: string, projectRoot: string): NativeSession;
   userControl(message: string): { exempt: boolean; session: boolean; revoke: boolean; fixed?: string; excluded: string[]; included: string[];
-    transport?: 'attended' | 'unattended' };
-  editedPaths(tools: NativeTool[]): string[];
+    transport?: 'attended' | 'unattended'; fullDiffAttribution?: boolean };
+  editedPaths(tools: NativeTool[], candidates?: boolean): string[];
   frontDoorLoaded(session: NativeSession, projectRoot: string, frameworkRoot: string): boolean;
   toolInput(tool: NativeTool): string;
   productTarget(root: string, frameworkRoot: string, file: string, roots?: string[], explicit?: boolean): boolean;
@@ -34,14 +36,17 @@ export interface RequestIntake {
   user_messages?: Array<{ id: string; text: string; at?: string; line: number }>;
   boundary: { origin_user_id: string; explanation: string; source_line: number };
   front_door_loaded: boolean;
-  control: { exempt: boolean; scope: 'request' | 'session'; fixed?: DeliveryScale; excluded: string[]; sources: string[];
+  control: { exempt: boolean; scope: 'request' | 'session'; fixed?: DeliveryScale; excluded: string[]; sources: string[]; full_diff_attribution?: boolean;
     transport?: { mode: 'attended' | 'unattended'; source: string } };
   facts: DeliveryFacts;
   policy: DeliveryPolicy;
-  baseline: { base?: string; head: 'WORKTREE'; source: 'captured' | 'reflog' | 'unknown'; detail: string; initial_dirty: string[] | 'unknown'; preimages?: Record<string, { content: string; source_line: number }> };
+  baseline: { base?: string; head: 'WORKTREE'; source: 'captured' | 'reflog' | 'unknown'; detail: string; initial_dirty: string[] | 'unknown'; preimages?: Record<string, { content: string; source_line: number }>; initially_absent?: string[]; dirty_digests?: Record<string, string | null> };
+  explicit_targets?: string[];
   targets: string[];
   attribution_unknown: string[];
+  attribution_disclosures?: Array<{ path: string; reason: string }>;
   source_reads: string[];
+  source_results?: Array<{ detail: string; paths: string[] }>;
   content_fingerprint: string;
   gaps: string[];
 }
@@ -55,8 +60,20 @@ function currentWorktreeGit(tool: NativeTool, root: string, command: RegExp): bo
   const cwd = (tool.input as { cwd?: string; workdir?: string })?.cwd ?? (tool.input as { workdir?: string })?.workdir ?? root;
   return native.samePath(path.resolve(cwd, match[1] ?? match[2] ?? match[3] ?? '.'), root);
 }
+function initialEvidenceRead(tool: NativeTool, root: string): boolean {
+  if (/^(?:Read|read_file|Glob|Grep|TodoWrite)$/i.test(tool.name)) return true;
+  const command = native.toolInput(tool).trim();
+  return /^git\s/.test(command) && !/[\r\n;&|<>`$]/.test(command) && native.toolSucceeded(tool)
+    && currentWorktreeGit(tool, root, /^(?:rev-parse\s+(?:--verify\s+)?HEAD|status(?:\s+(?:--porcelain(?:=v1)?|--short|-s|--untracked-files=all|-uall))+)\s*$/);
+}
 function nativePath(root: string, file: string): string {
   return realProjectPath(root, path.relative(root, path.resolve(root, file)).replace(/\\/g, '/'), 'native source');
+}
+
+function toolLocation(tool: NativeTool): string {
+  const start = tool.origin?.callSeq !== undefined ? `seq=${tool.origin.callSeq}` : tool.origin?.partId ? `part=${tool.origin.partId}` : `行 ${tool.line}`;
+  const end = tool.origin?.resultSeq !== undefined ? `，结果 seq=${tool.origin.resultSeq}` : tool.resultLine ? `，结果行 ${tool.resultLine}` : '';
+  return `${tool.name} ${start}${tool.origin?.callId ? ` ID=${tool.origin.callId}` : ''}${end}`;
 }
 
 export function isProductTarget(root: string, frameworkRoot: string, file: string, explicit: string[] = []): boolean {
@@ -93,16 +110,16 @@ export function requestStartFromReflog(root: string, at: string): string | undef
   } catch { return; }
 }
 
-function sourceReads(root: string, tools: NativeTool[]): string[] {
+function sourceReads(root: string, tools: NativeTool[], candidates = false): string[] {
   const paths = new Set<string>();
   for (const tool of tools) {
-    if (!native.toolSucceeded(tool) || !tool.output.trim() && !tool.read) continue;
+    if (!candidates && (!native.toolSucceeded(tool) || !tool.output.trim() && !tool.read)) continue;
     const input = native.toolInput(tool);
     if (!/(?:Read|read_file|exec|shell|command|functions|pwsh|bash)/i.test(tool.name)) continue;
     // Only actual read commands, never an edit mentioning a source path.
     if (!/^(?:Read|read_file)$/i.test(tool.name) && !/(?:Get-Content|\bcat\s|\brg\s|readFile|read_file)/.test(input)) continue;
     for (const match of input.matchAll(/(?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?[\w.@\-/\\]+\.(?:[cm]?[jt]sx?|ets|json5?|ya?ml|md|sql)/g)) {
-      try { const file = nativePath(root, match[0]); if (fs.existsSync(file) && fs.statSync(file).isFile()) paths.add(path.relative(root, file).replace(/\\/g, '/')); } catch { /* Tool paths outside this project are not request sources. */ }
+      try { const file = nativePath(root, match[0]); if (candidates || fs.existsSync(file) && fs.statSync(file).isFile()) paths.add(path.relative(root, file).replace(/\\/g, '/')); } catch { /* Tool paths outside this project are not request sources. */ }
     }
     const structured = tool.input as { file_path?: string; filePath?: string; path?: string };
     for (const file of [structured?.file_path, structured?.filePath, structured?.path]) if (file) {
@@ -121,7 +138,7 @@ export function resolveRequestSessionReference(requested?: string, projectRoot?:
   return located.file ? { sessionRef: located.file } : { gap: located.gap };
 }
 
-export function readRequestIntake(options: { projectRoot: string; frameworkRoot: string; sessionRef?: string; explicitTargets?: string[]; previous?: RequestIntake }): RequestIntake {
+export function readRequestIntake(options: { projectRoot: string; frameworkRoot: string; sessionRef?: string; explicitTargets?: string[]; previous?: RequestIntake; captureInitialDirty?: boolean }): RequestIntake {
   const root = fs.realpathSync(options.projectRoot);
   const location = resolveRequestSessionReference(options.sessionRef ?? options.previous?.session_ref, root);
   if (!location.sessionRef) throw new Error(location.gap);
@@ -140,7 +157,7 @@ export function readRequestIntake(options: { projectRoot: string; frameworkRoot:
       && (user.id === origin.id || message.text.includes(origin.id)));
     if (explanation) { relatedUsers.add(user.id); boundaries.set(user.id, explanation); }
   }
-  const belongs = (record: NativeMessage | NativeTool): boolean => relatedUsers.has(record.origin?.store === 'opencode'
+  const belongs = (record: NativeMessage | NativeTool | NativeAssociation): boolean => relatedUsers.has(record.origin?.store === 'opencode'
     ? record.origin.parentId ?? ('id' in record ? record.id : '') : allUsers.filter(user => user.line <= record.line).at(-1)?.id ?? '');
   const messages = session.messages.filter(message => message.line >= origin.line && belongs(message));
   const tools = session.tools.filter(tool => tool.line >= origin.line && belongs(tool));
@@ -182,13 +199,14 @@ export function readRequestIntake(options: { projectRoot: string; frameworkRoot:
     const change = native.userControl(message.text);
     const current = relatedUsers.has(message.id);
     if (current && change.transport) control.transport = { mode: change.transport, source: `${session.file}#${message.id}` };
+    if (current && change.fullDiffAttribution !== undefined) control.full_diff_attribution = change.fullDiffAttribution;
     if (change.revoke && (current || control.scope === 'session')) control = { ...control, exempt: false, sources: [...control.sources, `${session.file}#${message.id}`] };
     if (change.exempt && (change.session || current && boundaryMessage)) control = { ...control, exempt: true, scope: change.session ? 'session' : 'request', sources: [...control.sources, `${session.file}#${message.id}`] };
     if (current && (change.fixed || change.excluded.length)) control = { ...control, ...(change.fixed ? { fixed: scales[change.fixed] } : {}), excluded: [...new Set([...control.excluded, ...change.excluded])], sources: [...control.sources, `${session.file}#${message.id}`] };
     if (current && change.included.length) control = { ...control, excluded: control.excluded.filter(family => !change.included.includes(family)), sources: [...control.sources, `${session.file}#${message.id}`] };
   }
   let baseline: RequestIntake['baseline'] = { head: 'WORKTREE', source: 'unknown', detail: '起始HEAD未核', initial_dirty: 'unknown' };
-  const firstWrite = tools.find(native.isEditingTool);
+  const firstWrite = tools.find(tool => !tool.error && native.isEditCall(tool));
   const beforeWrite = (tool: NativeTool): boolean => !firstWrite || (Number.isFinite(firstWrite.startedTime) ? native.toolCompletedBefore(tool, { id: '', role: '', text: '', at: new Date(firstWrite.startedTime!).toISOString(), line: firstWrite.line }) : native.toolCompletedBefore(tool, firstWrite.line));
   const capture = tools.find(tool => native.toolSucceeded(tool) && beforeWrite(tool) && currentWorktreeGit(tool, root, /^rev-parse\s+(?:--verify\s+)?HEAD\b/) && /\b[a-f0-9]{40}\b/.test(tool.output));
   if (capture) {
@@ -202,16 +220,32 @@ export function readRequestIntake(options: { projectRoot: string; frameworkRoot:
     if (base) baseline = { ...baseline, base, source: 'reflog', detail: `本worktree HEAD reflog覆盖${origin.at}` };
   }
   const status = tools.find(tool => native.toolSucceeded(tool) && beforeWrite(tool) && currentWorktreeGit(tool, root, /^status\b[^\n]*(?:--porcelain|--short|\s-s(?=[\s"';]|$))/));
-  if (status) baseline.initial_dirty = status.output.split(/\r?\n/).filter(line => /^[ MADRCU?!]{2} /.test(line)).map(line => line.slice(3).split(' -> ').at(-1)!.replace(/\\/g, '/'));
+  const statuses = new Map<string, string>();
+  if (status) {
+    for (const line of status.output.split(/\r?\n/).filter(line => /^[ MADRCU?!]{2} /.test(line))) {
+      const file = line.slice(3).split(' -> ').at(-1)!.replace(/\\/g, '/');
+      statuses.set(file, line.slice(0, 2));
+    }
+    baseline.initial_dirty = [...statuses.keys()];
+  }
   if (Array.isArray(baseline.initial_dirty)) {
     const preimages: NonNullable<RequestIntake['baseline']['preimages']> = {};
+    const uncertain = tools.find(tool => status && tool.line > status.line && !initialEvidenceRead(tool, root));
+    const preimageReads = tools.filter(tool => native.toolSucceeded(tool) && beforeWrite(tool) && /^(?:Read|read_file)$/i.test(tool.name)
+      && (!uncertain || native.toolCompletedBefore(tool, { id: '', role: '', text: '', at: Number.isFinite(uncertain.startedTime) ? new Date(uncertain.startedTime!).toISOString() : undefined, line: uncertain.line })));
     for (const file of baseline.initial_dirty) {
-      const read = tools.find(tool => native.toolSucceeded(tool) && beforeWrite(tool) && /^(?:Read|read|read_file)$/i.test(tool.name)
-        && (() => { try { const input = tool.input as { file_path?: string; filePath?: string; path?: string }; return path.relative(root, nativePath(root, input.file_path ?? input.filePath ?? input.path ?? '')).replace(/\\/g, '/') === file; } catch { return false; } })());
-      const preimage = read?.readExact?.() ?? read?.read;
-      // Raw native results retain exact bytes. Numbered/truncated presentation is not an exact preimage.
-      if (read && preimage?.complete && preimage.exact !== false && path.relative(root, nativePath(root, preimage.path)).replace(/\\/g, '/') === file) preimages[file] = { content: preimage.content, source_line: read.resultLine ?? read.line };
-      else if (read && !read.read && read.resultLine && read.output && !/^\s*\d+[→\t]|<system-reminder>|truncated|被截断/m.test(read.output)) preimages[file] = { content: read.output, source_line: read.resultLine };
+      if (statuses.get(file) === ' D' || statuses.get(file) === 'D ') {
+        (baseline.initially_absent ??= []).push(file);
+        continue;
+      }
+      for (const read of preimageReads) {
+        if (!sourceReads(root, [read]).includes(file)) continue;
+        const preimage = read.readExact?.() ?? read.read;
+        // Numbered/truncated presentation cannot supply exact bytes.
+        if (preimage?.complete && preimage.exact !== false && path.relative(root, nativePath(root, preimage.path)).replace(/\\/g, '/') === file) preimages[file] = { content: preimage.content, source_line: read.resultLine ?? read.line };
+        else if (!read.read && read.resultLine && read.output && !/^\s*\d+[→\t]|<system-reminder>|truncated|被截断/m.test(read.output)) preimages[file] = { content: read.output, source_line: read.resultLine };
+        if (preimages[file]) break;
+      }
     }
     if (Object.keys(preimages).length) baseline.preimages = preimages;
   }
@@ -219,26 +253,79 @@ export function readRequestIntake(options: { projectRoot: string; frameworkRoot:
     if (options.previous.session_id !== session.sessionId || options.previous.user.id !== origin.id) throw new Error('原request不属于本次定位的请求，不能重置基线或覆盖选择');
     if (baseline.base && options.previous.baseline.base && baseline.base !== options.previous.baseline.base) throw new Error('原request基线与原生起始依据不一致，不能换当前HEAD重置');
   }
-  const explicit = (options.explicitTargets ?? []).map(file => path.relative(root, realProjectPath(root, file, 'target')).replace(/\\/g, '/'));
-  const edits = native.editedPaths(tools).flatMap(file => { try { return [path.relative(root, nativePath(root, file)).replace(/\\/g, '/')]; } catch { return []; } });
+  const explicit = [...new Set((options.explicitTargets ?? options.previous?.explicit_targets ?? []).map(file => path.relative(root, realProjectPath(root, file, 'target')).replace(/\\/g, '/')))];
+  const relative = (file: string): string[] => { try { return [path.relative(root, nativePath(root, file)).replace(/\\/g, '/')]; } catch { return []; } };
+  const edits = native.editedPaths(tools).flatMap(relative);
+  const proposed = native.editedPaths(tools.filter(tool => tool.completed === false && !tool.error), true).flatMap(relative);
   const diff = baseline.base ? diffChangedFilesWithStatus({ projectRoot: root, baseRef: baseline.base }) : undefined;
   const dirty = baseline.initial_dirty;
-  const candidates = [...new Set([...explicit, ...edits, ...(diff?.entries ?? []).filter(entry => dirty !== 'unknown' && !dirty.includes(entry.path) || explicit.includes(entry.path) || edits.includes(entry.path)).map(entry => entry.path)])];
-  const targets = candidates.filter(file => isProductTarget(root, options.frameworkRoot, file, [...explicit, ...edits]));
-  const attribution_unknown = targets.filter(file => dirty === 'unknown' || dirty.includes(file) && !baseline.preimages?.[file]);
-  const content_fingerprint = crypto.createHash('sha256').update(JSON.stringify(targets.sort().map(file => {
-    const absolute = nativePath(root, file);
-    return [file, fs.existsSync(absolute) ? crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex') : null];
-  }))).digest('hex');
+  const current = new Map<string, string | null>();
+  const digest = (file: string): string | null => {
+    if (!current.has(file)) {
+      const absolute = nativePath(root, file);
+      current.set(file, fs.existsSync(absolute) && fs.statSync(absolute).isFile() ? crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex') : null);
+    }
+    return current.get(file)!;
+  };
+  const product = (file: string): boolean => isProductTarget(root, options.frameworkRoot, file, [...explicit, ...edits, ...proposed]);
+  const overlaps = new Set([...explicit, ...edits, ...proposed]);
+  const dirtyProduct = dirty === 'unknown' ? [] : dirty.flatMap(relative).filter(product);
+  const previousBaseline = options.previous?.baseline;
+  if (previousBaseline?.dirty_digests && previousBaseline.base === baseline.base
+    && JSON.stringify(previousBaseline.initial_dirty) === JSON.stringify(dirty)) {
+    baseline.dirty_digests = previousBaseline.dirty_digests;
+  } else if (options.captureInitialDirty && !previousBaseline && session.userControlVerified !== false && status && baseline.base
+    && dirtyProduct.some(file => !baseline.preimages?.[file] && !baseline.initially_absent?.includes(file))) {
+    const safeBeforePrepare = tools.every((tool, index) => {
+      if (initialEvidenceRead(tool, root)) return true;
+      const command = native.toolInput(tool).trim();
+      if (/[\r\n;&|<>`$]/.test(command)) return false;
+      return index === tools.length - 1 && tool.completed === false
+        && (/^(?:npm(?:\.cmd)?\s+(?:--prefix\s+\S+\s+)?run\s+check:component-blueprint\b|node\s+.+\bcheck-component-blueprint\.[cm]?[jt]s\b)/i.test(command)
+          || /^(?:npm(?:\.cmd)?\s+(?:--prefix\s+\S+\s+)?run\s+check\s|node\s+.+\bharness-runner\.[cm]?[jt]s\b)/i.test(command) && /\s--prepare-request(?:\s|$)/.test(command));
+    });
+    if (safeBeforePrepare && git(root, ['rev-parse', 'HEAD']) === baseline.base) {
+      const digests = Object.fromEntries(dirtyProduct.filter(file => !baseline.preimages?.[file] && !baseline.initially_absent?.includes(file)
+        && ![...statuses.keys()].some(key => key === `${file}/`)).map(file => [file, digest(file)]));
+      if (Object.keys(digests).length) baseline.dirty_digests = digests;
+    }
+  }
+  const changedDirty = new Set<string>();
+  const attribution_disclosures: NonNullable<RequestIntake['attribution_disclosures']> = [];
+  for (const file of dirtyProduct) {
+    const before = baseline.preimages?.[file], absent = baseline.initially_absent?.includes(file);
+    if (before || absent) {
+      const beforeDigest = before ? crypto.createHash('sha256').update(before.content).digest('hex') : null;
+      if (beforeDigest !== digest(file)) changedDirty.add(file);
+    } else if (Object.prototype.hasOwnProperty.call(baseline.dirty_digests ?? {}, file)) {
+      if (baseline.dirty_digests![file] !== digest(file)) {
+        changedDirty.add(file);
+        attribution_disclosures.push({ path: file, reason: '写前摘要证实路径再次变化，缺少用于归属和影响核验的写前原件' });
+      }
+    } else attribution_disclosures.push({ path: file, reason: '初始状态只有脏路径，缺少可信写前存在性或字节依据' });
+  }
+  const candidates = [...new Set([...explicit, ...edits, ...changedDirty, ...(diff?.entries ?? []).filter(entry => dirty !== 'unknown' && !dirty.includes(entry.path) || overlaps.has(entry.path)).map(entry => entry.path)])];
+  const targets = candidates.filter(file => product(file) && (explicit.includes(file) || !dirtyProduct.includes(file) || changedDirty.has(file)
+    || attribution_disclosures.some(item => item.path === file)));
+  const attribution_unknown = targets.filter(file => dirty === 'unknown' || attribution_disclosures.some(item => item.path === file));
+  const content_fingerprint = crypto.createHash('sha256').update(JSON.stringify(targets.sort().map(file => [file, digest(file)]))).digest('hex');
+  const source_results = tools.filter(tool => !native.toolSucceeded(tool)).map(tool => ({
+    detail: `${toolLocation(tool)} ${tool.error ? '执行失败' : '工具结果尚未配对'}`,
+    paths: [...new Set([...sourceReads(root, [tool], true), ...native.editedPaths([tool], true).flatMap(relative)])],
+  }));
   const gaps = [...(!baseline.base ? ['起始提交未核：只可执行显式目标检查，不能签全部diff对账'] : []), ...(dirty === 'unknown' ? ['初始dirty未核'] : []), ...(!boundaryMessage ? ['本请求边界解释未核：继续原任务须给原始user消息定位，新需求不能复用旧豁免'] : []), ...(!reads.length ? ['本请求源码调研原件未核'] : []), ...(!targets.length ? ['本请求产品目标未定位'] : [])];
+  if (diff && !diff.executed) gaps.push(`起始提交与当前工作区 diff 未核：${diff.error}`);
+  if (!reads.length) gaps.push(...source_results.filter(item => item.paths.length).map(item => `${item.detail}，涉及 ${item.paths.join('、')} 的来源尚未核实`));
+  gaps.push(...(session.associations ?? []).filter(record => record.line >= origin.line && belongs(record)).map(record => record.detail));
   if (!associated) for (const key of Object.keys(labels) as Array<keyof DeliveryFacts>) facts[key] = { ...facts[key], value: 'unknown', reason: '当前请求未关联到所指原始user；' + facts[key].reason };
   gaps.push(...(session.gaps ?? []));
   return { session_ref: `${session.file}#${origin.id}`, session_id: session.sessionId,
     user: { id: origin.id, text: origin.text, at: origin.at, line: origin.line },
     user_messages: allUsers.filter(message => relatedUsers.has(message.id)).map(message => ({ id: message.id, text: message.text, at: message.at, line: message.line })), boundary,
     front_door_loaded: native.frontDoorLoaded(session, root, options.frameworkRoot), control, facts,
-    policy: resolveDeliveryPolicy(facts, control.fixed), baseline, targets, attribution_unknown,
-    source_reads: reads, content_fingerprint, gaps };
+    policy: resolveDeliveryPolicy(facts, control.fixed), baseline, explicit_targets: explicit, targets, attribution_unknown,
+    ...(attribution_disclosures.length ? { attribution_disclosures } : {}), source_reads: reads,
+    ...(source_results.length ? { source_results } : {}), content_fingerprint, gaps };
 }
 
 export function intakeIdentity(intake: RequestIntake): string {

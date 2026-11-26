@@ -919,10 +919,14 @@ export function resolveCapabilityReport(options: CapabilityResolutionOptions): C
   return resolveCapabilityInputs(options).report;
 }
 
+export function requestPhaseInputContext(requestSha256: string): PhaseInputContext {
+  return { schema_version: '1.1', subject: { request_sha256: requestSha256 }, obligations: {}, required_outputs: [] };
+}
+
 /** P6 selects explicit inputs from the existing phase catalog; P4/P5 own professional applicability. */
 export function resolveRequestInputs(projectRoot: string, frameworkRoot: string, request: import('./capability-resolution-entry-input').PreparedRequest): ResolvedPhaseInputs {
   const phase = phaseContractIndex(loadFeatureContracts(frameworkRoot)).get(request.phase)!.phase;
-  const inputContext: PhaseInputContext = { schema_version: '1.1', subject: { request_sha256: request.request_sha256 }, obligations: {}, required_outputs: [] };
+  const inputContext = requestPhaseInputContext(request.request_sha256);
   const resolved: ResolvedPhaseInputs = { phase: request.phase, context: inputContext, values: {}, artifacts: {} };
   const selected = phase.inputs.filter(input => request.inputs[input.id] !== undefined
     || (request.blueprint && input.sources.some(source => source.kind === 'derive' && ['derive.blueprint-acceptance', 'derive.blueprint-contracts'].includes(source.provider_id)))
@@ -933,8 +937,12 @@ export function resolveRequestInputs(projectRoot: string, frameworkRoot: string,
     let input = item;
     let adhocCases: string | undefined;
     if (request.phase === 'testing' && item.id === 'cases') {
-      input = { ...item, sources: [{ kind: 'derive', provider_id: 'derive.adhoc-cases' }] };
-      if (request.inputs.cases && fs.existsSync(request.inputs.cases)) adhocCases = fs.readFileSync(request.inputs.cases, 'utf8');
+      if (request.blueprint) {
+        input = { ...item, sources: item.sources.filter(source => source.kind === 'derive' && source.provider_id === 'derive.blueprint-acceptance') };
+      } else {
+        input = { ...item, sources: [{ kind: 'derive', provider_id: 'derive.adhoc-cases' }] };
+        if (request.inputs.cases && fs.existsSync(request.inputs.cases)) adhocCases = fs.readFileSync(request.inputs.cases, 'utf8');
+      }
     }
     resolveInput(input, { projectRoot, frameworkRoot, phase: request.phase, track: 'full', inputContext, request, requirement: request.requested_result, adhocCases }, new Map(), resolved);
     if (adhocCases && resolved.values[item.id]?.state === 'resolved') {

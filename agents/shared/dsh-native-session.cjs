@@ -114,7 +114,7 @@ function readDshRequestSession(reference, projectRoot, { resultFailed = () => fa
   if (header.parentSession || header.origin === 'subagent' || header.delegationDepth > 0 || header.isSeeded === true) {
     throw new Error('DSH 子代理或继承 seed 原件不能冒充根用户原请求或授权');
   }
-  const messages = [], tools = [], pending = new Map(), jobs = new Map();
+  const messages = [], tools = [], associations = [], pending = new Map(), jobs = new Map();
   for (const row of rows) if (row.type === 'job/settled' && typeof row.data?.toolCall?.callId === 'string') {
     const callId = row.data.toolCall.callId;
     jobs.set(callId, [...(jobs.get(callId) ?? []), row.data]);
@@ -133,15 +133,22 @@ function readDshRequestSession(reference, projectRoot, { resultFailed = () => fa
     if (row.type === 'tool/call' && typeof data?.callId === 'string' && Number.isInteger(row.seq)) {
       let input = data.arguments;
       try { input = JSON.parse(input); } catch { /* Preserve the native argument text when decoding fails. */ }
-      pending.set(row.seq, { name: data.name, input, line, at, callId: data.callId });
+      pending.set(row.seq, { name: data.name, input, line, at, output: '', completed: false,
+        origin: { store: 'dsh', callId: data.callId, callSeq: row.seq } });
     }
     if (row.type !== 'tool/result') continue;
-    const callSeqs = (row.sourceEventSeqs ?? []).filter(seq => pending.has(seq));
-    if (callSeqs.length !== 1) continue;
-    const call = pending.get(callSeqs[0]), result = data?.message;
-    if (result?.toolCallId !== call.callId || result?.source?.callId !== call.callId || result.source.kind !== 'tool') continue;
+    const callSeqs = [...new Set((row.sourceEventSeqs ?? []).filter(seq => pending.has(seq)))];
+    const call = callSeqs.length === 1 ? pending.get(callSeqs[0]) : undefined, result = data?.message;
+    if (!call || result?.toolCallId !== call.origin.callId || result?.source?.callId !== call.origin.callId || result.source.kind !== 'tool') {
+      const candidates = [...pending.values()].filter(tool => callSeqs.includes(tool.origin.callSeq)
+        || tool.origin.callId === result?.toolCallId || tool.origin.callId === result?.source?.callId);
+      const detail = `DSH 工具结果 seq=${row.seq} 关联错配（引用 seq=${(row.sourceEventSeqs ?? []).join(',') || '缺失'}，result ID=${result?.toolCallId ?? '缺失'}，source ID=${result?.source?.callId ?? '缺失'}）`;
+      for (const candidate of candidates.length ? candidates : [{ line }]) associations.push({ ...candidate, detail: candidate.origin
+        ? `${detail}，调用 seq=${candidate.origin.callSeq} ID=${candidate.origin.callId}` : detail });
+      continue;
+    }
     const output = contentText(result.content), meta = data.meta;
-    const settledFailure = (jobs.get(call.callId) ?? []).some(job => job.status === 'failed' || job.status === 'cancelled'
+    const settledFailure = (jobs.get(call.origin.callId) ?? []).some(job => job.status === 'failed' || job.status === 'cancelled'
       || /^exit code:\s*(-?\d+)$/i.test(job.detail ?? '') && Number(/^exit code:\s*(-?\d+)$/i.exec(job.detail)[1]) !== 0);
     const error = result.isError === true || resultFailed({ output, is_error: result.isError }) || settledFailure
       || /^(?:pwsh|bash|shell|exec)$/i.test(call.name) && /\[exit code:\s*-?[1-9]\d*\]/i.test(output);
@@ -150,14 +157,15 @@ function readDshRequestSession(reference, projectRoot, { resultFailed = () => fa
       content: Array.isArray(meta?.lines) ? meta.lines.map(value => value.text).join('\n') : output,
       complete: meta?.offset === 1 && Array.isArray(meta.lines) && meta.lines.length === meta.totalLines
         && meta.lines.every((value, index) => value.number === index + 1 && typeof value.text === 'string'), exact: false } : undefined;
-    tools.push({ ...call, output, error, resultLine: line, ...(read ? { read } : {}) });
+    tools.push({ ...call, output, error, completed: true, resultLine: line, origin: { ...call.origin, resultSeq: row.seq }, ...(read ? { read } : {}) });
     pending.delete(callSeqs[0]);
   }
   const users = messages.filter(message => message.role === 'user');
   const request = selected ? users.find(message => message.id === selected) : users.at(-1);
   if (!request) throw new Error('DSH 找不到定位的真实 user 消息；原件可能尚未落盘');
-  return { file: session.file, sessionId: session.sessionId, cwd: session.cwd, request, messages, tools,
-    gaps: pending.size ? ['DSH 工具结果尚未落盘或原生关联未完整覆盖'] : [] };
+  tools.push(...pending.values());
+  tools.sort((left, right) => left.line - right.line);
+  return { file: session.file, sessionId: session.sessionId, cwd: session.cwd, request, messages, tools, associations };
 }
 
 module.exports = { decodeDshSession, readDshSession, locateDshSession, currentDshSession, isDshSessionFile, readDshRequestSession };

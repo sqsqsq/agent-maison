@@ -8,13 +8,13 @@ import { asRecord, asRecords, ComponentBlueprintResolutionError, blueprintAuthor
 import { loadFrameworkConfig, relFeaturesDir, featureFilePath, featurePhaseReportsDir } from '../../config';
 import { resolveWorkflowSpec } from '../../workflow-loader';
 import { featurePhasesFromWorkflow } from './phase-transition-policy';
-import { prepareDesignRequest, readDesignGoalOrigin, bindDesignRequestBlueprint, type PreparedDesignRequest } from './automatic-request';
+import { prepareDesignRequest, readDesignGoalOrigin, bindDesignRequestBlueprint, requestTestingScope, type PreparedDesignRequest } from './automatic-request';
 import { nativeFixedScale } from './request-intake';
-import { collectUnitScopeIds, collectDeviceScopeP0P1 } from './acceptance-layering';
+import { collectUnitScopeIds } from './acceptance-layering';
 import { describePhaseWriteConflicts, readPhaseRecoveryFile, unresolvedPhaseWrites } from './phase-write-boundary';
 import { blueprintReviewPath, inspectBlueprintReview, materializeBlueprintReview } from './blueprint-review-materialization';
 import { realProjectPath, isInsideProjectRoot } from './project-relative-path';
-import type { AcceptanceSpec } from './types';
+import type { AcceptanceSpec, CheckResult } from './types';
 import { buildInitialDesignGoalManifest, isInitialDesignManifest, isRepeatedRequirement, deriveSuccessorRequirement,
   loadGoalRunManifestFromRun, type GoalManifest, type InitialDesignGoalManifest, type GoalBudget,
   type UnattendedContract, type AdapterModelPin, type RunAdapterProvenance } from './goal-manifest';
@@ -339,25 +339,36 @@ function initialRequestDisposition(projectRoot: string, frameworkRoot: string, r
   const rawRequest = fs.existsSync(prepared.requestFile) ? JSON.parse(fs.readFileSync(prepared.requestFile, 'utf8')) : undefined;
   const explicit = rawRequest?.origin_request ? readDesignGoalOrigin(projectRoot, rawRequest.origin_request).manifest.initial_design.requested_phases : [];
   if (request.frame === 'small') try {
-    const loaded = loadCanonicalBlueprint(projectRoot, String(JSON.parse(fs.readFileSync(prepared.requestFile, 'utf8')).blueprint.ref.blueprint_id));
+    const loaded = loadCanonicalBlueprint(projectRoot, String(rawRequest.blueprint.ref.blueprint_id));
     const { selectBlueprintRequestContent } = require('./blueprint-skill-projection') as typeof import('./blueprint-skill-projection');
     acceptance = selectBlueprintRequestContent(loaded.blueprint).acceptance as unknown as AcceptanceSpec;
   } catch { gap('component-design', '原请求的短蓝图当前绑定尚未通过'); }
+  const device = acceptance && requestTestingScope(projectRoot, prepared.intake, acceptance, rawRequest.blueprint.acceptance_ids);
   const families = ['review', ...(!acceptance || collectUnitScopeIds(acceptance).length || explicit.includes('ut') ? ['ut'] : []),
-    ...(explicit.includes('testing') || acceptance && (() => { const device = collectDeviceScopeP0P1(acceptance); return device.criteria.length || device.boundaries.length; })() ? ['testing'] : [])];
+    ...((device ? device.required : explicit.includes('testing')) ? ['testing'] : [])];
   for (const phase of families.filter(phase => !excluded.has(phase))) try {
     const { prepareExplicitRequest } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
     const dir = path.join(prepared.reportDir, phase), file = path.join(dir, 'request.json');
     const input = prepareExplicitRequest({ projectRoot, frameworkRoot, phase, requestFile: path.relative(projectRoot, file), reportDir: path.relative(projectRoot, dir) });
     const summary = JSON.parse(fs.readFileSync(path.join(dir, 'summary.json'), 'utf8'));
     const reportFile = realProjectPath(projectRoot, summary.evidence.script_report, 'request report');
+    const reportBytes = fs.readFileSync(reportFile);
     if (summary.subject !== 'request' || summary.verdict !== 'PASS' || summary.request_sha256 !== input.request_sha256
       || stableStringify(summary.targets) !== stableStringify(input.bindings)
-      || summary.evidence.script_report_sha256 !== createHash('sha256').update(fs.readFileSync(reportFile)).digest('hex')) gap(phase, '当前原请求的实际专项结果未通过或输入已变化；保留既有FAIL，不签完成');
-    const { readBoundInput, resolveRequestInputs } = require('./capability-resolution') as typeof import('./capability-resolution');
-    const context = resolveRequestInputs(projectRoot, frameworkRoot, input).context;
+      || summary.evidence.script_report_sha256 !== createHash('sha256').update(reportBytes).digest('hex')) gap(phase, '当前原请求的实际专项结果未通过或输入已变化；保留既有FAIL，不签完成');
+    if (phase === 'testing' && device?.items.length) {
+      const checks = (JSON.parse(reportBytes.toString('utf8')).checks ?? []) as CheckResult[];
+      const missing = device.items.filter(item => !checks.some(check => check.id === 'request_device_acceptance' && check.status === 'PASS'
+        && (check.structured as { acceptance_id?: string } | undefined)?.acceptance_id === item.id));
+      if (missing.length) gap(phase, `短蓝图设备验收尚欠 ${missing.map(item => item.id).join('、')}；核 ${path.relative(projectRoot, reportFile)}`);
+    }
+    const { readBoundInput, requestPhaseInputContext } = require('./capability-resolution') as typeof import('./capability-resolution');
+    const context = requestPhaseInputContext(input.request_sha256);
     for (const binding of Object.values(summary.input_bindings ?? {})) readBoundInput({ projectRoot, frameworkRoot, phase, track: 'full', request: input, inputContext: context }, binding as never);
-  } catch (error) { gap(phase, `当前原请求专项结果尚未准备：${String(error)}`); }
+  } catch (error) {
+    const ids = phase === 'testing' ? device?.items.map(item => item.id) : undefined;
+    gap(phase, `当前原请求专项结果尚未准备${ids?.length ? `（设备验收 ${ids.join('、')}）` : ''}：${String(error)}`);
+  }
   return resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: problems });
 }
 
@@ -798,14 +809,18 @@ export function resolveInitialDesignWriteRecovery(projectRoot: string, manifest:
   return { conflicts };
 }
 
+function initialDesignWriteProblems(projectRoot: string, manifest: InitialDesignGoalManifest): CurrentDispositionProblem[] {
+  const { conflicts, review } = resolveInitialDesignWriteRecovery(projectRoot, manifest, readInitialDesignWriteEvents(projectRoot, manifest));
+  if (review) conflicts.set(review.file, { ...review.violation, restorable: false });
+  return describePhaseWriteConflicts(conflicts).map(problem => review && problem.files?.includes(review.file)
+    ? { ...problem, detail: `框架将在可信来源恢复后重建评审展示：${review.file}${review.reason ? `；${review.reason}` : ''}。` } : problem);
+}
+
 /** Root completion consumes the same design, CU and formal assembly facts as their own endpoints. */
 export function readInitialDesignCompletionDisposition(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest;
   observation?: InitialDesignObservation }): CurrentDisposition {
   const observed = input.observation ?? readInitialDesignDelivery(input);
-  const { conflicts, review } = resolveInitialDesignWriteRecovery(input.projectRoot, input.manifest, readInitialDesignWriteEvents(input.projectRoot, input.manifest));
-  if (review) conflicts.set(review.file, { ...review.violation, restorable: false });
-  const writes = describePhaseWriteConflicts(conflicts).map(problem => review && problem.files?.includes(review.file)
-    ? { ...problem, detail: `框架将在可信来源恢复后重建评审展示：${review.file}${review.reason ? `；${review.reason}` : ''}。` } : problem);
+  const writes = initialDesignWriteProblems(input.projectRoot, input.manifest);
   if (observed.request) return observed.kind === 'construction' ? initialRequestDisposition(input.projectRoot, input.frameworkRoot, observed.request, writes)
     : resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [...writes, { phase: 'component-design', id: 'execution_scope', action: 'repair', affects: 'completion', severity: 'BLOCKER', owner: 'component-design', detail: observed.issues.join('；') }] });
   const problems: CurrentDispositionProblem[] = [...writes, ...(observed.disposition?.problems ?? [])];
@@ -847,7 +862,10 @@ export function projectInitialDesignDelivery(input: { projectRoot: string; frame
   const events = loadEventsJsonlStrict(path.join(runDir, 'events.jsonl'));
   if (events.corruptLines.length) throw new Error('[initial-design] corrupt original request events');
   const observed = readInitialDesignDelivery({ projectRoot, frameworkRoot: input.frameworkRoot, manifest });
-  const currentDisposition = readInitialDesignCompletionDisposition({ ...input, manifest, observation: observed });
+  const currentDisposition = observed.request && observed.kind === 'construction' && observed.disposition
+    ? resolveCurrentDisposition({ endpoint: 'request', phases: [],
+      additionalProblems: [...initialDesignWriteProblems(projectRoot, manifest), ...observed.disposition.problems] })
+    : readInitialDesignCompletionDisposition({ ...input, manifest, observation: observed });
   const end = resolveEffectiveRunEnd(events.events);
   const disposition = end && 'run_disposition' in end && typeof end.run_disposition === 'string' ? end.run_disposition : undefined;
   const waitKind = end && 'run_wait_kind' in end && typeof end.run_wait_kind === 'string' ? end.run_wait_kind : undefined;

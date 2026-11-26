@@ -17,7 +17,7 @@ npm run compile -- --project-root <host> --session-ref '<绝对transcript>#<原�
 ## Agent / adapter 执行顺序
 
 1. 首轮正常调研取得原请求、实际读取路径、Q1/Q2/Q3、独立结果依赖、跨部件、预期明确/做法唯一及起始调查；不要求用户表单或手写 JSON。首次能力命令从真实原生 payload/环境自动定位，已有引用则沿同一 `session_ref` 传递。边界解释、真实用户原文/定位、覆盖、精确 base/head、初始 dirty 归属及派生外框保存在同一 schema 的原 request；只复制本请求所需内容，不导出整段会话。
-2. **无 `--request-file` 时自动准备**：现有 writer 在本次 `reportDir/request.json` 写执行派生件，使用同一 parser/provider/报告。显式 `--report-dir` 须位于项目内、framework/.git/features_dir 外；省略默认落 `doc/reports/request/<原生请求身份短哈希>/<phase>`，同请求恢复复用。按实际目标可传重复的 `--target`、`--test-target`、`--allow-test-write`，testing 用 `--cases`。这些参数是本次目标/许可，不是可执行命令字符串。
+2. **无 `--request-file` 时自动准备**：现有 writer 在本次 `reportDir/request.json` 写执行派生件，使用同一 parser/provider/报告。显式 `--report-dir` 须位于项目内、framework/.git/features_dir 外；省略默认落 `doc/reports/request/<原生请求身份短哈希>/<phase>`，同请求恢复复用。按实际目标可传重复的 `--target`、`--test-target`、`--allow-test-write`。独立 testing 用 `--cases`，可用 `--test-plan` 绑定现有可执行计划路径。这些参数是本次目标/许可，不是可执行命令字符串。
 3. 首次 UT 写入前完成载体准备，自动路径并入首次能力调用；需要先查看 `gaps` 时带原 `--prepare-request`。直接使用返回的 request 路径、哈希、基线、bindings、reportDir/factsPath 与 allowed writes，不自算身份。模块/载体缺口在既有授权内继续补齐，未覆盖才指出具体缺失授权；不得先写到不可执行目录再探载体。自动 prepare 会落上述派生 request/上下文；**显式 request-file 的旧 prepare 仍只读**。
 4. 阅读真实目标/具体 base 到 head 差异。按返回上下文建立本 phase 的 P1 facts（`schema_version: "1.1"`、subject 仅 request_sha256，不写 feature/run_id），review 写真实报告，UT/testing 在 allowed_test_writes 内准备并执行。必要输入改变重新准备，不沿旧绑定宣称当前输入通过。同一请求途中 commit/恢复不重置初始基线；重叠初始 dirty 无前像须披露 unknown，不能吞入用户旧修改。
 5. 实际执行沿同一命令去掉 `--prepare-request`，读取 summary/checks 和真实证据；失败/缺口持续交回原作者，完成本请求全部适用义务才收口。自动/显式请求共用专业检查、隔离、载体和预期来源合同。特别简单以原始用户预期为来源，小型读取同一路径短蓝图的当前身份与具体验收；不建假 CU，不以旧 revision、路径存在或 characterization 冒充本次验收。
@@ -45,11 +45,16 @@ npm run check -- --project-root <host> --phase review --session-ref '<绝对tran
 ```powershell
 npm run check -- --project-root <host> --phase review --request-file <原component-design的request_file> --prepare-request
 npm run check -- --project-root <host> --phase ut --request-file <原component-design的request_file> --test-target <合法测试载体内的项目相对路径> --allow-test-write <同一测试文件> --prepare-request
+npm run check -- --project-root <host> --phase testing --request-file <原component-design的request_file> --prepare-request
 ```
 
 writer 自动在原设计 request 目录的 `<phase>/request.json` 派生本阶段请求；可选 `--report-dir <独立目录>` 覆盖落点。去掉 `--prepare-request` 执行同一命令，review 先在返回目录写真实报告，UT 仍先完成载体及 allowed writes 准备。各阶段保留 `origin_request` 指向原设计 request，以及工具发布的 `blueprint: {ref, acceptance_ids}`；`ref` 为经 canonical/同一 intake 重验的当前 ComponentBlueprintRef，`acceptance_ids` 是真实验收 ID，作者不手填摘要或换身份。派生读取原 user、起始 base 和当前来源，复用原 parser/provider，不重置基线或新建任务。
 
 小型 UT 的每条预期仍在紧邻用例上方登记 `// expectation: <canonical蓝图项目相对路径>#AC-1`；路径和 AC ID 都取本次真实绑定，不写虚构标签。原 `request_expectation_source` 会核当前蓝图 revision/身份、ID 是否存在及绑定验收是否被实际预期断言覆盖；旧 revision、不存在的 AC 或只有 characterization 不能满足绑定 AC。蓝图相关内容修订后回同一设计/请求链更新真实绑定，再核受影响断言，不靠改注释或删 FAIL 清账。
+
+编译也可用 `npm run compile -- --project-root <host> --request-file <原component-design的request_file> --json`。返回的 `next` 消费短蓝图验收分层与实际代码影响，把适用验证接续到同一原 request。
+
+小型 testing 从短蓝图取得 `cases`。准备结果的 `device_acceptance` 提供适用 ID、操作和预期。在返回的 `inputs.test_plan` 路径准备 Hylyre 可执行计划，已有合格材料可通过 `--test-plan <项目相对路径>` 复用。对照原操作、设备关注点与预期，在「关联 AC」列登记每条 TC 实际验证的 ID。同一 TC 可关联多个 ID，须确实覆盖每项可观察预期。去掉 `--prepare-request` 正式执行后，脚本报告按 AC 列出 TC、结果及原生证据路径。对 `both` 另需保留对应的 UT 结果。纯 unit 且无设备类影响时不执行 testing。用户明确排除的验证保留未执行。
 
 新依据需完整设计时沿同一蓝图原位扩充，完成适用质询/准入后才接受 CU；不重置起点、不推倒合法实现。用户固定外框只披露影响，不暗中加重；已有受管 run 的真实用户调整须沿原范围修订核原文及请求关联，保留历史成果/失败，不拆成新 request 清账。用户仅固定小型不排除 UT/testing，真实产品 FAIL 不因排除后续验证变 PASS。
 

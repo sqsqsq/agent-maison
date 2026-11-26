@@ -29,6 +29,7 @@ import { readBoundInput, readRunBoundContracts, projectSourceFileBinding } from 
 import { resolveEffectiveDiffBaseline } from './git-diff';
 import { diffChangedFilesWithStatus } from './git-diff';
 import { loadResolvedProfile } from '../../profile-loader';
+import { dispatchRequestTargetProbe } from '../../capability-registry';
 import { tryLoadDiffExcludeTestPathRegexes, tryLoadProfileCodingHost, tryLoadUtSourceRootResolver } from '../../profile-host-loader';
 import { SpecLoader } from './spec-loader';
 import { computeRequirementShaFromText } from './fidelity-shared';
@@ -55,6 +56,7 @@ export interface PreparedRequestInput {
   reportDir: string;
   factsPath: string;
   targets: { files: string[]; tests: string[] };
+  test_registrations?: string[];
   baseline: { base?: string; head: string };
   inputs: Record<string, string>;
   allowed_test_writes: string[];
@@ -110,7 +112,8 @@ export function prepareRequestInput(options: { projectRoot: string; frameworkRoo
   if (raw.intake_context !== undefined) {
     const submitted = object(raw.intake_context, 'intake_context') as unknown as import('./request-intake').RequestIntake;
     const { readRequestIntake } = require('./request-intake') as typeof import('./request-intake');
-    intake = readRequestIntake({ projectRoot: root, frameworkRoot: options.frameworkRoot, sessionRef: submitted.session_ref, explicitTargets: (raw.targets as { files?: string[] })?.files, previous: submitted });
+    intake = readRequestIntake({ projectRoot: root, frameworkRoot: options.frameworkRoot, sessionRef: submitted.session_ref,
+      explicitTargets: submitted.explicit_targets ?? (raw.targets as { files?: string[] })?.files, previous: submitted });
     if (intake.user.text !== submitted.user.text || intake.session_id !== submitted.session_id) throw new Error('request用户原文/会话与原件不一致');
   }
   const design = options.phase === 'component-design';
@@ -123,7 +126,10 @@ export function prepareRequestInput(options: { projectRoot: string; frameworkRoo
     return paths.sort();
   };
   const targetsRaw = object(raw.targets, 'targets'); keys(targetsRaw, ['files', 'tests'], 'targets');
-  const targets = { files: list(targetsRaw.files ?? [], 'targets.files'), tests: list(targetsRaw.tests ?? [], 'targets.tests') };
+  const requestedTargets = { files: list(targetsRaw.files ?? [], 'targets.files'), tests: list(targetsRaw.tests ?? [], 'targets.tests') };
+  const allowed = list(raw.allowed_test_writes ?? [], 'allowed_test_writes');
+  const testSet = new Set([...requestedTargets.tests, ...allowed]);
+  if (intake) requestedTargets.files = [...new Set([...requestedTargets.files, ...intake.targets.filter(file => !testSet.has(file))])].sort();
   const { resolveCurrentScopeSource } = require('./blueprint-requirement-traceability') as typeof import('./blueprint-requirement-traceability');
   if (!Array.isArray(raw.requirement_sources ?? [])) throw new Error('requirement_sources must be a source array');
   const requirementSources = (raw.requirement_sources ?? []) as string[];
@@ -169,12 +175,19 @@ export function prepareRequestInput(options: { projectRoot: string; frameworkRoo
   }
   if (originRequest && !design && !blueprint && !directOrigin) throw new Error('a design-backed verification request needs its current blueprint binding');
   if (originRequest && !design && JSON.stringify(blueprint) !== JSON.stringify(originBlueprint)) throw new Error('verification blueprint and acceptance IDs must retain the original design binding');
-  const allowed = list(raw.allowed_test_writes ?? [], 'allowed_test_writes');
   if (allowed.length && options.phase !== 'ut') throw new Error('only UT requests may authorize test writes');
-  if (options.phase === 'review' && (!targets.files.length || allowed.length)) throw new Error('review requires source targets and grants no writes');
-  if (options.phase === 'ut' && !targets.files.length && !targets.tests.length) throw new Error('UT requires tests or a behavior source');
-  if (allowed.some(file => !targets.tests.includes(file) || targets.files.includes(file))) throw new Error('allowed_test_writes must name only requested test targets');
+  if (options.phase === 'review' && (!requestedTargets.files.length || allowed.length)) throw new Error('review requires source targets and grants no writes');
+  if (options.phase === 'ut' && !requestedTargets.files.length && !requestedTargets.tests.length) throw new Error('UT requires tests or a behavior source');
+  const probe = options.phase === 'ut' && (requestedTargets.tests.length || allowed.length)
+    ? dispatchRequestTargetProbe(loadResolvedProfile(root, loadFrameworkConfig(root), options.frameworkRoot), options.phase, root, requestedTargets.tests, allowed)
+    : undefined;
+  const registrations = probe?.registrationFiles ?? [];
+  const targets = { files: requestedTargets.files, tests: requestedTargets.tests.filter(file => !registrations.includes(file)) };
+  const denied = allowed.filter(file => targets.files.includes(file) || probe?.rejectedWrites.includes(file) || !targets.tests.includes(file) && !registrations.includes(file));
+  if (denied.length) throw new Error(`allowed_test_writes must name selected test files or their profile-recognized same-module registration: ${denied.join(', ')}${probe?.gaps.length ? '\n' + probe.gaps.join('\n') : ''}`);
   if (allowed.length && !targets.files.length && !Object.keys(object(raw.inputs ?? {}, 'inputs')).length) throw new Error('test writes require a behavior source');
+  const declared = [...new Set([...requestedTargets.files, ...requestedTargets.tests])];
+  const boundTargets = [...new Set([...declared, ...registrations])];
   const reportDir = realRequestPath(root, options.reportDir, 'report-dir');
   const inspectReportLinks = (dir: string): void => {
     if (!fs.existsSync(dir)) return;
@@ -192,7 +205,7 @@ export function prepareRequestInput(options: { projectRoot: string; frameworkRoo
     if (overlap(reportDir, actual)) throw new Error(`report-dir overlaps protected directory: ${actual}`);
     if (allowed.some(file => isInsideProjectRoot(actual, realRequestPath(root, file, 'test write')))) throw new Error('test write overlaps a protected directory');
   }
-  for (const file of [...((intake || raw.origin_gap) && requestFile === path.join(reportDir, 'request.json') ? [] : [requestFile]), ...[...targets.files, ...targets.tests].map(file => realRequestPath(root, file, 'target'))]) if (overlap(reportDir, file)) throw new Error('report-dir overlaps request/source target');
+  for (const file of [...((intake || raw.origin_gap) && requestFile === path.join(reportDir, 'request.json') ? [] : [requestFile]), ...boundTargets.map(file => realRequestPath(root, file, 'target'))]) if (overlap(reportDir, file)) throw new Error('report-dir overlaps request/source target');
   const catalog = design ? undefined : phaseContractIndex(loadFeatureContracts(options.frameworkRoot)).get(options.phase)?.phase;
   if (!design && !catalog) throw new Error('active phase has no request input contract');
   const inputsRaw = object(raw.inputs ?? {}, 'inputs');
@@ -220,7 +233,7 @@ export function prepareRequestInput(options: { projectRoot: string; frameworkRoo
   if (intake && (baseline.base !== intake.baseline.base || baseline.head !== 'WORKTREE' || !originRequest && raw.requested_result !== intake.user.text)) throw new Error('自动request的需求/基线必须来自同一原生请求');
   const bindings: PreparedRequest['bindings'] = [];
   const sourceContents: PreparedRequest['sourceContents'] = [];
-  for (const file of [...new Set([...targets.files, ...targets.tests])]) {
+  for (const file of boundTargets) {
     const absolute = realRequestPath(root, file, 'target');
     const exists = fs.existsSync(absolute);
     const historicalReview = options.phase === 'review' && baseline.head !== 'WORKTREE';
@@ -234,7 +247,8 @@ export function prepareRequestInput(options: { projectRoot: string; frameworkRoo
     }
     const deleted = !exists && intake?.baseline.base && options.phase === 'review' && diffChangedFilesWithStatus({ projectRoot: root, baseRef: intake.baseline.base }).entries.some(entry => entry.path === file && entry.status === 'D');
     const content = bytes?.toString('utf8') ?? (deleted ? '' : undefined);
-    if (content !== undefined) sourceContents.push({ path: file, content, ...(intake?.baseline.preimages?.[file] ? { before: intake.baseline.preimages[file].content } : {}) });
+    const before = intake?.baseline.preimages?.[file]?.content ?? (intake?.baseline.initially_absent?.includes(file) ? '' : undefined);
+    if (content !== undefined) sourceContents.push({ path: file, content, ...(before !== undefined ? { before } : {}) });
     bindings.push({ path: file, exists: bytes !== undefined, sha256: bytes === undefined ? null : crypto.createHash('sha256').update(bytes).digest('hex') });
   }
   const inputBindings = Object.entries(inputs).filter(([id]) => id !== 'review_report').map(([id, file]) => {
@@ -248,22 +262,25 @@ export function prepareRequestInput(options: { projectRoot: string; frameworkRoo
       const absolute = realRequestPath(root, file, 'fact source');
       return { path: file, sha256: fs.existsSync(absolute) ? crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex') : null };
     }), policy: intake.policy, content_fingerprint: intake.content_fingerprint } : undefined;
-  const normalized = { schema_version: '1.0', phase: options.phase, requested_result: raw.requested_result.trim(), targets, baseline, inputs: Object.fromEntries(Object.entries(inputs).map(([id, file]) => [id, path.relative(root, file).replace(/\\/g, '/')])), allowed_test_writes: allowed, report_dir: path.relative(root, reportDir).replace(/\\/g, '/'), ...(intakeIdentity ? { intake_context: intakeIdentity } : {}), ...(raw.origin_gap ? { origin_gap: raw.origin_gap } : {}), ...(requirementSources.length ? { requirement_sources: requirementSources.map(file => ({ path: file, sha256: crypto.createHash('sha256').update(fs.readFileSync(realRequestPath(root, file.split('#')[0], 'requirement source'))).digest('hex') })) } : {}), ...(originRequest ? { origin_request: path.relative(root, originRequest).replace(/\\/g, '/') } : {}), ...(blueprint ? { blueprint } : {}) };
-  const request_sha256 = crypto.createHash('sha256').update(stableStringify({ request: normalized, bindings: bindings.filter(binding => !allowed.includes(binding.path)), inputBindings })).digest('hex');
+  const normalized = { schema_version: '1.0', phase: options.phase, requested_result: raw.requested_result.trim(), targets: requestedTargets, baseline, inputs: Object.fromEntries(Object.entries(inputs).map(([id, file]) => [id, path.relative(root, file).replace(/\\/g, '/')])), allowed_test_writes: allowed, report_dir: path.relative(root, reportDir).replace(/\\/g, '/'), ...(intakeIdentity ? { intake_context: intakeIdentity } : {}), ...(raw.origin_gap ? { origin_gap: raw.origin_gap } : {}), ...(requirementSources.length ? { requirement_sources: requirementSources.map(file => ({ path: file, sha256: crypto.createHash('sha256').update(fs.readFileSync(realRequestPath(root, file.split('#')[0], 'requirement source'))).digest('hex') })) } : {}), ...(originRequest ? { origin_request: path.relative(root, originRequest).replace(/\\/g, '/') } : {}), ...(blueprint ? { blueprint } : {}) };
+  // Implicit registration bytes belong to execution bindings, while existing request identities keep their declared targets.
+  const request_sha256 = crypto.createHash('sha256').update(stableStringify({ request: normalized, bindings: bindings.filter(binding => declared.includes(binding.path) && !allowed.includes(binding.path)), inputBindings })).digest('hex');
   for (const name of ['summary.json', 'script-report.json']) {
     const file = path.join(reportDir, name);
     if (fs.existsSync(file)) {
       const prior = JSON.parse(fs.readFileSync(file, 'utf8'));
       const sameLocal = raw.origin_gap && prior.origin_gap === raw.origin_gap && Array.isArray(prior.targets)
-        && JSON.stringify(prior.targets.map((item: { path: string }) => item.path)) === JSON.stringify(bindings.map(item => item.path));
+        && JSON.stringify(prior.targets.map((item: { path: string }) => item.path).filter((file: string) => !registrations.includes(file) || declared.includes(file))) === JSON.stringify(declared);
       if (prior.subject !== 'request' || prior.request_sha256 !== request_sha256 && !sameLocal && (!intake || prior.request_origin !== `${intake.session_id}#${intake.user.id}`)) throw new Error('report-dir belongs to another request/baseline');
     }
   }
   const gaps = [...[...(!design ? [factsPath] : []), ...Object.values(inputs)].filter(file => !fs.existsSync(file)).map(file => path.relative(root, file).replace(/\\/g, '/')), ...bindings.filter(binding => !binding.exists && !design).map(binding => binding.path)];
+  gaps.push(...(probe?.gaps ?? []));
   if (options.phase === 'ut' && !targets.tests.length) gaps.push('targets.tests');
-  if (options.phase === 'testing' && !inputs.cases) gaps.push('inputs.cases');
+  if (options.phase === 'testing' && !blueprint && !inputs.cases) gaps.push('inputs.cases');
+  if (options.phase === 'testing' && blueprint && !inputs.test_plan) gaps.push('inputs.test_plan');
   if (fs.existsSync(factsPath) && (parseContextExploration(fs.readFileSync(factsPath, 'utf8')).fm as Record<string, unknown>).request_sha256 !== request_sha256) gaps.push(path.relative(root, factsPath).replace(/\\/g, '/'));
-  return { schema_version: '1.0', phase: options.phase as PreparedRequestInput['phase'], requested_result: raw.requested_result.trim(), request_sha256, requestFile, reportDir, factsPath, targets, baseline, inputs, allowed_test_writes: allowed, bindings, sourceContents, gaps, requirement_sources: requirementSources, ...(originRequest ? { origin_request: originRequest } : {}), ...(blueprint ? { blueprint } : {}), ...(intake ? { intake_context: intake } : {}), ...(raw.origin_gap ? { origin_gap: raw.origin_gap as string } : {}) };
+  return { schema_version: '1.0', phase: options.phase as PreparedRequestInput['phase'], requested_result: raw.requested_result.trim(), request_sha256, requestFile, reportDir, factsPath, targets, ...(registrations.length ? { test_registrations: registrations } : {}), baseline, inputs, allowed_test_writes: allowed, bindings, sourceContents, gaps, requirement_sources: requirementSources, ...(originRequest ? { origin_request: originRequest } : {}), ...(blueprint ? { blueprint } : {}), ...(intake ? { intake_context: intake } : {}), ...(raw.origin_gap ? { origin_gap: raw.origin_gap as string } : {}) };
 }
 
 /** Existing capability entry keeps its phase contract; design preparation uses the same parser core. */

@@ -20,6 +20,9 @@ import { reduceCase } from '../../../../harness/scripts/utils/hylyre-crossrow-ve
 import { spawnHylyre, resolveHylyreRuntimeWorkDir } from '../hylyre-spawn';
 import { detectDesiredFidelity } from '../../../../harness/scripts/utils/fidelity-shared';
 import { findFilesRecursive } from '../../../../harness/scripts/utils/find-files-recursive';
+import { extractAcceptanceIdRefs } from '../../../../harness/scripts/utils/check-acceptance';
+import { collectRequestDeviceAcceptance } from '../../../../harness/scripts/utils/acceptance-layering';
+import type { AcceptanceSpec } from '../../../../harness/scripts/utils/types';
 
 function reject(details: string, failure_kind?: string): never {
   throw new CheckExecutionError({ id: 'request_device_native', category: 'structure', severity: 'BLOCKER', status: failure_kind ? 'SKIP' : 'FAIL', description: '专项设备测试未满足执行条件', details,
@@ -37,18 +40,26 @@ export async function runRequestTests(ctx: RequestCheckContext) {
   const lint = lintHylyrePlanMarkdown(input.value, undefined, { forbidStartApp: true, canonicalTouch: true });
   if (!lint.ok) reject('request test_plan invalid: ' + JSON.stringify(lint.violations));
   const rows = extractDerivedPlanCases(input.value);
-  const requested = casesInput.value as NormalizedDeviceTestCase[];
-  if (!rows.length || rows.length !== requested.length || new Set(rows.map(row => row.tc_id)).size !== rows.length || rows.some(row => !requested.some(item => item.id === row.tc_id) || !row.expected.trim())) reject('request plan must cover every requested case with an explicit expected result');
+  if (!rows.length || new Set(rows.map(row => row.tc_id)).size !== rows.length || rows.some(row => !row.expected.trim())) reject('request plan needs unique test cases with explicit expected results');
+  const blueprint = ctx.request.blueprint;
+  const acceptance = new Map(blueprint ? collectRequestDeviceAcceptance(casesInput.value as AcceptanceSpec, blueprint.acceptance_ids).map(item => [item.id.toUpperCase(), item]) : []);
+  if (!blueprint) {
+    const requested = casesInput.value as NormalizedDeviceTestCase[];
+    if (rows.length !== requested.length || rows.some(row => !requested.some(item => item.id === row.tc_id))) reject('request plan must cover every requested case with an explicit expected result');
+  }
   const plans = rows.map(row => {
+    const refs = blueprint ? extractAcceptanceIdRefs(row.ac_ref) : [];
+    const unknown = refs.filter(id => !acceptance.has(id));
+    if (unknown.length) reject(`${row.tc_id} references AC outside this request's device scope: ${unknown.join(', ')}`);
     const parsed = parsePlannedStepsFromCell(row.steps_raw);
     if (!parsed.ok || !parsed.steps.length) reject(`invalid executable steps: ${row.tc_id}`);
     if (!parsed.steps.some(step => ['wait_for', 'wait_gone', 'assert_toast'].some(key => key in step || (step.action as { type?: string } | undefined)?.type === key))) reject(`request case needs a native assertion: ${row.tc_id}`);
-    return { row, steps: parsed.steps };
+    return { row, steps: parsed.steps, acceptance: refs.map(id => acceptance.get(id)!) };
   });
   const schema = loadHylyreOutputSchema(ctx.frameworkRoot);
   if (!schema.ok) reject(schema.detail, 'framework_bug');
   const bundleName = loadAppBundleName(ctx.projectRoot, details => reject(details));
-  const inputs: ExecutionKeyInputs = { hap_sha256_full: null, derived_plan_sha256: sha256Text(JSON.stringify(plans.map(plan => ({ id: plan.row.tc_id, steps: plan.steps, expected: plan.row.expected })))),
+  const inputs: ExecutionKeyInputs = { hap_sha256_full: null, derived_plan_sha256: sha256Text(JSON.stringify(plans.map(plan => ({ id: plan.row.tc_id, steps: plan.steps, expected: plan.row.expected, ...(blueprint ? { acceptance: plan.acceptance } : {}) })))),
     device: process.env.HARNESS_HDC_TARGET?.trim() || null, display_env: '', reset_mode: 'cold_restart', hylyre_version: null,
     manifest_version: null, profile: ctx.resolvedProfile.name, tool_config_sha256: sha256Text(JSON.stringify(resolveHylyreToolConfig(ctx.projectRoot))),
     flags: ['request_steps_file', 'cold_restart', 'skip_page_save', 'checked_vlm', 'bundle=' + bundleName] };
@@ -108,7 +119,7 @@ export async function runRequestTests(ctx: RequestCheckContext) {
       if (step.index !== index || row.index !== index) reject('invalid native request step index', 'framework_bug');
       return step;
     });
-    evidence_paths.push(run.logPath);
+    const caseEvidence = [run.logPath];
     let expectedOk = false;
     if (actual.every(step => step.device_session === true && step.outcome.status === 'passed')) {
       const logPath = path.join(reportDir, 'expected-check.log');
@@ -125,13 +136,17 @@ export async function runRequestTests(ctx: RequestCheckContext) {
       if (step.kind !== 'expected_check' || step.role !== 'assertion') reject('expected-result verification returned the wrong assertion kind', 'framework_bug');
       actual.push({ ...step, index: actual.length });
       expectedOk = expected.status === 0 && step.device_session === true && step.outcome.status === 'passed';
-      evidence_paths.push(logPath);
+      caseEvidence.push(logPath, responsePath);
     }
     const reduced = reduceCase({ id: plan.row.tc_id, steps: actual, expected_check_mode: 'checked_vlm' } as CaseResultV1);
     const ok = batch.executed === plan.steps.length && run.exitCode === 0 && expectedOk && actual.every(step => step.device_session === true && step.outcome.status === 'passed') && reduced.execution === 'completed' && reduced.verification === 'passed' && reduced.evidence === 'complete';
     const domains = actual.flatMap(step => step.outcome.status === 'failed' ? [step.outcome.failure.domain] : step.outcome.status === 'blocked' ? [step.outcome.cause.type] : []);
     const failure_kind = domains.includes('internal') ? 'framework_bug' : domains.includes('capability') ? 'capability_missing' : domains.includes('infrastructure') ? 'device_blocked' : undefined;
-    checks.push({ id: 'request_device_native', category: 'structure', severity: 'BLOCKER', status: ok ? 'PASS' : failure_kind ? 'SKIP' : 'FAIL', ...(failure_kind ? { failure_kind, blocking_class: failure_kind === 'framework_bug' ? 'framework_internal' : 'externalBlocked' } : {}), description: '专项设备用例原生断言与明确预期', details: plan.row.tc_id + (reuse ? ' (reused_by_execution_key)' : installedHap ? '' : ' (installed HAP unreadable; no reuse)') + ': ' + JSON.stringify(reduced), ...(ok ? {} : { suggestion: '核对原生步骤和明确预期的验证证据；manual、skipped、预期未验证均不能通过。' }) });
+    evidence_paths.push(...caseEvidence);
+    checks.push({ id: 'request_device_native', category: 'structure', severity: 'BLOCKER', status: ok ? 'PASS' : failure_kind ? 'SKIP' : 'FAIL', ...(failure_kind ? { failure_kind, blocking_class: failure_kind === 'framework_bug' ? 'framework_internal' : 'externalBlocked' } : {}), description: '专项设备用例原生断言与明确预期', details: plan.row.tc_id + (reuse ? ' (reused_by_execution_key)' : installedHap ? '' : ' (installed HAP unreadable; no reuse)') + ': ' + JSON.stringify(reduced),
+      ...(blueprint ? { structured: { request_device_case: { tc_id: plan.row.tc_id, acceptance_ids: plan.acceptance.map(item => item.id), expected: plan.row.expected } },
+        affected_files: caseEvidence.map(file => path.relative(ctx.projectRoot, file).replace(/\\/g, '/')) } : {}),
+      ...(ok ? {} : { suggestion: '核对原生步骤和明确预期的验证证据；manual、skipped、预期未验证均不能通过。' }) });
   }
   if (failedInvocation) fs.unlinkSync(path.join(runDir, 'execution-key.json'));
   const frozen = freezeRunArtifacts(runDir, runDir, artifacts);

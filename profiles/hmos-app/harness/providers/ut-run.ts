@@ -1,4 +1,4 @@
-import { sameInvocationUtFailure } from '../ut-host-impl';
+import { sameInvocationUtFailure, utModuleRegistrationPath } from '../ut-host-impl';
 import { effectiveForceDevice } from '../../../../harness/scripts/utils/managed-goal-invocation';
 /**
  * ut.run → provider `hvigor_hypium`（含 probeDevices 供 env 提示）
@@ -6,8 +6,8 @@ import { effectiveForceDevice } from '../../../../harness/scripts/utils/managed-
 import type { CapabilityProvider } from './types';
 import * as fs from 'fs';
 import * as path from 'path';
-import { listBuildProfileModules, runHvigorTest as executeUt, runHvigorBuild, isHvigorBuildSuccessful, type HvigorRunResult } from '../hvigor-runner';
-import { discoverOhosTestArtifacts, resolveExecutionDeviceIdentity } from '../hdc-runner';
+import { listBuildProfileModules, runHvigorTest as executeUt, runHvigorBuild, isHvigorBuildSuccessful, type BuildProfileModuleEntry, type HvigorRunResult } from '../hvigor-runner';
+import { discoverOhosTestArtifacts, isHypiumClassName, resolveExecutionDeviceIdentity } from '../hdc-runner';
 import { computeHapSha256Full } from '../build-fingerprint';
 import { computeHvigorConfigDigest } from '../toolchain-probe';
 import { resolveProductSelection, summarizeUnresolvedCause } from '../product-selection';
@@ -17,7 +17,9 @@ import { buildUtHvigorTestFailDetails } from '../ut-hvigor-test-failure';
 import { findFilesRecursive } from '../../../../harness/scripts/utils/find-files-recursive';
 import { extractUtItBlocks } from '../../../../harness/scripts/utils/ut-it-blocks';
 import { applyPhaseEntryDeviceGate } from '../../../../harness/scripts/utils/device-readiness-gate';
-import { validateProjectRelativePath } from '../../../../harness/scripts/utils/project-relative-path';
+import { realProjectPath, validateProjectRelativePath } from '../../../../harness/scripts/utils/project-relative-path';
+import { isSuiteEntryShimContent } from '../../../../harness/ut-suite-entry-shim';
+import type { RequestTargetProbe } from '../../../../harness/capability-registry';
 import type { RequestCheckContext, CheckResult } from '../../../../harness/scripts/utils/types';
 
 export const provider: CapabilityProvider = {
@@ -32,7 +34,7 @@ export { probeDevices } from '../hdc-runner';
 /**
  * 只读的「目标落点 / 载体」探测（plan a9f3c7d2 A9）。
  *
- * 与执行期**共用同一谓词**，边界只有两件事：
+ * 与执行期共用模块归属与载体判据：
  *   1. 模块归属——文件必须落在某个已声明模块的 `<srcPath>/src/ohosTest/` 下且唯一命中；
  *   2. 载体在场——该模块存在 `<srcPath>/src/ohosTest/module.json5`（执行期 `loadOhosTestModuleName` 的硬要求）。
  *
@@ -45,15 +47,43 @@ export interface RequestTargetGap {
   message: string;
 }
 
-export function inspectRequestTargets(projectRoot: string, tests: readonly string[]): {
-  groups: Map<string, { name: string; srcPath: string }>;
-  gaps: string[];
+function hypiumClassNames(content: string): string[] {
+  return [...content.matchAll(/\bdescribe\s*\(\s*(?:"((?:\\.|[^"\\\r\n])*)"|'((?:\\.|[^'\\\r\n])*)')/g)].map(match => match[1] ?? match[2]);
+}
+
+/** The old writer can infer a case when the caller supplied only write grants. */
+function isLegacyCaseCandidate(projectRoot: string, file: string, module: BuildProfileModuleEntry): boolean {
+  const absolute = path.resolve(projectRoot, file);
+  const stat = fs.statSync(absolute, { throwIfNoEntry: false });
+  if (!stat) return file.startsWith(path.posix.dirname(utModuleRegistrationPath(module.srcPath)) + '/') && file.endsWith('.test.ets');
+  if (!stat.isFile()) return false;
+  const content = fs.readFileSync(absolute, 'utf8');
+  return hypiumClassNames(content).length > 0 && extractUtItBlocks(content).length > 0;
+}
+
+export function inspectRequestTargets(
+  projectRoot: string, tests: readonly string[], writes: readonly string[] = [], inferCasesFromWrites = false,
+): RequestTargetProbe & {
+  groups: Map<string, BuildProfileModuleEntry>;
+  cases: Map<string, BuildProfileModuleEntry>;
   typedGaps: RequestTargetGap[];
 } {
   const modules = listBuildProfileModules(projectRoot);
-  const groups = new Map<string, { name: string; srcPath: string }>();
+  const groups = new Map<string, BuildProfileModuleEntry>();
+  const cases = new Map<string, BuildProfileModuleEntry>();
+  const declaredEntries = new Map<string, BuildProfileModuleEntry>();
   const typedGaps: RequestTargetGap[] = [];
-  for (const file of tests) {
+  const registration = (file: string): 'present' | 'missing' | undefined => {
+    const absolute = path.resolve(projectRoot, file);
+    try {
+      if (realProjectPath(projectRoot, file, 'UT registration') !== absolute) return undefined;
+      const stat = fs.statSync(absolute, { throwIfNoEntry: false });
+      if (!stat) return 'missing';
+      if (stat.isFile() && isSuiteEntryShimContent(fs.readFileSync(absolute, 'utf8'))) return 'present';
+    } catch { /* The profile cannot assign a registration role to an unreadable or redirected file. */ }
+    return undefined;
+  };
+  for (const file of inferCasesFromWrites ? writes : tests) {
     const matches = modules.filter(module => file.startsWith(`${module.srcPath}/src/ohosTest/`));
     if (matches.length !== 1) {
       typedGaps.push({ kind: 'landing', message: `capability:ut.run:${file} 不在任何已配置模块的 src/ohosTest/ 下（该 profile 的 UT 专项只执行该目录下的 Hypium 用例）` });
@@ -70,6 +100,13 @@ export function inspectRequestTargets(projectRoot: string, tests: readonly strin
       typedGaps.push({ kind: 'landing', message: `capability:ut.run:${module.name} 模块名不受支持` });
       continue;
     }
+    if (file === utModuleRegistrationPath(module.srcPath) && registration(file)) {
+      declaredEntries.set(file, module);
+      continue;
+    }
+    if (inferCasesFromWrites && !isLegacyCaseCandidate(projectRoot, file, module)) continue;
+    cases.set(file, module);
+    if (groups.has(module.name)) continue;
     groups.set(module.name, { name: module.name, srcPath: module.srcPath });
     // 载体缺失是**准备期的事前告知**：执行期对它的既有反应留在原处（`loadOhosTestModuleName` 读不到
     // `module.json5` 时抛），本函数不把它升级成新的执行期拒绝——执行语义一行不变。
@@ -83,7 +120,18 @@ export function inspectRequestTargets(projectRoot: string, tests: readonly strin
       });
     }
   }
-  return { groups, gaps: typedGaps.map(gap => gap.message), typedGaps };
+  for (const [file, module] of declaredEntries) {
+    if (groups.get(module.name)?.srcPath !== module.srcPath)
+      typedGaps.push({ kind: 'landing', message: `capability:ut.run:${file} 的模块没有选中的 Hypium 用例` });
+  }
+  const registrationFiles: string[] = [];
+  for (const module of groups.values()) {
+    const file = utModuleRegistrationPath(module.srcPath);
+    const state = registration(file);
+    if (state === 'present' || state === 'missing' && (declaredEntries.has(file) || writes.includes(file))) registrationFiles.push(file);
+  }
+  const rejectedWrites = writes.filter(file => !registrationFiles.includes(file) && !cases.has(file));
+  return { groups, cases, caseFiles: [...cases.keys()], gaps: typedGaps.map(gap => gap.message), typedGaps, registrationFiles, rejectedWrites };
 }
 
 function reject(details: string, failure_kind?: string): never {
@@ -101,18 +149,15 @@ export async function runRequestTests(ctx: RequestCheckContext) {
   if (blocking) reject(blocking.message);
   const missingCarrier = inspected.typedGaps.find(gap => gap.kind === 'carrier');
   if (missingCarrier) reject(missingCarrier.message, 'capability_missing');
-  const ownerOf = (file: string): { name: string; srcPath: string } => {
-    const owner = [...inspected.groups.values()].find(module => file.startsWith(`${module.srcPath}/src/ohosTest/`));
-    if (!owner) reject(`UT target must belong to one configured ohosTest module: ${file}`);
-    return owner;
-  };
   const groups = new Map<string, { name: string; srcPath: string; classes: Set<string>; count: number }>();
-  for (const file of ctx.request.targets.tests) {
-    const module = ownerOf(file);
+  for (const [file, module] of inspected.cases) {
     const source = ctx.request.sourceContents.find(item => item.path === file)?.content;
-    const classes = [...(source ?? '').matchAll(/\bdescribe\s*\(\s*['"]([^'"]+)['"]/g)].map(match => match[1]);
+    const classes = hypiumClassNames(source ?? '');
+    if (!classes.length) reject(`${file} 缺少字符串字面量 Hypium 组名，请用 describe('group_name', …)`);
+    const invalid = classes.find(name => !isHypiumClassName(name));
+    if (invalid !== undefined) reject(`${file} 的 Hypium 组名 ${JSON.stringify(invalid)} 非法，仅允许 ASCII 字母、数字及 ._-`);
     const count = extractUtItBlocks(source ?? '').length;
-    if (!count || !classes.length || classes.some(name => !/^[A-Za-z0-9_.-]+$/.test(name))) reject(`UT target needs real literal Hypium classes and assertions: ${file}`);
+    if (!count) reject(`${file} 缺少可执行的 Hypium it(...) 用例`);
     const group = groups.get(module.name) ?? { ...module, classes: new Set<string>(), count: 0 };
     for (const name of classes) { if (group.classes.has(name)) reject(`duplicate selected UT class: ${name}`); group.classes.add(name); }
     group.count += count; groups.set(module.name, group);
@@ -120,9 +165,11 @@ export async function runRequestTests(ctx: RequestCheckContext) {
   if (!groups.size) reject('no selected UT module');
   const selection = resolveProductSelection({ projectRoot: ctx.projectRoot, purpose: 'ut' });
   if (!selection.product) reject(summarizeUnresolvedCause(selection), 'project_build_environment_inconsistent');
+  const registrationFiles = ctx.request.test_registrations;
+  const registrations = registrationFiles?.length ? ctx.request.bindings.filter(binding => registrationFiles.includes(binding.path)) : [];
   const inputs: ExecutionKeyInputs = {
     hap_sha256_full: null,
-    derived_plan_sha256: sha256Text(JSON.stringify({ targets: ctx.request.targets.tests, groups: [...groups.values()].map(group => ({ module: group.name, path: group.srcPath, classes: [...group.classes], count: group.count })) })),
+    derived_plan_sha256: sha256Text(JSON.stringify({ targets: [...inspected.cases.keys()], groups: [...groups.values()].map(group => ({ module: group.name, path: group.srcPath, classes: [...group.classes], count: group.count })), ...(registrations.length ? { registrations } : {}) })),
     device: process.env.HARNESS_HDC_TARGET?.trim() || null, display_env: '', reset_mode: 'n/a', hylyre_version: null, manifest_version: null,
     profile: ctx.resolvedProfile.name, tool_config_sha256: computeHvigorConfigDigest(ctx.projectRoot), flags: ['request_ut', 'ohosTest', 'selected_classes', 'product=' + selection.product],
   };

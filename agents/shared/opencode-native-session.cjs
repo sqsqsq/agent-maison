@@ -102,7 +102,7 @@ function readOpenCodeSession(ref, projectRoot, env = process.env) {
     messages.sort((left, right) => left.line - right.line);
     const request = messages.find(message => message.role === 'user' && message.id === selected);
     if (!request) throw new Error('OpenCode 找不到定位的非 synthetic/ignored/compaction 真实 user 消息');
-    const tools = [];
+    const tools = [], associations = [], calls = new Map();
     for (const part of parts.filter(part => part.data.type === 'tool')) {
       const assistant = byId.get(part.message_id);
       if (!assistant || assistant.data.role !== 'assistant' || isCompaction(assistant)) continue;
@@ -112,6 +112,15 @@ function readOpenCodeSession(ref, projectRoot, env = process.env) {
       const tool = { name, input: { ...(state.input ?? {}), ...(typeof state.input?.filePath === 'string' ? { file_path: state.input.filePath } : {}), ...(typeof state.input?.patchText === 'string' ? { patch: state.input.patchText } : {}) }, output: state.output ?? state.error ?? '', line: order.get(part.id), completed, error,
         startedTime: state.time?.start, completionTime: completed ? state.time.end : undefined,
         origin: { store: 'opencode', sessionId, messageId: part.message_id, parentId: assistant.data.parentID, partId: part.id, callId: data.callID, status: state.status, order: 'normalized', exit: state.metadata?.exit } };
+      const prior = calls.get(data.callID);
+      if (typeof data.callID !== 'string' || !data.callID || prior) {
+        const detail = prior ? `OpenCode callID ${data.callID} 重复关联到 part ${prior.origin.partId}、${part.id}` : `OpenCode tool part ${part.id} 缺少 callID`;
+        for (const candidate of prior ? [prior, tool] : [tool]) {
+          candidate.error = true;
+          associations.push({ line: candidate.line, origin: candidate.origin, detail });
+        }
+      }
+      calls.set(data.callID, tool);
       const display = state.metadata?.display;
       if (name === 'Read' && completed && !error && display?.type === 'file' && typeof display.path === 'string' && typeof display.text === 'string') {
         const complete = display.lineStart === 1 && display.lineEnd === display.totalLines && display.truncated === false;
@@ -129,7 +138,7 @@ function readOpenCodeSession(ref, projectRoot, env = process.env) {
       tools.push(tool);
     }
     tools.sort((left, right) => left.line - right.line);
-    return { file: reference(fs.realpathSync(database), sessionId), sessionId, cwd: fs.realpathSync(session.directory), request, messages, tools, origin: { store: 'opencode', order: 'normalized' } };
+    return { file: reference(fs.realpathSync(database), sessionId), sessionId, cwd: fs.realpathSync(session.directory), request, messages, tools, associations, origin: { store: 'opencode', order: 'normalized' } };
   }, true);
 }
 module.exports = { openCodeDatabase, withOpenCodeSession, currentOpenCodeSession, readOpenCodeSession, reference };
