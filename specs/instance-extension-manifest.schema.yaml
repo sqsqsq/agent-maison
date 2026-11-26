@@ -1,10 +1,10 @@
 # Instance extension manifest schema (doc/extensions/manifest.yaml)
 # schema_version is independent from workflow-schema and lifecycle-hooks-schema.
-schema_version: "1.1"
+schema_version: "2.0"
 description: >
-  Schema describing doc/extensions/manifest.yaml. Manifest versions 1.0 and 1.1 are
-  accepted; validation is implemented in framework/harness/extension-loader.ts and
-  check-extensions.ts. Version 1.0 keeps the legacy six-domain behavior.
+  Schema describing a local extension source or the host doc/extensions/manifest.yaml.
+  Validation and normalization are implemented in harness/extension-loader.ts. Versions 1.0
+  and 1.1 remain readable, and 2.0 adds named bindings and host installation selections.
 
 root_object:
   type: object
@@ -15,10 +15,10 @@ root_object:
   properties:
     schema_version:
       type: string
-      enum: ["1.0", "1.1"]
+      enum: ["1.0", "1.1", "2.0"]
     name:
       type: string
-      description: Extension package id (slug, no spaces).
+      description: Extension source identity. In 1.1 it must be a lowercase slug.
     version:
       type: string
       description: Optional package version for agentskills.io-style frontmatter parity.
@@ -43,19 +43,24 @@ root_object:
               - { type: string }
               - type: object
                 additionalProperties: false
-                required: [path, summary, audience]
+                required: [path, audience]
+                allOf:
+                  - if: { properties: { audience: { not: { const: none } } } }
+                    then: { required: [summary] }
                 properties:
                   path: { type: string }
                   summary: { type: string }
                   audience:
                     oneOf:
-                      - { const: global }
+                      - { enum: [global, none] }
                       - type: array
                         minItems: 1
                         items: { type: string }
           description: >
             1.0 accepts strings only. In 1.1, strings target every Feature phase and never
             AGENTS.md; object entries route to global AGENTS.md or named Feature phases.
+            Version 2.0 keeps 1.1 routing and additionally accepts audience none to preserve
+            1.0 entries during migration without introducing an automatic consumer.
         hooks:
           type: object
           description: Map phase id -> map event -> list of paths relative to doc/extensions/.
@@ -108,18 +113,80 @@ root_object:
     phase_bindings:
       type: object
       description: >
-        1.1 only. Feature phase bindings; exactly before_phase_work,
+        Compatibility input in 1.1 and 2.0. Feature phase bindings; exactly before_phase_work,
         before_phase_verify, and after_phase_verify_before_close are supported.
       additionalProperties:
         type: object
         additionalProperties: false
         properties:
-          before_phase_work: { $ref: "#/$defs/bindings" }
-          before_phase_verify: { $ref: "#/$defs/bindings" }
-          after_phase_verify_before_close: { $ref: "#/$defs/bindings" }
+          before_phase_work: { $ref: "#/$defs/legacy_slots" }
+          before_phase_verify: { $ref: "#/$defs/legacy_slots" }
+          after_phase_verify_before_close: { $ref: "#/$defs/legacy_slots" }
+
+    bindings:
+      type: object
+      description: Manifest 2.0 only. Ability ID → stable binding ID → declaration.
+      propertyNames: { pattern: "^[A-Za-z0-9_-]+$" }
+      additionalProperties:
+        type: object
+        propertyNames: { pattern: "^[a-z][a-z0-9_-]*$" }
+        additionalProperties:
+          type: object
+          additionalProperties: false
+          required: [at, kind, ref]
+          properties:
+            at:
+              type: string
+              description: Exact versioned ID from lifecycle-hooks-schema.yaml.
+            kind: { type: string, enum: [knowledge, action] }
+            ref:
+              type: string
+              minLength: 1
+              description: >
+                Local path for knowledge and lifecycle .mjs hooks. For an action consumed by
+                an author or produces checker, use an applicable provides.skills or
+                provides.mcp_actions ID.
+            phase:
+              type: string
+              description: Required for Feature and harness timings. Use a phase in the active workflow.
+            enabled_by_default: { type: boolean, default: false }
+            required:
+              type: boolean
+              default: false
+              description: Report an unavailable selected binding as a dependency at its consumer.
+
+    installations:
+      type: object
+      description: Host selections for 2.0, keyed by ability ID. Ignored when reading source defaults.
+      propertyNames: { pattern: "^[A-Za-z0-9_-]+$" }
+      additionalProperties:
+        type: object
+        additionalProperties: false
+        required: [source, enabled, bindings, files]
+        properties:
+          source: { type: string, minLength: 1 }
+          enabled: { type: boolean }
+          bindings:
+            type: object
+            propertyNames: { pattern: "^[a-z][a-z0-9_-]*$" }
+            additionalProperties: { type: boolean }
+          files:
+            type: object
+            description: Host-relative file path → SHA-256 of imported bytes.
+            additionalProperties: { type: string, pattern: "^[0-9a-f]{64}$" }
+          in_place:
+            const: true
+            description: Original files are managed in place and are retained on uninstall.
+
+  allOf:
+    - if: { properties: { schema_version: { enum: ["1.0", "1.1"] } } }
+      then:
+        properties:
+          bindings: false
+          installations: false
 
 $defs:
-  bindings:
+  legacy_slots:
     type: array
     items:
       type: object

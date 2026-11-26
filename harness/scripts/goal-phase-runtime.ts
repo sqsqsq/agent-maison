@@ -2910,7 +2910,7 @@ function recordAuthorRestorations(events: readonly GoalRunEvent[], changes: read
 
 /**
  * 作者前置知识：原生索引、任务候选与 extension 同源装配，保留旧导出名供调用者兼容。
- * extension 非法仍警示且不注入其条目；原生知识继续可读，不新增 goal 门禁。
+ * extension 诊断与有效输入同时保留；原生知识继续可读，不新增 goal 门禁。
  */
 export function extensionInputsForPhase(projectRoot: string, phase: string,
   context?: { frameworkRoot: string; feature: string; runId?: string; requirement?: string }): string {
@@ -2919,7 +2919,7 @@ export function extensionInputsForPhase(projectRoot: string, phase: string,
   if (bundle && bundle.errors.length > 0) {
     const brief = bundle.errors.slice(0, 3).map(e => `${e.code}: ${e.message}`).join('；');
     console.warn(
-      `[goal-runner] ⚠ extension manifest 非法，作者前置输入未注入：${brief}；运行 harness-runner.ts --phase extensions 修复。`,
+      `[goal-runner] ⚠ extension 作者前置输入诊断：${brief}；运行 harness-runner.ts --phase extensions 修复。`,
     );
   }
   let contracts: import('./utils/types').ContractsSpec | undefined;

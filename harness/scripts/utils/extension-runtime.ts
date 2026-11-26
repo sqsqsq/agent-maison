@@ -16,7 +16,7 @@ import { MATERIALIZATION_ARTIFACT, REVIEW_FEEDBACK_ARTIFACT } from './blueprint-
 export { selectExtensionPhaseKnowledge as extensionPhaseKnowledge, renderExtensionPhaseInputs as formatExtensionPhasePrompt } from './knowledge-context';
 
 export function checkExtensionManifest(bundle: ExtensionBundle | undefined): CheckResult[] {
-  if (!bundle || bundle.errors.length === 0) return [];
+  if (!bundle || bundle.manifestUsable) return [];
   return bundle.errors.map((error, index) => ({
     id: `extension_manifest_${error.code}_${index}`,
     category: 'structure',
@@ -115,11 +115,21 @@ export function checkExtensionBindingProduces(args: {
   slot: ExtensionPhaseBindingSlot;
 }): CheckResult[] {
   const { bundle, projectRoot, phase, slot } = args;
-  if (!bundle || bundle.manifestVersion !== '1.1' || bundle.errors.length > 0) return [];
-  const bindings = bundle.phaseBindings[phase]?.[slot] ?? [];
-  return bindings.flatMap(binding => {
-    if (binding.kind !== 'mcp') return [];
-    const action = bundle.mcpActions[binding.ref];
-    return action ? actionProduceChecks(action, projectRoot, phase, slot) : [];
-  });
+  if (!bundle || !bundle.manifestUsable) return [];
+  const unavailable = bundle.bindings.filter(binding =>
+    binding.phase === phase && (binding.slot ?? 'before_phase_work') === slot
+    && binding.selected && binding.required && !binding.enabled);
+  const checks: CheckResult[] = unavailable.map(binding => ({
+    id: `extension_required_binding_${binding.ability}_${binding.id}`,
+    category: 'structure', description: `实例扩展所需绑定 ${binding.ability}/${binding.id} 可用`,
+    severity: binding.severity ?? 'MAJOR', status: 'FAIL',
+    details: `${binding.source} · ${binding.at} · ${binding.ref}: ${binding.reason}`,
+    suggestion: '运行 /extension inspect 查看此绑定的缺口。',
+  }));
+  const actions = new Set(bundle.phaseBindings[phase]?.[slot]?.filter(binding => binding.kind === 'mcp').map(binding => binding.ref));
+  for (const ref of actions) {
+    const action = bundle.mcpActions[ref];
+    if (action) checks.push(...actionProduceChecks(action, projectRoot, phase, slot));
+  }
+  return checks;
 }

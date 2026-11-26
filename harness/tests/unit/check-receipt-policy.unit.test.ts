@@ -587,14 +587,15 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'extension 1.1 after_phase_verify_before_close required produces 缺失 → 真 spawn receipt FAIL',
+    name: 'extension 2.0 after_phase_verify_before_close required produces 缺失 → 真 spawn receipt FAIL',
     run: () => {
       const extensionManifest = [
-        'schema_version: "1.1"', 'name: receipt-extension', 'provides:', '  skills: []',
+        'schema_version: "2.0"', 'name: receipt-extension', 'provides:', '  skills: []',
         '  mcp_actions:', '    close-action:', '      tool: host.close', '      required: true',
         '      severity: BLOCKER', '      produces: [doc/missing-close.json]', '      usage: close',
-        'phase_bindings:', '  review:', '    after_phase_verify_before_close:',
-        '      - { kind: mcp, ref: close-action }', '',
+        'bindings:', '  closure:',
+        '    close: { at: feature.after_phase_verify_before_close@1, phase: review, kind: action, ref: close-action, enabled_by_default: true }',
+        '    broken: { at: harness.on_context_loda@1, phase: review, kind: knowledge, ref: hooks/no.md, enabled_by_default: true }', '',
       ].join('\n');
       const { root } = buildProject('review', {
         evidenceProfile: 'balanced', omitVerifier: true, extensionManifest,
@@ -603,6 +604,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         const result = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo');
         assert(result.status === 'failed', `expected failed, got ${result.status}`);
         assert((result.message ?? '').includes('extension_produces_'), result.message ?? 'missing message');
+        fs.writeFileSync(path.join(root, 'doc/missing-close.json'), '{}', 'utf8');
+        const fixed = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo');
+        assert(fixed.status === 'passed', `unrelated optional binding may degrade: ${fixed.message ?? fixed.status}`);
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

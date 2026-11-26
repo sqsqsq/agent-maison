@@ -966,13 +966,40 @@ export interface ExtensionValidationError {
   code: string;
   message: string;
   path?: string;
+  source?: string;
+  ability?: string;
+  bindingId?: string;
+  at?: string;
+}
+
+export interface ExtensionBinding {
+  source: string;
+  ability: string;
+  id: string;
+  at: string;
+  kind?: 'knowledge' | 'action';
+  resource?: 'knowledge_file' | 'skill' | 'mcp' | 'hook_markdown' | 'hook_script';
+  ref: string;
+  phase?: string;
+  slot?: ExtensionPhaseBindingSlot;
+  timingDescription?: string;
+  consumer?: string;
+  absPath?: string;
+  enabled: boolean;
+  selected?: boolean;
+  required?: boolean;
+  severity?: 'MAJOR' | 'BLOCKER';
+  /** Present for a missing dependency or unsupported declaration, including an invalid disabled declaration. */
+  issue?: string;
+  reason?: string;
+  legacy?: 'phase' | 'hook';
 }
 
 export interface ExtensionKnowledgeEntry {
   path: string;
   absPath: string;
   summary: string;
-  audience: 'global' | string[];
+  audience: 'global' | 'none' | string[];
   legacy: boolean;
 }
 
@@ -1000,8 +1027,12 @@ export type ExtensionPhaseBindingSlot =
 export interface ExtensionBundle {
   rootDir: string | null;
   manifestPath: string | null;
-  manifestVersion: '1.0' | '1.1' | null;
+  manifestVersion: '1.0' | '1.1' | '2.0' | null;
+  manifestName: string | null;
+  manifestUsable: boolean;
+  bindings: ExtensionBinding[];
   featurePhases: string[];
+  declaredSkills: string[];
   skills: string[];
   knowledgePaths: string[];
   knowledge: ExtensionKnowledgeEntry[];
