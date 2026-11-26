@@ -2,10 +2,12 @@ format_version: "0.2"
 feature: sample-feature
 screen: sample_screen
 title: 示例界面
-# 多屏交接填写 flow 文件名，共用其中的 sources；单屏在本稿登记来源。
+# 示例稿在 ux/，原件在与 ux/ 同级的 requirements/。路径从本稿所在目录起算。
+# 与流程模板配用时，把本稿另存为 sample-screen.ux.yaml，以 flow: sample-flow.ux.yaml 替换本稿 sources。
+# 入口用 entry: {transition: open_choices}，确认按钮用 on_tap: {transition: open_confirmation}。
 sources:
-  prd: 需求.md
-  screenshot: 界面.png
+  prd: ../requirements/需求.md
+  screenshot: ../requirements/界面.png
 visual:
   source: screenshot
   observation: unobserved
