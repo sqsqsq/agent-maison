@@ -658,8 +658,13 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
   const designPreparation = prepareDesign ? prepareDesignExtensions({ projectRoot, frameworkRoot, blueprintId: manifest.feature,
     requirement: manifest.requirement, requirementSources: request?.prepared.sourceRefs ?? manifest.requirement_source_files,
     ...(request ? { requestFile: path.relative(projectRoot, request.prepared.requestFile).replace(/\\/g, '/') } : {}) }) : undefined;
-  const designMaterial = designPreparation ? renderDesignExtensionPreparation(designPreparation) : undefined;
-  if (designPreparation?.extension_preparation) input.material?.push({ extension_preparation: designPreparation.extension_preparation, knowledge: designPreparation.knowledge });
+  const bound = designPreparation?.extension_preparation;
+  const participation = bound && (bound.bindings.length || bound.skipped.length) ? bound : undefined;
+  const designMaterial = designPreparation && (participation || designPreparation.knowledge.entries.length || designPreparation.knowledge.notices.length)
+    ? renderDesignExtensionPreparation({ ...designPreparation, extension_preparation: participation }) : undefined;
+  if (participation && designPreparation) {
+    input.material?.push({ extension_preparation: participation, knowledge: designPreparation.knowledge });
+  }
   if (input.observation.request) {
     const { request } = input.observation, relative = (file: string) => path.relative(input.projectRoot, file).replace(/\\/g, '/');
     const requestFile = relative(request.prepared.requestFile), reportDir = relative(request.prepared.reportDir);
@@ -668,6 +673,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
       targets: initialRequestWriteTargets(input.projectRoot, input.frameworkRoot, input.observation),
       excluded: request.prepared.intake?.control.excluded ?? [],
       ...(input.observation.disposition ? { feedback: dispositionFacts(input.observation.disposition) } : { issues: input.observation.issues }) });
+    if (!participation && designMaterial) input.material?.push(designMaterial);
     return [`原始正式需求：${input.manifest.requirement}`, `继续同一原run ${input.manifest.run_id}；真实user已指定${request.frame === 'small' ? '小型' : '特别简单'}，只调整尚未执行的外框。原业务目标、来源、基线、历史与真实FAIL全部保留。`,
       `原request：${requestFile}；原始业务来源：${request.prepared.sourceRefs.join('、')}。不得手改request的来源/基线/控制字段。`,
       request.implementation ? `在同一作者窗口实现并验证本请求；当前真实目标：${initialRequestWriteTargets(input.projectRoot, input.frameworkRoot, input.observation).join('、')}。沿原写界，不改framework、原run/其它请求或清理历史。`
@@ -751,7 +757,7 @@ export function initialDesignAuthorInstruction(input: { projectRoot: string; fra
     `当前职责=${observation.kind}。${questioning && input.checkerResultPath ? `当前机器缺口见 ${input.checkerResultPath}。` : `问题：\n${observation.issues.join('\n')}`}`,
   ];
   // Historical prose is reading context; candidates and actual dependencies are observed separately.
-  input.material?.push(...parts.filter(part => part !== designMaterial && !prior.lines.includes(part)).map(part =>
+  input.material?.push(...parts.filter(part => (!participation || part !== designMaterial) && !prior.lines.includes(part)).map(part =>
     part === parts.at(-1) && observation.disposition ? dispositionFacts(observation.disposition)
       : part === questioningInstruction ? readingMaterial : part), { formatRepair: prior.formatRepair === true });
   return parts.join('\n\n');

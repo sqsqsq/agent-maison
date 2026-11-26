@@ -499,7 +499,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const retryReference = next.request as { path: string; sha256: string };
       const retry = handoff.readSessionExecution(prepared.runDir, retryReference.path)!;
       assert.notEqual(retry.request.invoke_id, issued.request.invoke_id);
-      assert.deepEqual(designInputs(retry.request)?.extension_preparation.bindings, []);
+      assert.equal(designInputs(retry.request), undefined, 'disabled bindings leave no signed extension participation');
+      assert.equal(retry.request.context.instruction?.split('独立宿主背景必须送到本次真实作者。').length, 2);
       assert(!retry.request.context.instruction?.includes('设计前动作 ux-behavior-spec:fill-missing'));
       assert(retry.request.context.instruction?.includes(project.requirement), 'the incomplete real task remains in the original author scope');
       const terminal = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: retryReference.path,
