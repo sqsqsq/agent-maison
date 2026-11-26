@@ -374,6 +374,17 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
       const handoff = require(path.join(project.harnessDir, 'scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
       const origin = require(path.join(project.harnessDir, 'scripts/utils/delivery-origin')) as typeof import('../../scripts/utils/delivery-origin');
+      const source = path.resolve(__dirname, '../../../extensions');
+      const extension = path.join(project.root, 'doc/extensions');
+      fs.mkdirSync(extension, { recursive: true });
+      fs.cpSync(path.join(source, 'skills', 'ux-behavior-spec'), path.join(extension, 'skills', 'ux-behavior-spec'), { recursive: true });
+      const manifestFile = path.join(extension, 'manifest.yaml');
+      const extensionManifest = YAML.parse(fs.readFileSync(path.join(source, 'manifest.yaml'), 'utf8'));
+      extensionManifest.provides.skill_assets = { 'component-design': { knowledge: 'host-design.md' } };
+      fs.writeFileSync(path.join(extension, 'host-design.md'), '独立宿主背景必须送到本次真实作者。');
+      fs.writeFileSync(manifestFile, YAML.stringify(extensionManifest));
+      fs.copyFileSync(path.join(source, 'skills/ux-behavior-spec/examples/bc-openCard-2/sources/3-点击任意银行拉起添卡选卡半模态.jpg'),
+        path.join(project.root, 'doc/design.jpg'));
       const prepared = entry.prepareGoalModeRun({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, adapter: 'claude',
         runId: 'initial-public-next', requirement: project.requirement, requirementSourceFiles: project.requirementSourceFiles,
         budget: { ...ORIGINAL_BUDGET, max_total_turns: 2 }, unattended: UNATTENDED,
@@ -394,19 +405,41 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       assert(instruction.includes('doc/requirement.md'));
       for (const file of ['app-component-blueprint.schema.json', 'runtime-data-flow.schema.json', 'change-unit.schema.json']) assert(instruction.includes(file), `the actual signed instruction must deliver the current schema ${file}`);
       assert(instruction.includes('尚无蓝图'));
+      assert(instruction.includes('独立宿主背景必须送到本次真实作者。') && instruction.includes('doc/design.jpg'));
+      assert(instruction.includes('设计前动作 ux-behavior-spec:fill-missing') && instruction.includes('生成有效 UX、解析回读'));
+      const designInputs = (request: typeof issued.request) =>
+        (request.context.workInput?.material.segments as Array<Record<string, any>>).find(item => item.extension_preparation);
+      const originalDesign = designInputs(issued.request)!;
+      assert.equal(originalDesign.extension_preparation.blueprint_id, project.feature);
+      assert.deepEqual(originalDesign.extension_preparation.bindings.map((binding: { id: string; delivery: string }) =>
+        [binding.id, binding.delivery]), [['read-upstream', 'inline'], ['fill-missing', 'action']]);
+      assert.deepEqual(originalDesign.extension_preparation.ux.candidates, []);
+      assert(originalDesign.knowledge.entries.some((item: { content?: string }) => item.content?.includes('蓝图设计前复用已有稿')));
+      const mutation = () => spawnSync(process.execPath, ['-r', 'ts-node/register/transpile-only', 'scripts/extension.ts',
+        'disable', 'ux-behavior-spec', '--project-root', project.root, '--json'], { cwd: project.harnessDir, encoding: 'utf8',
+        env: { ...process.env, MAISON_GOAL_RUN_ID: '', MAISON_GOAL_ATTEMPT: '' } });
+      const stopped = mutation();
+      assert.equal(stopped.status, 0, stopped.stderr + stopped.stdout);
+      assert.equal(JSON.parse(stopped.stdout).mutation.changed, true);
+      const binding_snapshot = handoff.capturePhaseBinding(prepared.runDir, issued);
+      fs.appendFileSync(path.join(prepared.runDir, 'events.jsonl'), JSON.stringify({ type: 'agent_process_bound',
+        phase: issued.request.context.phase, invoke_id: issued.request.invoke_id, owner_id: issued.request.context.owner.owner_id,
+        owner_epoch: issued.request.context.owner.epoch, pid: 42, binding_snapshot, ts: new Date().toISOString() }) + '\n');
       const repeated = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep(options));
       assert.deepEqual(repeated.request, reference);
       assert.equal(repeated.deadline, first.deadline);
       assert.deepEqual(fs.readFileSync(reference.path), bytes);
       const events = () => handoff.sessionEvents(prepared.runDir);
       assert.equal(events().filter(event => event.type === 'agent_invoke_start').length, 1);
+      assert(events().some(event => event.type === 'phase_write_observed' && 'producer' in event && event.producer === 'extension-management'
+        && event.invoke_id === issued.request.invoke_id), 'the authorized CLI records its actual files against this request');
       const wrongPhase = issued.request.context.phase === 'ut' ? 'coding' : 'ut';
       await assert.rejects(() => withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path,
         report: { status: 'passed', phase: wrongPhase, details: 'wrong request/phase must be rejected before acceptance' } })), /phase|execution result/);
       assert.equal(handoff.acceptedSessionReport(prepared.runDir, issued), null);
       const report = { status: 'passed' as const, phase: issued.request.context.phase, details: 'Author exited normally but produced no design.' };
       const continued = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path, report }));
-      assert.equal(continued.type, 'phase_execute_request', 'native completion without a real design/current Q remains unknown work');
+      assert.equal(continued.type, 'phase_execute_request', 'native completion without a real design/current Q remains unknown work: ' + JSON.stringify(continued.result));
       assert(!events().some(event => event.type === 'run_end' && event.halt_reason === 'no_progress_guard'), 'an incomplete design/Q packet cannot manufacture no-progress acceptance');
       const duplicate = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path, report }));
       assert.equal(duplicate.type, 'goal_session_report_received'); assert.equal(duplicate.duplicate, true);
@@ -420,6 +453,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       const retryReference = next.request as { path: string; sha256: string };
       const retry = handoff.readSessionExecution(prepared.runDir, retryReference.path)!;
       assert.notEqual(retry.request.invoke_id, issued.request.invoke_id);
+      assert.deepEqual(designInputs(retry.request)?.extension_preparation.bindings, []);
+      assert(!retry.request.context.instruction?.includes('设计前动作 ux-behavior-spec:fill-missing'));
       assert(retry.request.context.instruction?.includes(project.requirement), 'the incomplete real task remains in the original author scope');
       const terminal = await withRuntimeTest({ root: options.projectRoot }, () => entry.runGoalModeSessionStep({ ...options, requestPath: retryReference.path,
         report: { status: 'waiting', phase: retry.request.context.phase, details: '受控入口夹具尚未执行后续设计；保留该原请求，真实执行者就绪后继续。' } }));
@@ -477,11 +512,15 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
   name: 'f3b8e6a1 unadmitted design requests cannot expand their write set into product tests or framework capabilities',
   async run() {
     for (const [target, window] of [[`${SOURCE_DIR}/InboxStore.ets`, 'before_binding'], [`${MODULE}/src/ohosTest/ets/test/InboxExisting.test.ets`, 'unverified'],
-      ['framework/profiles/hmos-app/harness/coding-host-rules.ts', 'execution_window']] as const) {
+      ['framework/profiles/hmos-app/harness/coding-host-rules.ts', 'execution_window'], ['doc/extensions/manifest.yaml', 'unverified']] as const) {
       await withProject(async project => {
         const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
         const handoff = require(path.join(project.harnessDir, 'scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
         const absolute = path.join(project.root, target);
+        if (target === 'doc/extensions/manifest.yaml') {
+          fs.mkdirSync(path.dirname(absolute), { recursive: true });
+          fs.writeFileSync(absolute, 'schema_version: "2.0"\nname: host\n');
+        }
         fs.appendFileSync(absolute, '\n// Legitimate user dirty bytes before the design author starts.\n');
         const original = fs.readFileSync(absolute);
         const originalSha = createHash('sha256').update(original).digest('hex');

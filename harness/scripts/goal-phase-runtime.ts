@@ -5196,7 +5196,9 @@ export class GoalPhaseRuntime {
         const hardCli = resolveInvokeHardCliFailure(result, { formalInvoke: true });
         if (hardCli || containmentError) { recordEnd(); return conclude('adapter_cli_hard_failure', hardCli ?? containmentError!); }
         const post = capturePhaseInvocationSnapshot(resolution, snapshotOptions);
-        const windows = phaseWriteWindows(pre, original ? readPhaseBinding(runDir, original, history()) : null, post);
+        const writeEvents = history();
+        const windows = phaseWriteWindows(pre, original ? readPhaseBinding(runDir, original, writeEvents) : null, post,
+          label === 'initial-design-author' && purpose === 'author' ? { projectRoot, events: writeEvents, invokeId, owner: context.owner } : undefined);
         if (windows.kind === 'unverifiable') {
           const detail = `设计调用原快照不可核实：${windows.reason}。`;
           recordEnd(detail); return conclude('unauthorized_source_mutation', detail);

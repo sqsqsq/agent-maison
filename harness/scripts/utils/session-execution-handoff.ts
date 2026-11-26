@@ -513,7 +513,12 @@ interface SessionReportMaterial {
 export function readSessionWriteWindows(runDir: string, issued: IssuedSessionExecution, post: PhaseInvocationSnapshot,
   events: readonly GoalRunEvent[]) {
   if (!issued.request.pre_snapshot) return null;
-  try { return phaseWriteWindows(issued.request.pre_snapshot, readPhaseBinding(runDir, issued, events), post); }
+  try {
+    const { request } = issued;
+    return phaseWriteWindows(request.pre_snapshot!, readPhaseBinding(runDir, issued, events), post,
+      request.context.phase === 'initial-design-author' && request.purpose === 'author'
+        ? { projectRoot: request.context.projectRoot, events, invokeId: request.invoke_id, owner: request.context.owner } : undefined);
+  }
   catch (error) { return { kind: 'unverifiable' as const, reason: (error as Error).message }; }
 }
 
