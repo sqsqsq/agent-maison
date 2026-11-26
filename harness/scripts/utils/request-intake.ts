@@ -7,6 +7,7 @@ import { resolveDeliveryPolicy, type DeliveryFacts, type DeliveryPolicy, type De
 import { realProjectPath, isInsideProjectRoot } from './project-relative-path';
 import { loadFrameworkConfig, featuresDirPath } from '../../config';
 import { projectImplementationModules } from './diff-scope';
+import { componentBlueprintPath } from './component-blueprint-path';
 
 interface NativeMessage { id: string; role: string; text: string; at?: string; line: number; origin?: { store?: string; parentId?: string } }
 interface NativeRead { path: string; content: string; complete: boolean; exact?: boolean }
@@ -68,6 +69,24 @@ function initialEvidenceRead(tool: NativeTool, root: string): boolean {
 }
 function nativePath(root: string, file: string): string {
   return realProjectPath(root, path.relative(root, path.resolve(root, file)).replace(/\\/g, '/'), 'native source');
+}
+
+function isCanonicalBlueprintWrite(tool: NativeTool, root: string, frameworkRoot: string, dirtyProduct: string[]): boolean {
+  if (!/^(?:Write|Edit)$/i.test(tool.name) || !native.toolSucceeded(tool)) return false;
+  const [file] = native.editedPaths([tool]);
+  if (!file || !path.isAbsolute(file) || file.split(/[\\/]/).includes('..')) return false;
+  const input = tool.input as { file_path?: unknown; filePath?: unknown; path?: unknown; target_file?: unknown; notebook_path?: unknown };
+  if ([input.file_path, input.filePath, input.path, input.target_file, input.notebook_path].some(value => value !== undefined && value !== file)) return false;
+  try {
+    const absolute = path.resolve(file);
+    const parts = path.relative(featuresDirPath(root), absolute).split(path.sep);
+    if (parts.length !== 3 || path.relative(absolute, componentBlueprintPath(root, parts[0])) !== '') return false;
+    if (path.relative(absolute, nativePath(root, file)) !== '' || isInsideProjectRoot(frameworkRoot, absolute)
+      || path.relative(root, absolute).split(path.sep).some(part => part.toLowerCase() === '.git')
+      || dirtyProduct.some(item => isInsideProjectRoot(path.resolve(root, item), absolute))) return false;
+    const stat = fs.lstatSync(absolute);
+    return stat.isFile() && stat.nlink === 1;
+  } catch { return false; }
 }
 
 function toolLocation(tool: NativeTool): string {
@@ -278,6 +297,7 @@ export function readRequestIntake(options: { projectRoot: string; frameworkRoot:
     && dirtyProduct.some(file => !baseline.preimages?.[file] && !baseline.initially_absent?.includes(file))) {
     const safeBeforePrepare = tools.every((tool, index) => {
       if (initialEvidenceRead(tool, root)) return true;
+      if (isCanonicalBlueprintWrite(tool, root, options.frameworkRoot, dirtyProduct)) return true;
       const command = native.toolInput(tool).trim();
       if (/[\r\n;&|<>`$]/.test(command)) return false;
       return index === tools.length - 1 && tool.completed === false

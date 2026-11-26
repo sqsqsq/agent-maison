@@ -175,6 +175,13 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     const old = JSON.parse(historical.stdout).intake_context;
     assert.equal(old.baseline.dirty_digests?.[file], undefined);
     assert.deepEqual(old.attribution_disclosures.map((item: { path: string }) => item.path), [file]);
+    s.rows.splice(-2);
+    s.tool('Edit', { file_path: absolute, old_string: '1', new_string: '2' }, 'updated');
+    s.flush();
+    const afterProductWrite = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref,
+      explicitTargets: ['src/value.js'], captureInitialDirty: true });
+    assert.equal(afterProductWrite.baseline.dirty_digests?.[file], undefined);
+    assert(afterProductWrite.attribution_unknown.includes(file), 'a prior product write cannot supply its own before digest');
   } },
   { name: 'Claude and CodeAgent distinguish an independent pending call from a mismatched native edit result', run(f) {
     const s = setup(f);
