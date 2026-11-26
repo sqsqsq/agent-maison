@@ -143,8 +143,7 @@ npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --
 
 中型/复杂完整设计交接完成 = **admitted blueprint + 中型已分解 1 个、复杂已分解多个 canonical CU + 每个 CU 建立 `design_refs` 引用 + 后续施工 readiness + 当前人读文档及链接**。
 
-注意分层：**合法 `component-blueprint@1` 的判据不含 CU 数量**（P1 不反向依赖 P2）——
-`admitted blueprint + 0 CU` 是合法状态、是设计准备子流程的入口；"完整设计交付"才要求 CU。
+**合法 `component-blueprint@1` 的判据不含 CU 数量**。 `admitted blueprint + 0 CU` 可进入设计准备子流程。完整设计交付才要求 CU。
 
 本结果只代表**设计阶段**完成，不代表 Change Unit 已施工或 Component closure 已成立。
 
