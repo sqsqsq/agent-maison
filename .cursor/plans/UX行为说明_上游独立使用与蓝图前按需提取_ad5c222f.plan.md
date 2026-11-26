@@ -32,7 +32,7 @@ todos:
     status: in_progress
   - id: acceptance-and-delivery
     content: 完成四个本机客户端各一次独立单屏短例、发布边界和仓库验收，交付 §5.1 逐行结果及样例对照口径。
-    status: completed
+    status: in_progress
 ---
 
 # UX 行为说明的独立提取与蓝图前消费
@@ -156,7 +156,7 @@ extensions/
 
 **钱包缺稿首轮促成两次扩展返修。** 已签发知识到达首作者后，旧指引仍让作者直接写蓝图并补定返回。修订 `0ecca16c` 明确先写、再回读 UX。另起的钱包首作者在蓝图骨架尚未改动时先写出流程稿和屏幕稿，随后写出正式蓝图。回读发现屏幕 YAML 有语法错、流程来源相对路径失效，并且有一条已写死的返回与待决问题冲突。额度在文件落盘后中断，此场保留为首轮失败。[缺稿首轮、产物和具体位置](../../../am-ad5c222f-intakeqa/evidence/revised-intake-retest-summary.md)
 
-修订 `3b78e3a9` 在现有模板示范实际写出的屏幕、范围外页面、相对来源和未决返回，在回读时实际解析已写 YAML、核对文件引用。目标套件 5 项通过。两次返修分别经实际 Claude Code CLI（`claude-opus-5-5`）检视通过。[取用指引复核](../../.codex/reports/ux-behavior-ad5c222f/claude-review-5.conclusion.json) · [模板复核](../../.codex/reports/ux-behavior-ad5c222f/claude-review-6.conclusion.json)
+修订 `3b78e3a9` 在现有模板示范实际写出的屏幕、范围外页面、相对来源和未决返回，在回读时实际解析已写 YAML、核对文件引用。目标套件 5 项通过。两次返修的独立检视通过。[取用指引复核](../../.codex/reports/ux-behavior-ad5c222f/claude-review-5.conclusion.json) · [模板复核](../../.codex/reports/ux-behavior-ad5c222f/claude-review-6.conclusion.json)
 
 **2026-11-25 美东，`3b78e3a9` 钱包实测。** 钱包宿主沿用同一 `5291896c` framework 包，按需安装新版扩展。Claude 同版本额度已用尽，此次正常受管初设改用钱包支持的 Codex `gpt-6.1-sol/high`。原件目录只有需求和设计图。作者实际收到图 3、4 等原图，在 `ux-qa-managed-codex/blueprint/ux/` 先写卡种屏、目的页交接屏和流程，再写本次正式蓝图。三份稿均能解析，均通过宿主随附 Schema，来源和屏幕相对路径可打开。蓝图用元素 ID 核对银行卡种单选、单种一行、点继续携银行和卡种跨页，返回落点和选择恢复保持待决。[三份 UX 与来源核验](../../../am-ad5c222f-templateqa/evidence/managed.codex.authored-ux-validation.json) · [实际蓝图](../../../am-ad5c222f-templateqa/managed/doc/features/ux-qa-managed-codex/blueprint/component-blueprint.yaml) · [逐图回执](../../../am-ad5c222f-templateqa/evidence/managed.codex.native-image-evidence.json)
 
@@ -166,6 +166,6 @@ extensions/
 
 受管 Codex 首作者于美东 20:18 交回指定目录的蓝图。原生线程收到完成事件，作者回执为 `passed`，内部观察另记退出码 1 和已收齐完成信号。以上三项业务结论来自实际文件核对。原有受管缺稿失败、有稿首回和本次受管首轮分别保留。[本次受管首轮总表](../../../am-ad5c222f-templateqa/evidence/result.md) · [原有缺稿首轮](../../../am-ad5c222f-hostrecheck/evidence/managed-retest-summary.md)
 
-本次已交付样例、对照口径、客户端记录和钱包专项验收。按需求方指定范围，验收交付状态据宿主实测记录。有稿直接入口首回未落盘、补交错用 PRD 编号，保留在蓝图消费待办的实施记录中。
+已交付样例、对照口径和客户端记录，钱包专项与标准包发布排除已核验。有稿直接入口首回未落盘、补交错用 PRD 编号，继续跟踪蓝图消费待办。验收交付仍在进行，待 P4 `a21473` 恢复回放超时解决后，补跑缺失验证并取得有效的日常全集结果。本次范围为专项修订和复验，正式候选另行安排。[发布排除核验](../../.codex/reports/ux-behavior-ad5c222f/pack-check-5291896c.json)
 
 产品交接副本按实测意见另行修订。同一原生 Codex 作者修正工作区写入环境后，只改外部副本的三份 UX。`supported_types` 现指当前银行支持的卡类型，继续动作携所选银行和卡种。确认当时原浮层是否关闭、从选卡页返回的落点、若回浮层是否保留选择分别为 `open`。三稿通过 Schema，六个相对来源、两个文案引用、元素与流转均能解析。受管首轮文件与原材料保留原字节。[可交给产品的卡种屏](../../../am-ad5c222f-templateqa/reviewed-handoff/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.screen.ux.yaml) · [待决与流转](../../../am-ad5c222f-templateqa/reviewed-handoff/doc/features/ux-qa-managed-codex/blueprint/ux/card-type.flow.ux.yaml) · [实测复核](../../../am-ad5c222f-templateqa/evidence/reviewed-handoff.md)

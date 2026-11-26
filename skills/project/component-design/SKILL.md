@@ -49,8 +49,8 @@ description: Create or continue component design using the unified request envel
 
 本节取代 M7“每项正式需求一律完整交接/不设档位”的现行适用范围，M7 历史裁决和已完成产物不改写。只使用同一蓝图协议，不恢复 lite 或新增可手填档位状态。
 
-- **设计写入前准备**。新写或修订蓝图的作者在 P1 事实发现和写作前取得生效知识。受管初设直接消费指令中的材料。直接调用时在 `framework/harness` 用当前稳定 ID 执行只读命令 `npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint "<blueprint-id>" --design-knowledge --json`。
-- **读入与交回**。按 [asset 协议](../../README.md#profile-skill-asset-protocol) 优先用 extension 声明，未声明才回退 profile。读取返回的 `knowledge` 正文及适用引用，超预算按路径读原文。配置异常报告原诊断，无可选资产沿原流程。草稿写到 `canonical_path`，上游材料保持只读，人读稿沿 `--write-review` 投影。同一待决项在流程、用例和验收中保持待决，取得有依据的裁定后再写为确定步骤或预期。
+- **设计写入前准备**。新写或修订蓝图的作者在 P1 事实发现和写作前取得生效知识。受管初设直接消费指令中的材料。直接新写或修订以 `/component-design <blueprint-id>` 的实参或已准备请求正式绑定的 `blueprint_id` 为准；无参沿既有请求准备与绑定取得 ID，文件名、PRD 名和稿件正文均不可代替。在 `framework/harness` 用该 ID 执行只读命令 `npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint "<blueprint-id>" --design-knowledge --json`。
+- **读入与交回**。按 [asset 协议](../../README.md#profile-skill-asset-protocol) 优先用 extension 声明，未声明才回退 profile。读取返回的 `knowledge` 正文及适用引用，超预算按路径读原文。配置异常报告原诊断，无可选资产沿原流程。首次交回本次设计前，将草稿实际写入由该蓝图 ID 定位的 `canonical_path`，上游材料保持只读，人读稿沿 `--write-review` 投影。同一待决项在流程、用例和验收中保持待决，取得有依据的裁定后再写为确定步骤或预期。
 
 ## 支持范围（诚实声明）
 

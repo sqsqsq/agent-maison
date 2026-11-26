@@ -186,6 +186,30 @@ export function runAll(): UnitCaseResult[] {
       assert.equal(new Set([...docs.values()].flatMap(doc =>
         list(doc.acceptance_examples).map(example => fields(example).id))).size, 12);
     },
+    '元素文案引用采用单个来源或带定位的来源': () => {
+      const docs = yamlFiles(sampleDir);
+      const screen = [...docs.values()].find(doc => doc.screen === 'card_type_sheet')!;
+      const notice = fields(fields(screen.elements).authorization_notice);
+      const schema = schemaForSkill();
+
+      for (const ref of ['fig3', 'fig3:协议行']) {
+        notice.copy_ref = ref;
+        assert.deepEqual(validateLiteSchema(screen, schema), []);
+        assertSampleReferences(docs);
+      }
+
+      for (const value of [
+        '为了您的银行卡开通华为支付和银联手机闪付服务，需要您授权银联提供实名信息给{银行名称}。',
+        '我已阅读快捷支付服务协议、银联无卡自助消费授权协议',
+        ['fig3'],
+      ]) {
+        notice.copy_ref = value;
+        assert.notEqual(validateLiteSchema(screen, schema).length, 0, JSON.stringify(value));
+      }
+
+      notice.copy_ref = 'missing:协议行';
+      assert.throws(() => assertSampleReferences(docs), /来源引用无法解析 missing:协议行/);
+    },
     '拒绝悬空流转引用': () => {
       const docs = yamlFiles(sampleDir);
       const screen = [...docs.values()].find(doc => doc.screen === 'card_type_sheet')!;
