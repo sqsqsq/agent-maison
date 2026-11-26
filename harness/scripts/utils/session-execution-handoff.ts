@@ -192,12 +192,14 @@ export function readSessionExecution(runDir: string, requestPath?: string): Issu
   return { request, reference: ref, event: issued };
 }
 
-export function acceptedSessionReport(runDir: string, issued: IssuedSessionExecution, originalEvents?: readonly GoalRunEvent[]): { report: SessionExecutionReport; event: GoalRunEvent } | null {
+export function acceptedSessionReport(runDir: string, issued: IssuedSessionExecution, originalEvents?: readonly GoalRunEvent[]): {
+  report: SessionExecutionReport; event: GoalRunEvent; postSnapshot: PhaseInvocationSnapshot | null;
+} | null {
   const event = (originalEvents ?? sessionEvents(runDir)).find(event => event.type === 'agent_invoke_end' && event.invoke_id === issued.request.invoke_id
     && event.handoff_report?.request_sha256 === issued.reference.sha256);
   if (!event?.handoff_report) return null;
-  const archived = readHandoffMaterial<{ report: SessionExecutionReport }>(runDir, event.handoff_report);
-  return { report: archived.report, event };
+  const archived = readHandoffMaterial<SessionReportMaterial>(runDir, event.handoff_report);
+  return { report: archived.report, event, postSnapshot: archived.post_snapshot ?? null };
 }
 
 /** A repeat read returns the same original facts, never another business progress assessment. */
@@ -217,8 +219,7 @@ export function observeSessionExecution(runDir: string, issued: IssuedSessionExe
     }
   }
   const accepted = acceptedSessionReport(runDir, issued, events);
-  const archived = accepted?.event.handoff_report ? readHandoffMaterial<SessionReportMaterial>(runDir, accepted.event.handoff_report) : undefined;
-  const postSnapshot = archived ? archived.post_snapshot : request.pre_snapshot && request.write_boundary
+  const postSnapshot = accepted ? accepted.postSnapshot : request.pre_snapshot && request.write_boundary
     ? capturePhaseInvocationSnapshot(request.write_boundary, request.snapshot_options) : null;
   const changes = request.pre_snapshot && postSnapshot ? diffPhaseInvocationSnapshots(request.pre_snapshot, postSnapshot) : null;
   return { invoke_id: request.invoke_id,

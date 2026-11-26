@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -6,9 +7,10 @@ import { readInvokeFinalText } from './agent-invoke';
 import { classifyGoalRunsDir } from './fidelity-shared';
 import { assertFencedOwner, readRunControl } from './goal-run-control';
 import { ordinaryFile, relativeExtensionPath, type ExtensionFileChange, type ObserveExtensionWrite } from './extension-files';
-import { invocationOutputLogPath, loadAuthoritativeEvents } from './goal-runner-phase';
+import { invocationOutputLogPath, loadAuthoritativeEvents, type GoalRunEvent } from './goal-runner-phase';
 import { realProjectPath } from './project-relative-path';
-import { acceptedSessionReport, readExecutionRequestOriginal } from './session-execution-handoff';
+import { readPhaseRecoveryFile } from './phase-write-boundary';
+import { acceptedSessionReport, readExecutionRequestOriginal, readSessionWriteWindows, type IssuedSessionExecution } from './session-execution-handoff';
 
 type Data = Record<string, unknown>;
 
@@ -119,6 +121,34 @@ function resultLines(text: string, bindings: Data[]): Data[] {
   return results;
 }
 
+function* linkedAuthorReports(
+  projectRoot: string, request: { issued: IssuedSessionExecution; runDir: string; events: readonly GoalRunEvent[] },
+  accepted: NonNullable<ReturnType<typeof acceptedSessionReport>>,
+) {
+  const { issued, runDir, events } = request;
+  const { postSnapshot, report, event } = accepted;
+  if (!postSnapshot || !report.details || 'write_evidence_rejected' in event) return;
+  const windows = readSessionWriteWindows(runDir, issued, postSnapshot, events);
+  if (windows?.kind !== 'checked' || windows.window !== 'execution_window' || windows.beforeBinding.length) return;
+  const returned = new Map(windows.returned.filter(write => write.how === 'added' || write.how === 'modified')
+    .map(write => [write.path, write.postSha256]));
+  const originalRoot = issued.request.context.projectRoot;
+
+  for (const link of report.details.matchAll(/(?<!!)\[[^\]\r\n]+\]\((?:<([^>\r\n]+)>|([^)\r\n]+))\)/g)) {
+    try {
+      const ref = decodeURIComponent((link[1] ?? link[2]).trim().split('#', 1)[0]);
+      if (!/\.(?:md|txt)$/i.test(ref)) continue;
+      const relative = relativeExtensionPath(originalRoot, path.resolve(originalRoot, ref));
+      const hash = returned.get(relative);
+      if (!hash || !postSnapshot.entries.some(entry => entry.path === relative && entry.kind === 'file' && entry.sha256 === hash)) continue;
+      const { bytes } = readPhaseRecoveryFile(projectRoot, path.resolve(projectRoot, relative));
+      if (bytes && createHash('sha256').update(bytes).digest('hex') === hash) {
+        yield { relative, text: bytes.toString('utf8') };
+      }
+    } catch { /* Missing, changed or redirected paths do not establish a historical report. */ }
+  }
+}
+
 export function inspectExtensionRequest(projectRoot: string, request: string, ability?: string): Record<string, unknown> {
   let reference = request.replace(/\\/g, '/').replace(/^\.\//, '');
   if (reference.includes('/')) {
@@ -138,6 +168,16 @@ export function inspectExtensionRequest(projectRoot: string, request: string, ab
     : readInvokeFinalText('', invocationOutputLogPath(match.runDir, match.issued.request.context.phase, match.requestId),
       match.issued.request.context.adapter) ?? '';
   const results = resultLines(output, bindings);
+  const alreadyReported = (ability: unknown, binding: unknown): boolean => results.some(item => item.ability === ability && item.binding === binding);
+  if (accepted && bindings.some(binding => !alreadyReported(binding.ability, binding.id))) {
+    for (const document of linkedAuthorReports(projectRoot, match, accepted)) {
+      for (const result of resultLines(document.text, bindings)) {
+        if (!alreadyReported(result.ability, result.binding)) {
+          results.push({ ...result, reportPath: document.relative });
+        }
+      }
+    }
+  }
   return {
     requestId: match.requestId, runId: match.runId, requestFile: match.requestFile, settled: match.settled,
     bindings, results,

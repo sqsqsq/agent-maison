@@ -10,7 +10,9 @@ import { loadInstanceExtensions } from '../../extension-loader';
 import { detectRepoLayout } from '../../repo-layout';
 import { changeExtension, withExtensionWrite, type ExtensionMutation } from '../../scripts/utils/extension-lifecycle';
 import { activeExtensionRequests, inspectExtensionRequest } from '../../scripts/utils/extension-requests';
-import { writePhaseExecutionRequestMaterial } from '../../scripts/utils/session-execution-handoff';
+import { acceptSessionExecution, capturePhaseBinding, writePhaseExecutionRequestMaterial } from '../../scripts/utils/session-execution-handoff';
+import { casAcquireRunOwner, ensureRunControl } from '../../scripts/utils/goal-run-control';
+import { capturePhaseInvocationSnapshot, type PhaseWriteBoundaryResolution } from '../../scripts/utils/phase-write-boundary';
 
 const frameworkRoot = detectRepoLayout(__dirname).frameworkRoot;
 const at = 'component-design.before_discovery@1';
@@ -78,7 +80,8 @@ function publishedBindings(projectRoot: string) {
   return loadInstanceExtensions(projectRoot, 'doc/extensions', { frameworkRoot }).bindings;
 }
 
-function issueDesign(projectRoot: string, requestId: string, source: string, cu = false) {
+function issueDesign(projectRoot: string, requestId: string, source: string, cu = false,
+  boundary: PhaseWriteBoundaryResolution | null = null) {
   const feature = 'opening';
   const runId = '20261125T000000Z-abc123';
   const workspace = cu ? `${feature}/unit-1` : feature;
@@ -90,9 +93,14 @@ function issueDesign(projectRoot: string, requestId: string, source: string, cu 
   const issuedAt = '2026-11-25T00:01:00Z';
   const owner = { run_id: runId, owner_id: 'writer', epoch: 1, kind: 'session' as const };
   const binding = { source, ability: 'ux', id: 'fill', at, kind: 'action', ref: 'ux', delivery: 'action' };
+  if (boundary) {
+    ensureRunControl(runDir, runId);
+    assert(casAcquireRunOwner(runDir, runId, 0, { kind: owner.kind, owner_id: owner.owner_id }).ok);
+  }
   const material = writePhaseExecutionRequestMaterial({
     invokeId: requestId, issuedAt, gateTimeoutMs: 60_000, cleanupReserveMs: 2000,
-    preSnapshot: null, writeBoundary: null,
+    preSnapshot: boundary ? capturePhaseInvocationSnapshot(boundary) : null, writeBoundary: boundary,
+    ...(boundary && !cu ? { purpose: 'author', snapshotOptions: { ownedPrefixes: boundary.protectedRoots } } : {}),
     context: {
       projectRoot, frameworkRoot, feature, runId, runDir, reportDir, phase, workflowId: 'default',
       track: 'full', chain: [phase], attemptId: requestId, adapter: 'generic', owner, childEnv: {},
@@ -109,8 +117,13 @@ function issueDesign(projectRoot: string, requestId: string, source: string, cu 
   const append = (event: object): void => fs.appendFileSync(eventsFile, JSON.stringify({ ts: issuedAt, ...event }) + '\n');
   append({ type: 'run_start' });
   append({ type: 'agent_invoke_start', invoke_id: requestId, phase });
-  append({ type: 'phase_start', invoke_id: requestId, phase, handoff_request: material.reference, driver: 'session' });
-  return { append, phase, path: `${reportDir}/${material.reference.path}` };
+  const event = { type: 'phase_start', invoke_id: requestId, phase, handoff_request: material.reference, driver: 'session',
+    owner_id: owner.owner_id, owner_epoch: owner.epoch, attempt_id: requestId };
+  append(event);
+  const issued = { ...material, event };
+  if (boundary) append({ type: 'agent_process_bound', invoke_id: requestId, phase, owner_id: owner.owner_id,
+    owner_epoch: owner.epoch, binding_snapshot: capturePhaseBinding(runDir, issued) });
+  return { append, phase, path: `${reportDir}/${material.reference.path}`, runDir, issued };
 }
 
 const cases = [
@@ -200,6 +213,39 @@ const cases = [
       assert.equal(inspectExtensionRequest(project, signed.path, 'ux').settled, true);
       assert(state(project, 'uninstall').filesRemoved.includes('doc/extensions/skills/ux/SKILL.md'));
       assert(!fs.existsSync(path.join(extensionDir, 'skills/ux/SKILL.md')));
+    }),
+  },
+  {
+    name: '历史检视只读取已接受交回明确链接且字节仍匹配本次执行窗的作者报告',
+    run: () => inProject(project => {
+      const blueprint = 'doc/features/opening/blueprint';
+      const linked = `${blueprint}/author handoff.md`;
+      const old = `${blueprint}/old.md`;
+      const unlinked = `${blueprint}/unlinked.md`;
+      const report = (artifact: string) => `extension-result: ${JSON.stringify({
+        ability: 'ux', binding: 'fill', status: 'generated', artifacts: [artifact],
+      })}\n`;
+      write(path.join(project, old), report('from-old-request.ux.yaml'));
+      const signed = issueDesign(project, 'linked-author', 'local-ux', false, {
+        projectRoot: project, feature: 'opening', executionRole: 'author', phaseOrder: [], domains: [],
+        protectedRoots: [blueprint], diagnostics: [], unresolvedSourcePhases: [],
+      });
+      write(path.join(project, linked), report('from-linked-report.ux.yaml'));
+      write(path.join(project, unlinked), report('from-unlinked-report.ux.yaml'));
+      const encodedPath = path.join(project, linked).replace(/\\/g, '/').replace(/ /g, '%20');
+      acceptSessionExecution({
+        runDir: signed.runDir, issued: signed.issued, emit: signed.append,
+        report: { phase: signed.phase, status: 'passed', details: `[旧说明](${old}) · [本次作者交回](${encodedPath})` },
+      });
+
+      assert.deepEqual(inspectExtensionRequest(project, signed.path, 'ux').results, [{
+        ability: 'ux', binding: 'fill', status: 'generated', evidence: 'author-report',
+        reportedArtifacts: ['from-linked-report.ux.yaml'], reportPath: linked,
+      }]);
+      write(path.join(project, linked), report('modified-after-acceptance.ux.yaml'));
+      const changed = inspectExtensionRequest(project, signed.path, 'ux');
+      assert.deepEqual(changed.results, []);
+      assert.match(String(changed.message), /未提供可核对/);
     }),
   },
   {
