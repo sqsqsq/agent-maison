@@ -11,7 +11,7 @@ import { detectRepoLayout } from '../repo-layout';
 import { emitInstanceSkillBridge } from './utils/instance-skill-bridge';
 import { formatExtensionInspection, inspectInstanceExtensions } from './utils/extension-inspect';
 import { activeExtensionRequests, inspectExtensionRequest, recordExtensionManagementWrites } from './utils/extension-requests';
-import { changeExtension, extensionLocation, withExtensionWrite } from './utils/extension-lifecycle';
+import { changeExtension, extensionLocation, targetExtensionFrameworkRoot, withExtensionWrite } from './utils/extension-lifecycle';
 import { ordinaryFile, relativeExtensionPath, writeExtensionFileAtomic, type ObserveExtensionWrite } from './utils/extension-files';
 import { assertNoUnreplacedPlaceholders, buildAgentsTemplateVars, renderAgentsTemplate } from './utils/template-renderer';
 
@@ -169,8 +169,8 @@ function main(): void {
   }
 
   const layout = detectRepoLayout(__dirname);
-  const frameworkDir = layout.frameworkRoot;
   const projectRoot = path.resolve(values['project-root'] ?? layout.projectRoot);
+  const frameworkDir = targetExtensionFrameworkRoot(projectRoot, layout.frameworkRoot);
   const inspectOptions = { toolVisibility: toolVisibility(values['tool-visible'], values['tool-missing']), ability };
   let mutation: Record<string, unknown> | undefined;
   if (action === 'init') mutation = withExtensionWrite(projectRoot, frameworkDir, () => ({ filesWritten: initExtension(projectRoot, frameworkDir) }));

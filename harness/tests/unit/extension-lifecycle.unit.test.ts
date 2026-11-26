@@ -66,12 +66,16 @@ function state(projectRoot: string, action: ExtensionMutation, opts: { ability?:
   }));
 }
 
-function cli(projectRoot: string, ...words: string[]) {
+function runCli(projectRoot: string, ...words: string[]) {
   const harness = path.join(frameworkRoot, 'harness');
-  const child = spawnSync(process.execPath, [
+  return spawnSync(process.execPath, [
     '-r', require.resolve('ts-node/register/transpile-only'), path.join(harness, 'scripts/extension.ts'),
     ...words, '--project-root', projectRoot, '--json',
   ], { cwd: harness, encoding: 'utf8' });
+}
+
+function cli(projectRoot: string, ...words: string[]) {
+  const child = runCli(projectRoot, ...words);
   assert.equal(child.status, 0, child.stderr);
   return JSON.parse(child.stdout);
 }
@@ -163,6 +167,23 @@ const cases = [
       assert.deepEqual(publishedBindings(project).map(b => [b.id, b.enabled]), [
         ['read', true], ['fill', false], ['new', false],
       ]);
+    }),
+  },
+  {
+    name: '外置新版管理 CLI 先核宿主实际发布件 reader，旧版清单与文件原样保留',
+    run: () => inProject((project, source, extensionDir) => {
+      const manifest = path.join(extensionDir, 'manifest.yaml');
+      const original = '# 宿主原清单\nschema_version: "1.0"\nname: host\n';
+      write(manifest, original);
+      write(path.join(project, 'framework/specs/instance-extension-manifest.schema.yaml'), YAML.stringify({
+        schema_version: '1.1',
+        root_object: { properties: { schema_version: { enum: ['1.0', '1.1'] } } },
+      }));
+      const attempted = runCli(project, 'install', source, 'ux');
+      assert.equal(attempted.status, 1, attempted.stderr + attempted.stdout);
+      assert.match(attempted.stderr, /目标 Maison 发布件无法读取 extension manifest 2\.0/);
+      assert.equal(fs.readFileSync(manifest, 'utf8'), original);
+      assert(!fs.existsSync(path.join(extensionDir, 'skills/ux/SKILL.md')));
     }),
   },
   {

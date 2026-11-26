@@ -45,6 +45,23 @@ function digest(bytes: Buffer): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+export function targetExtensionFrameworkRoot(projectRoot: string, invokingFrameworkRoot: string): string {
+  const integrated = path.join(projectRoot, 'framework');
+  if (fs.lstatSync(integrated, { throwIfNoEntry: false })) return integrated;
+  return fs.existsSync(path.join(projectRoot, 'harness', 'harness-runner.ts')) ? projectRoot : invokingFrameworkRoot;
+}
+
+function verifyTargetManifestSupport(frameworkRoot: string): void {
+  const schemaPath = path.join(frameworkRoot, 'specs', 'instance-extension-manifest.schema.yaml');
+  let schema: Data;
+  try { schema = mapping(YAML.parse(fs.readFileSync(schemaPath, 'utf8'))); }
+  catch { throw new Error(`无法读取目标 Maison 发布件的扩展协议：${schemaPath}，宿主清单保留`); }
+  const advertised = mapping(mapping(mapping(schema.root_object).properties).schema_version).enum;
+  if (!Array.isArray(advertised) || !advertised.includes('2.0')) {
+    throw new Error(`目标 Maison 发布件无法读取 extension manifest 2.0：${frameworkRoot}，宿主清单保留`);
+  }
+}
+
 export function extensionLocation(projectRoot: string, frameworkRoot: string): { relative: string; root: string } {
   const relative = validateProjectRelativePath(projectRoot, loadFrameworkConfig(projectRoot).paths?.extension_dir
     ?? 'doc/extensions', 'paths.extension_dir');
@@ -256,12 +273,9 @@ interface ChangeOptions {
 }
 
 export function changeExtension(action: ExtensionMutation, options: ChangeOptions): ExtensionLifecycleResult {
-  const { projectRoot, frameworkRoot } = options;
-  const schema = mapping(YAML.parse(fs.readFileSync(path.join(frameworkRoot, 'specs', 'instance-extension-manifest.schema.yaml'), 'utf8')));
-  const allowedVersions = mapping(mapping(mapping(schema.root_object).properties).schema_version).enum;
-  if (schema.schema_version !== '2.0' && (!Array.isArray(allowedVersions) || !allowedVersions.includes('2.0'))) {
-    throw new Error('目标 Maison 发布件无法读取 extension manifest 2.0，宿主清单保留');
-  }
+  const { projectRoot } = options;
+  const frameworkRoot = targetExtensionFrameworkRoot(projectRoot, options.frameworkRoot);
+  verifyTargetManifestSupport(frameworkRoot);
   const { relative, root } = extensionLocation(projectRoot, frameworkRoot);
   const doc = readManifest(root);
   const before = doc.toJS();
