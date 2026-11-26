@@ -19,7 +19,7 @@ import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-e
 import { buildGoalManifestFromInput, loadGoalManifestFromRun, SCOPE_REVISION_FIELDS } from '../../scripts/utils/goal-manifest';
 import { ensureRunControl, readRunControl, casAcquireRunOwner, releaseRunOwner } from '../../scripts/utils/goal-run-control';
 import { issueSessionExecution, writePhaseExecutionRequestMaterial, executionRequestForInvoke } from '../../scripts/utils/session-execution-handoff';
-import { type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
+import { AttendedGoalPhaseExecutor, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { createGoalRun, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { resolvePhaseWriteBoundary, capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges } from '../../scripts/utils/phase-write-boundary';
 import { tryLoadUtSourceRootResolver } from '../../profile-host-loader';
@@ -602,11 +602,24 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     assert(freshness.changed_paths.includes('src/demo/value.ts'), JSON.stringify(freshness));
   } },
   { name: 'a18 formal facts read current bound source only through the actual gate and original invocation', async run(f) {
+    const design = 'doc/features/demo/spec/spec.md';
+    const approvedDesign = '# Approved local design\nui_change: none\n';
+    f.write(design, approvedDesign);
     f.facts();
+    const factsFile = path.join(f.root, 'doc/features/demo/context/facts.md');
+    const originalFacts = fs.readFileSync(factsFile);
     priorResearchBaseline(f, frameworkRoot);
     const runId = f.manifest.run_id;
     const admitted = beginFactsInvocation(f, frameworkRoot, 'coding', runId, 'i1');
     assert(admitted.factsContext?.baseline);
+    const input = resolveCapabilityInputs({ projectRoot: f.root, frameworkRoot, feature: 'demo', phase: 'coding', track: 'full', ...admitted }).inputs;
+    assert.equal(input?.values.spec?.state, 'resolved');
+    const freeze = () => resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo',
+      phase: 'coding', resolvedInputs: input, factsContext: admitted.factsContext });
+    f.write(design, approvedDesign.replace('none', 'reuse_only'));
+    assert.throws(freeze, /input binding stale:.*spec\.md/, 'a changed design input needs a new check');
+    f.write(design, approvedDesign);
+    assert(freeze().inputs.some(entry => entry.path === design));
     appendRunEvent(f, { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'coding-i1', status: 'passed', exit_code: 0 });
     const runDir = path.join(f.root, f.manifest.report_dir);
     const issued = executionRequestForInvoke(runDir, 'coding-i1');
@@ -614,8 +627,21 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     const original = path.resolve(runDir, issued.reference.path);
     const lookup = { projectRoot: f.root, frameworkRoot, feature: 'demo', runId, phase: 'coding', attemptId: 'i1' };
     const source = 'src/demo/value.ts';
+    const interrupted = beginFactsInvocation(f, frameworkRoot, 'coding', runId, 'i3');
+    assert(interrupted.factsContext?.baseline, 'the interrupted invocation had admitted research');
     f.write(source, 'export const value = 42;\n');
-    f.write('src/demo/unbound.ts', 'export const unrelated = true;\n');
+    const unbound = 'src/demo/unbound.ts';
+    f.write(unbound, 'export const unrelated = true;\n');
+    appendRunEvent(f, { type: 'agent_invoke_end', phase: 'coding', invoke_id: 'coding-i3', exit_code: 130, interrupted: true });
+
+    const configFile = path.join(f.root, 'framework.config.json');
+    const originalConfig = fs.readFileSync(configFile);
+    f.write('framework.config.json', JSON.stringify({ ...JSON.parse(originalConfig.toString()), project_name: 'parallel timing change' }));
+    // Replay the historical timing-only label against real changed bytes.
+    appendRunEvent(f, { type: 'phase_write_violation', phase: 'coding', invoke_id: 'coding-i1',
+      violations: [{ path: 'framework.config.json', window: 'before_binding', violation: 'signed_input_drift',
+        pre_sha256: createHash('sha256').update(originalConfig).digest('hex'),
+        post_sha256: createHash('sha256').update(fs.readFileSync(configFile)).digest('hex') }] });
     const oldFlag = process.env.MAISON_GOAL_GATE_HARNESS;
     process.env.MAISON_GOAL_GATE_HARNESS = '1';
     try { assert.equal(loadFormalFactsObservation(lookup), undefined, 'an environment flag cannot substitute for the actual gate'); }
@@ -634,12 +660,15 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       const child = [
         'const fs = require("fs");',
         'const { loadFormalFactsObservation } = require(' + JSON.stringify(reader) + ');',
-        'const lookup = ' + JSON.stringify(lookup) + ';',
+        'const lookup = { ...' + JSON.stringify(lookup) + ', attemptId: process.env.MAISON_GOAL_ATTEMPT };',
         'const original = ' + JSON.stringify(original) + ';',
         'const actual = loadFormalFactsObservation(lookup);',
-        'fs.renameSync(original, original + ".missing");',
-        'let missing; try { missing = loadFormalFactsObservation(lookup); } finally { fs.renameSync(original + ".missing", original); }',
-        'fs.writeFileSync(' + JSON.stringify(resultFile) + ', JSON.stringify({ sources: actual && [...actual.sources], rejectedMissingOriginal: missing === undefined }));',
+        'let missing;',
+        'if (actual && lookup.attemptId === "i1") {',
+        '  fs.renameSync(original, original + ".missing");',
+        '  try { missing = loadFormalFactsObservation(lookup); } finally { fs.renameSync(original + ".missing", original); }',
+        '}',
+        'fs.writeFileSync(' + JSON.stringify(resultFile) + ', JSON.stringify(actual ? { sources: [...actual.sources], rejectedMissingOriginal: missing === undefined } : null));',
       ];
       fs.writeFileSync(path.join(harness, 'harness-runner.ts'), child.join('\n'));
       const file = path.join(frameworkRoot, 'harness/scripts/goal-phase-runtime.ts');
@@ -649,16 +678,23 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       (runtime as unknown as { _compile(code: string, file: string): void })._compile(ts.transpileModule(
         fs.readFileSync(file, 'utf8') + '\nexports.__factsGateProbe = runHarnessPhase;\n',
         { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, esModuleInterop: true } }).outputText, file);
-      const result = await runtime.exports.__factsGateProbe(f.root, tool, 'coding', 'demo', false, f.manifest, { runId, attemptId: 'i1' }, 15_000);
-      assert.equal(result.exitCode, 0, result.outputTail);
-      const observation = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+      const gate = async (attemptId: string) => {
+        const result = await runtime.exports.__factsGateProbe(f.root, tool, 'coding', 'demo', false, f.manifest, { runId, attemptId }, 15_000);
+        assert.equal(result.exitCode, 0, result.outputTail);
+        return JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+      };
+      const observation = await gate('i1');
+      assert(observation, 'a historical timing-only label does not discard otherwise valid current facts');
       const sources = new Map<string, { sha256: string }>(observation.sources);
       assert.equal(sources.get(source)?.sha256, createHash('sha256').update(fs.readFileSync(path.join(f.root, source))).digest('hex'));
-      assert(!sources.has('src/demo/unbound.ts'));
+      assert(!sources.has(unbound), 'an interrupted writer cannot add unbound source to the completed observation');
       assert.equal(observation.rejectedMissingOriginal, true, 'the actual gate cannot recreate a missing signed invocation');
+      fs.writeFileSync(configFile, originalConfig);
+      assert.equal(await gate('i3'), null, 'an interrupted author cannot anchor formal evidence');
+      assert.deepEqual(fs.readFileSync(factsFile), originalFacts, 'formal observations preserve the original facts bytes');
     } finally { fs.rmSync(tool, { recursive: true, force: true }); }
   } },
-  { name: 'a18 live self-check refuses a missing signed author and requirement edits retain the original evidence', run(f) {
+  { name: 'a18 live self-check refuses a missing signed author and requirement edits retain the original evidence', async run(f) {
     const requirementFile = 'doc/requirement.md';
     const requirement = 'The requested numeric value is 42.\n';
     f.write(requirementFile, requirement);
@@ -669,6 +705,7 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     f.facts();
     const factsPath = path.join(f.root, 'doc/features/demo/context/facts.md');
     fs.writeFileSync(factsPath, fs.readFileSync(factsPath, 'utf8').replace(f.manifest.run_id, runId));
+    const originalFacts = fs.readFileSync(factsPath);
     const input = f.context('coding', runId);
     writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ projectRoot: f.root, frameworkRoot, feature: 'demo',
       phase: 'coding', factsContext: input.factsContext, resolvedInputs: input.resolvedInputs, extraInputs: [requirementFile],
@@ -683,13 +720,18 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
     const saved = Object.fromEntries(Object.keys(childEnv).map(key => [key, process.env[key]]));
     try {
       Object.assign(process.env, childEnv);
-      const live = loadFactsInvocationContext(lookup);
-      assert(live?.baseline);
-      assert.deepEqual(live.baseline, admitted.factsContext?.baseline);
+      const executor = new AttendedGoalPhaseExecutor(async () => {
+        const live = loadFactsInvocationContext(lookup);
+        assert(live?.baseline);
+        assert.deepEqual(live.baseline, admitted.factsContext?.baseline);
+        return { status: 'passed' };
+      });
+      const result = await executor.execute(issued.request.context);
+      assert.equal(result.status, 'passed');
       fs.renameSync(original, original + '.missing');
       try { assert.throws(() => loadFactsInvocationContext(lookup), /ENOENT/); }
       finally { fs.renameSync(original + '.missing', original); }
-      assert.deepEqual(loadFactsInvocationContext(lookup)?.baseline, live.baseline);
+      assert.deepEqual(loadFactsInvocationContext(lookup)?.baseline, admitted.factsContext?.baseline);
       const evidence = path.join(featurePhaseReportsDir(f.root, 'demo', 'coding', frameworkRoot), 'phase-evidence-manifest.json');
       const originalEvidence = fs.readFileSync(evidence);
       f.write(requirementFile, 'The requested value is now 43.\n');
@@ -697,6 +739,16 @@ const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; ex
       assert.equal(stale.verdict, 'stale');
       assert(stale.changed_paths.some(file => file.includes('requirement')), JSON.stringify(stale));
       assert.deepEqual(fs.readFileSync(evidence), originalEvidence);
+      f.write(requirementFile, requirement);
+      releaseRunOwner(runDir, issued.request.context.owner);
+      const nextOwner = casAcquireRunOwner(runDir, runId, issued.request.context.owner.epoch,
+        { kind: 'session', owner_id: 'next-facts-observer', lease_ms: 60_000 });
+      assert(nextOwner.ok, 'a different owner acquired the actual fence');
+      assert.throws(() => loadFactsInvocationContext(lookup), /stale owner/, 'an unreturned author cannot borrow the new fence');
+      appendRunEvent(f, { type: 'agent_invoke_end', phase: issued.request.context.phase, invoke_id: issued.request.invoke_id,
+        status: result.status, exit_code: result.exitCode, completion_observed: result.completion_observed }, path.join(runDir, 'events.jsonl'));
+      assert.equal(loadFactsInvocationContext(lookup), undefined, 'the returned author no longer has live admission');
+      assert.deepEqual(fs.readFileSync(factsPath), originalFacts, 'live self-check and return preserve the original facts bytes');
     } finally {
       for (const [key, value] of Object.entries(saved)) {
         if (value === undefined) delete process.env[key];

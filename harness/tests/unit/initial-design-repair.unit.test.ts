@@ -11,9 +11,12 @@ import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
 import { buildInitialDesignGoalManifest } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
-import { casAcquireRunOwner, ensureRunControl } from '../../scripts/utils/goal-run-control';
-import { acceptSessionExecution, issueSessionExecution, readSessionExecution } from '../../scripts/utils/session-execution-handoff';
-import { capturePhaseInvocationSnapshot, completedInvocationWritePaths, hasSignedPhaseInputDrift, invocationWriteConflicts, phaseWriteWindows, type PhaseWriteBoundaryResolution } from '../../scripts/utils/phase-write-boundary';
+import { casAcquireRunOwner, ensureRunControl, releaseRunOwner } from '../../scripts/utils/goal-run-control';
+import { acceptSessionExecution, executionRequestForInvoke, issueSessionExecution, readSessionExecution } from '../../scripts/utils/session-execution-handoff';
+import { capturePhaseInvocationSnapshot, hasSignedPhaseInputDrift, type PhaseWriteBoundaryResolution } from '../../scripts/utils/phase-write-boundary';
+import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
+import { DetachedGoalPhaseExecutor } from '../../scripts/utils/goal-phase-executor';
+import { invokeAgentHeadless } from '../../scripts/utils/agent-invoke';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
 import { deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { designRepairTarget, designRepairSignature, runUnattendedDesignRepair, type DesignRepairBriefLike, type UnattendedDesignRepairInput } from '../../scripts/utils/design-repair-unattended';
@@ -74,6 +77,15 @@ async function candidateWriteContract(): Promise<void> {
         budget: { max_total_turns: 30, wall_clock_minutes: 120 }, unattended: { write_mode: 'full-access', approval_mode: 'never' } }, { projectRoot: host.root });
       const born = createGoalRun({ projectRoot: host.root, manifest, chain: [] });
       const runDir = path.dirname(born.manifestPath);
+      const draftDir = path.join(runDir, 'design-repair');
+      const edits: Partial<Record<typeof mode, { file: string; text: string }>> = {
+        canonical: { file: current.canonicalPath, text: '\n# unauthorized canonical CU write\n' },
+        'other-cu': { file: path.join(path.dirname(path.dirname(current.canonicalPath)), 'foreign-cu/change-unit.yaml'), text: 'unauthorized: true\n' },
+        product: { file: product, text: '// unauthorized product write\n' },
+        'draft-input': { file: path.join(draftDir, 'component-blueprint.yaml'), text: '\n# authorized draft output also referenced by source_ref\n' },
+      };
+      const edit = edits[mode];
+      let invoked: string | undefined;
       const blueprintBytes = fs.readFileSync(blueprint.canonicalPath);
       const cuBytes = fs.readFileSync(current.canonicalPath);
       if (mode === 'cu') {
@@ -105,9 +117,10 @@ async function candidateWriteContract(): Promise<void> {
         signature: designRepairSignature(targetFeature, 'initial-design', brief.items), heldFeatureLock: null, runtimeWrites: [manifest.report_dir], emit,
         registerLockRelease: value => { release = value; }, recordEventLines: () => { const lines: Array<{ file: string; line: string }> = []; recording = lines; return () => { recording = undefined; return lines; }; },
         invoke: async (purpose, prompt, guard) => {
-          assert.equal(purpose, 'author');
+          if (purpose === 'questioning') {
+            return { started: false, ok: false, status: 'waiting', detail: 'Independent questioning falls outside this author-write check.' };
+          }
           assert(guard);
-          const draftDir = path.join(runDir, 'design-repair');
           const expected = [path.join(draftDir, 'component-blueprint.yaml'), ...(hasCu ? [path.join(draftDir, 'change-unit.yaml')] : []),
             ...(mode === 'legacy' ? [] : [path.join(draftDir, 'change-unit-candidates.json')]),
             ...(mode === 'legacy' ? [] : [path.join(draftDir, 'architecture.json')])];
@@ -127,41 +140,67 @@ async function candidateWriteContract(): Promise<void> {
           }
           assert.deepEqual(fs.readFileSync(blueprint.canonicalPath), blueprintBytes);
           assert.deepEqual(fs.readFileSync(current.canonicalPath), cuBytes);
-          const verifyEdit = (file: string, text: string, authorized = false) => {
-            const original = fs.existsSync(file) ? fs.readFileSync(file) : null;
-            fs.mkdirSync(path.dirname(file), { recursive: true });
-            fs.appendFileSync(file, text);
-            try {
-              const id = 'edit-candidate';
-              const native = [
-                { type: 'assistant', message: { content: [{ type: 'tool_use', id, name: 'Edit', input: { file_path: file } }] } },
-                { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: 'Applied requested file edit.' }] } },
-              ].map(row => JSON.stringify(row)).join('\n');
-              const relative = path.relative(host.root, file).replace(/\\/g, '/');
-              const attributed = completedInvocationWritePaths(host.root, 'claude', native);
-              assert.deepEqual([...attributed], [relative]);
-              assert.notDeepEqual(fs.readFileSync(file), original);
-              const observed = phaseWriteWindows(guard.pre, null, capturePhaseInvocationSnapshot(guard.resolution, guard.options));
-              assert(observed.kind === 'checked');
-              if (!authorized) assert(observed.returned.some(change => change.path === relative));
-              const conflicts = invocationWriteConflicts(guard.resolution as PhaseWriteBoundaryResolution, observed, guard.options, attributed);
-              assert.equal(conflicts.some(change => change.path === relative && change.authority_confirmed && change.violation === 'outside_authority'), !authorized, mode);
-            } finally {
-              if (original) fs.writeFileSync(file, original);
-              else fs.unlinkSync(file);
-            }
-          };
-          if (mode === 'canonical') verifyEdit(current.canonicalPath, '\n# unauthorized canonical CU write\n');
-          if (mode === 'other-cu') {
-            const other = path.join(path.dirname(path.dirname(current.canonicalPath)), 'foreign-cu/change-unit.yaml');
-            verifyEdit(other, 'unauthorized: true\n');
-          }
-          if (mode === 'product') verifyEdit(product, '// unauthorized product write\n');
-          if (mode === 'draft-input') verifyEdit(path.join(draftDir, 'component-blueprint.yaml'), '\n# authorized draft output also referenced by source_ref\n', true);
-          return { started: true, ok: false, status: 'waiting', detail: 'Bounded contract observation; no model or publication.' };
+          if (!edit) return { started: true, ok: false, status: 'waiting', detail: 'Bounded candidate-prompt observation.' };
+          const control = ensureRunControl(runDir, manifest.run_id);
+          const owner = casAcquireRunOwner(runDir, manifest.run_id, control.current_epoch,
+            { kind: 'session', owner_id: 'repair-author-test', lease_ms: 60_000 });
+          assert(owner.ok);
+          const program = [
+            'const fs = require("node:fs"), path = require("node:path");',
+            'const [file, text] = process.argv.slice(1);',
+            'fs.mkdirSync(path.dirname(file), { recursive: true });',
+            'fs.appendFileSync(file, text);',
+            'const id = "edit-candidate";',
+            'for (const row of [',
+            '  { type: "assistant", message: { content: [{ type: "tool_use", id, name: "Edit", input: { file_path: file } }] } },',
+            '  { type: "user", message: { content: [{ type: "tool_result", tool_use_id: id, content: "Applied file edit." }] } },',
+            ']) process.stdout.write(JSON.stringify(row) + "\\n");',
+          ].join('\n');
+          // Use the local model binary with the production invoker and stdout recorder.
+          const executor = new DetachedGoalPhaseExecutor(context => {
+            const issued = executionRequestForInvoke(runDir, context.attemptId);
+            assert(issued, 'the runtime must sign this author before starting the model');
+            return {
+              plan: { argv: [process.execPath, '-e', program, edit.file, edit.text], label: 'local native author response' },
+              cwd: host.root,
+              options: { outputLogPath: path.join(runDir, path.dirname(issued.reference.path), 'agent-output.log'), toolEventCapture: 'structured_events' },
+            };
+          }, (plan, cwd, options) => invokeAgentHeadless({ argv: plan.argv, label: plan.label }, cwd, options));
+          try {
+            const outcome = await new GoalPhaseRuntime({ executor }).invokeDesignOwner(
+              manifest, host.root, path.resolve(__dirname, '../../..'), owner.token, purpose, prompt, guard, emit);
+            assert(outcome.ok && outcome.invokeId, JSON.stringify(outcome));
+            invoked = outcome.invokeId;
+            return outcome;
+          } finally { releaseRunOwner(runDir, owner.token); }
         },
       });
-      assert.equal(result.outcome, 'waiting', JSON.stringify({ mode, result }));
+      if (edit) {
+        assert(invoked, JSON.stringify({ mode, result }));
+        const issued = executionRequestForInvoke(runDir, invoked);
+        assert(issued && issued.request.purpose === 'author');
+        const rawOriginal = path.join(runDir, path.dirname(issued.reference.path), 'agent-events.jsonl');
+        assert.match(fs.readFileSync(rawOriginal, 'utf8'), /"type":"tool_result","tool_use_id":"edit-candidate"/);
+        const events: Document[] = fs.readFileSync(born.eventsPath, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        assert(events.some(row => row.type === 'agent_invoke_end' && row.invoke_id === invoked && row.status === 'passed'));
+        const pathChanged = path.relative(host.root, edit.file).replace(/\\/g, '/');
+        const confirmed = events.find(row => row.type === 'phase_write_violation' && row.invoke_id === invoked)?.violations
+          .filter((change: Document) => change.authority_confirmed && change.violation === 'outside_authority')
+          .map((change: Document) => change.path);
+        if (mode === 'draft-input') {
+          assert(result.outcome === 'waiting', JSON.stringify({ mode, result }));
+          assert.equal(result.step, 'questioning', JSON.stringify(result));
+          assert.equal(confirmed, undefined);
+        } else {
+          assert(result.outcome === 'violation', JSON.stringify({ mode, result }));
+          assert.equal(result.step, 'author');
+          assert.deepEqual([...new Set(result.changes.map(change => change.path))], [pathChanged]);
+          assert.deepEqual(confirmed, [pathChanged]);
+          assert(fs.readFileSync(edit.file, 'utf8').endsWith(edit.text), 'transaction must retain the observed write as evidence');
+        }
+      } else {
+        assert.equal(result.outcome, 'waiting', JSON.stringify({ mode, result }));
+      }
       const instructions = renderQuestioningResultInstructions(blueprint.blueprint, 'independent');
       assert(instructions.some(line => line.includes(DISPOSITIONS.join(' / '))));
       const questionDoc: Document = structuredClone(blueprint.blueprint);
