@@ -171,7 +171,8 @@ export async function runRequestTests(ctx: RequestCheckContext) {
     hap_sha256_full: null,
     derived_plan_sha256: sha256Text(JSON.stringify({ targets: [...inspected.cases.keys()], groups: [...groups.values()].map(group => ({ module: group.name, path: group.srcPath, classes: [...group.classes], count: group.count })), ...(registrations.length ? { registrations } : {}) })),
     device: process.env.HARNESS_HDC_TARGET?.trim() || null, display_env: '', reset_mode: 'n/a', hylyre_version: null, manifest_version: null,
-    profile: ctx.resolvedProfile.name, tool_config_sha256: computeHvigorConfigDigest(ctx.projectRoot), flags: ['request_ut', 'ohosTest', 'selected_classes', 'product=' + selection.product],
+    profile: ctx.resolvedProfile.name, tool_config_sha256: computeHvigorConfigDigest(ctx.projectRoot), flags: ['request_ut', 'ohosTest', 'selected_classes', 'product=' + selection.product,
+      ...(ctx.executionInputs ? ['request_source=' + ctx.executionInputs.sha256] : [])],
   };
   const started = startExecutionKeyRun(ctx.reportDir, 'ut', inputs);
   const runDir = started.runDir; let record = started.record;
@@ -230,5 +231,18 @@ export async function runRequestTests(ctx: RequestCheckContext) {
   if (failedInvocation) fs.unlinkSync(path.join(runDir, 'execution-key.json'));
   const frozen = freezeRunArtifacts(runDir, runDir, artifacts);
   if (!failedInvocation) writeExecutionKeyRecord(runDir, { ...record, outcome: executed && failed === 0 ? 'success' : 'failed', timing_complete: frozen.length === artifacts.length, frozen_files: frozen });
+  if (ctx.request.origin_request && ctx.request.blueprint && ctx.executionInputs) {
+    const current = eligible ? [...builds].flatMap(([module, build]) => {
+      const hap = build.builtHap;
+      if (!hap || computeHapSha256Full(hap.path) !== hap.sha256) return [];
+      return [{ module, path: path.relative(ctx.projectRoot, hap.path).replace(/\\/g, '/'), sha256: hap.sha256 }];
+    }) : [];
+    if (current.length === builds.size) ctx.executionArtifacts = current;
+    else {
+      const { requestFailure } = require('../../../../harness/scripts/utils/request-phase') as typeof import('../../../../harness/scripts/utils/request-phase');
+      checks.push({ ...requestFailure('request_input_unresolved', '已保留真实 UT 执行结果，当前模块对应的测试包尚未核实'),
+        status: 'SKIP', failure_kind: 'verification_evidence_gap', blocking_class: 'externalBlocked' });
+    }
+  }
   return { executed, total, failed, checks, evidence_paths: [...new Set([...evidence_paths, ...findFilesRecursive(runDir, /^(?!frozen\.)/)])] };
 }

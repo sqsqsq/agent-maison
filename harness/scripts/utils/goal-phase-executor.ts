@@ -9,7 +9,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { assertFencedOwner } from './goal-run-control';
-import { executionRequestForInvoke, observeSessionExecution, readHandoffMaterial, sessionExecutionDeadlineMs, type HandoffReference } from './session-execution-handoff';
+import { executionRequestForInvoke, managedWriteRequestEnv, observeSessionExecution, readExecutionRequestOriginal, readHandoffMaterial, sessionExecutionDeadlineMs, type HandoffReference } from './session-execution-handoff';
 import { createCodexTerminalScanner, extractProviderSessionId, isProviderToolResult, resolveTerminalEventParser } from './codex-terminal-events';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots } from './phase-write-boundary';
 import { problemIdentity, type CompletionEvaluation } from './goal-failure-classifier';
@@ -218,14 +218,24 @@ export function observeWorkUnitProviderSession(context: WorkUnitExecutionContext
     if (!dir.startsWith(path.resolve(context.runDir) + path.sep) || !fs.existsSync(dir)) continue;
     const names = fs.readdirSync(dir).filter(name => /^request-e\d+\.json$/.test(name)).sort((a, b) => Number(b.match(/\d+/)![0]) - Number(a.match(/\d+/)![0]));
     if (!names.length) continue;
-    const request = JSON.parse(fs.readFileSync(path.join(dir, names[0]), 'utf8')) as { context: WorkUnitExecutionContext; purpose?: string };
-    const previous = request.context;
+    let request: ReturnType<typeof readExecutionRequestOriginal>;
+    try { request = readExecutionRequestOriginal(context.runDir, event.invoke_id, events); }
+    catch { request = null; }
+    if (!request) {
+      const settled = events.some(row => row.invoke_id === event.invoke_id
+        && ['agent_invoke_end', 'agent_process_settled', 'orphan_reclaimed', 'agent_invoke_recovered'].includes(row.type ?? ''));
+      if (!settled) return { status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', skipped: true,
+        command: 'phase_execute_request', details: `原调用 ${event.invoke_id} 的签发原件和结束事实暂不可核实，先保留活跃执行绑定。` };
+      if (!recovered) recovered = rebuildWorkUnitExecutionContext(context, '原调用已交回，沿当前绑定重建上下文');
+      continue;
+    }
+    const previous = request.request.context;
     if (previous.attemptId === context.attemptId && previous.phase === context.phase
       && previous.owner.owner_id === context.owner.owner_id && previous.owner.epoch === context.owner.epoch) continue;
     if (previous.runId !== context.runId || previous.feature !== context.feature
       || previous.adapter !== context.adapter
       || path.resolve(previous.projectRoot) !== path.resolve(context.projectRoot)
-      || workUnitExecutionRole(previous, request.purpose) !== role) continue;
+      || workUnitExecutionRole(previous, request.request.purpose) !== role) continue;
     const at = events.indexOf(event);
     if (role === 'author' && authorUnit(previous, events, at) !== unit) continue;
     const nextStart = events.findIndex((row, index) => index > at && row.type === 'agent_invoke_start' && row.invoke_id !== event.invoke_id);
@@ -270,9 +280,9 @@ export function validateWorkUnitExecutionContext(context: WorkUnitExecutionConte
     throw new Error('[goal-phase-runtime] owner fence run_id does not match execution context');
   }
   if (context.user_deadline_at && !Number.isFinite(Date.parse(context.user_deadline_at))) throw new Error('[goal-phase-runtime] invalid user deadline');
-  const baselineApplicable = context.chain.some((phase) => phase === 'coding' || phase === 'ut');
-  if (baselineApplicable && !/^[0-9a-f]{40}$/.test(context.runtimeFacts.runBaseSha ?? '')) {
-    throw new Error('[goal-phase-runtime] framework_corruption: immutable run_base_sha is unavailable');
+  const baseline = context.runtimeFacts.runBaseSha;
+  if (baseline !== undefined && !/^[0-9a-f]{40}$/.test(baseline)) {
+    throw new Error('[goal-phase-runtime] framework_corruption: immutable run_base_sha is invalid');
   }
   if (Object.keys(context.childEnv).some((key) => key.toUpperCase() === 'HARNESS_DIFF_BASE_REF')) {
     throw new Error('[goal-phase-runtime] HARNESS_DIFF_BASE_REF must be scrubbed from goal child env');
@@ -357,6 +367,7 @@ export class DetachedGoalPhaseExecutor implements GoalPhaseExecutor {
         || type === 'system' && record.subtype === 'api_retry') environmentDiagnostic = JSON.stringify(record);
     } }, resolveTerminalEventParser(context.adapter)) : null;
     let result: AgentInvokeResult & Partial<Pick<GoalPhaseExecutorResult, 'status' | 'details'>> = await this.invoke({ ...invocation.plan, adapterName: context.adapter, modelBinding: context.adapterModel }, invocation.cwd, { ...options,
+      extraEnv: { ...options.extraEnv, ...managedWriteRequestEnv(context.runDir, originalRequest) },
       providerSessionId: context.provider_session_id,
       userDeadlineAt: context.user_deadline_at,
       ...(Number.isFinite(toolDeadline) ? { deadlineMs: toolDeadline, timeoutMs: Math.max(1, toolDeadline - Date.now()) } : {}),
@@ -383,20 +394,27 @@ export class DetachedGoalPhaseExecutor implements GoalPhaseExecutor {
       const changes = snapshotBefore && originalRequest?.request.write_boundary
         ? diffPhaseInvocationSnapshots(snapshotBefore, capturePhaseInvocationSnapshot(originalRequest.request.write_boundary, originalRequest.request.snapshot_options)) : null;
       const environmentFailure = /\b(?:401|403|429|5\d\d)\b|(?:authentication|authorization)\s+(?:failed|error|required|expired)|unauthori[sz]ed|permission denied|not logged in|please (?:log|sign) in|quota|rate[ _-]?limit|usage[ _-]?limit|insufficient credits?|billing (?:error|required|limit)|ECONN|ETIMEDOUT|fetch failed|socket hang up/i.test(result.stderr + '\n' + environmentDiagnostic);
-      if (workObserved || changes?.kind === 'changed' || environmentFailure) {
+      const changedOperationInput = changes?.kind === 'changed' && originalRequest?.request.write_boundary && changes.changes.some(change => {
+        const boundary = originalRequest.request.write_boundary!;
+        const { affectsInvocationAuthority } = require('./phase-write-boundary') as typeof import('./phase-write-boundary');
+        const { workUnitMayWritePath } = require('./repair-responsibility') as typeof import('./repair-responsibility');
+        return affectsInvocationAuthority(boundary, change.path, originalRequest.request.snapshot_options)
+          || workUnitMayWritePath(boundary, change.path);
+      });
+      if (workObserved || changedOperationInput || environmentFailure) {
         // A real attempt must keep its failure/writes; a session diagnostic cannot buy a clean replay.
         if (result.nativeSessionRebuildReason === 'provider_session_not_found') result = { ...result, nativeSessionRebuildReason: undefined };
       } else {
         if (!envelopeObserved && !result.skipped
           && !result.spawn_error && !result.timed_out && !result.interrupted && !result.terminal_failure_observed && !result.signal && !controls?.signal?.aborted) {
-          result = changes?.kind === 'clean'
+          result = changes && changes.kind !== 'unverifiable'
             ? { ...result, exitCode: result.exitCode || 1, nativeSessionRebuildReason: result.nativeSessionRebuildReason ?? 'provider_session_resume_not_accepted',
               details: '准确原生续接已退出，缺有效结构信封，原签发快照及已保存工具事实均未见本次开始工作的证据；保留原调用，按当前目标、授权、成果与未完项重建专用上下文。' }
             : { ...result, status: 'waiting', exitCode: result.exitCode || 1, nativeSessionRebuildReason: undefined,
               details: '准确原生续接已退出且缺有效结构信封；当前缺可信写入对账，无法确认是否已执行。保留原调用及成果，补齐该原请求的真实执行/写入事实后继续，不自动重放。' };
         }
       }
-      if (!workObserved && changes?.kind !== 'changed' && environmentFailure && !invocationCompleted({ ...result, exitCode: result.exitCode || 1 })) {
+      if (!workObserved && !changedOperationInput && environmentFailure && !invocationCompleted({ ...result, exitCode: result.exitCode || 1 })) {
         result = { ...result, status: 'waiting', exitCode: result.exitCode || 1, nativeSessionRebuildReason: undefined,
           details: '原生续接返回认证、额度或服务故障；保留原SID、失败与成果，实际环境恢复后沿原请求继续，不把环境故障当作会话丢失。' };
       }

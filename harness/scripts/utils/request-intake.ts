@@ -19,12 +19,10 @@ const native = require('../../../agents/shared/native-request.cjs') as {
   samePath(left: string, right: string): boolean;
   toolSucceeded(tool: NativeTool): boolean;
   toolCompletedBefore(tool: NativeTool, message: NativeMessage | number): boolean;
-  isEditCall(tool: NativeTool): boolean;
   readNativeSession(reference: string, projectRoot: string): NativeSession;
   userControl(message: string): { exempt: boolean; session: boolean; revoke: boolean; fixed?: string; excluded: string[]; included: string[];
     transport?: 'attended' | 'unattended'; fullDiffAttribution?: boolean };
   editedPaths(tools: NativeTool[], candidates?: boolean): string[];
-  frontDoorLoaded(session: NativeSession, projectRoot: string, frameworkRoot: string): boolean;
   toolInput(tool: NativeTool): string;
   productTarget(root: string, frameworkRoot: string, file: string, roots?: string[], explicit?: boolean): boolean;
 };
@@ -35,7 +33,9 @@ export interface RequestIntake {
   user: { id: string; text: string; at?: string; line: number };
   user_messages?: Array<{ id: string; text: string; at?: string; line: number }>;
   boundary: { origin_user_id: string; explanation: string; source_line: number };
-  front_door_loaded: boolean;
+  /** Readable on old carriers. Ordinary intake no longer collects a read inventory. */
+  front_door_loaded?: boolean;
+  source_reads?: string[];
   control: { exempt: boolean; scope: 'request' | 'session'; fixed?: DeliveryScale; excluded: string[]; sources: string[]; full_diff_attribution?: boolean;
     transport?: { mode: 'attended' | 'unattended'; source: string } };
   facts: DeliveryFacts;
@@ -45,7 +45,6 @@ export interface RequestIntake {
   targets: string[];
   attribution_unknown: string[];
   attribution_disclosures?: Array<{ path: string; reason: string }>;
-  source_reads: string[];
   source_results?: Array<{ detail: string; paths: string[] }>;
   content_fingerprint: string;
   gaps: string[];
@@ -54,18 +53,6 @@ const scales: Record<string, DeliveryScale> = { 特别简单: 'trivial', 小型:
 export function nativeFixedScale(value?: string): DeliveryScale | undefined { return value ? scales[value] : undefined; }
 const labels: Record<keyof DeliveryFacts, string> = { design_tradeoff: 'Q1', unclosed_impact: 'Q2', irreversible_data: 'Q3', dependent_results: '依赖结果', cross_component: '跨部件', expectations_clear: '预期明确', unique_approach: '做法唯一' };
 function git(root: string, args: string[]): string { return execFileSync('git', args, { windowsHide: true, cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); }
-function currentWorktreeGit(tool: NativeTool, root: string, command: RegExp): boolean {
-  const match = /\bgit\s+(?:-C\s+(?:"([^"\r\n]+)"|'([^'\r\n]+)'|(\S+))\s+)?([^\r\n]*)/.exec(native.toolInput(tool));
-  if (!match || !command.test(match[4])) return false;
-  const cwd = (tool.input as { cwd?: string; workdir?: string })?.cwd ?? (tool.input as { workdir?: string })?.workdir ?? root;
-  return native.samePath(path.resolve(cwd, match[1] ?? match[2] ?? match[3] ?? '.'), root);
-}
-function initialEvidenceRead(tool: NativeTool, root: string): boolean {
-  if (/^(?:Read|read_file|Glob|Grep|TodoWrite)$/i.test(tool.name)) return true;
-  const command = native.toolInput(tool).trim();
-  return /^git\s/.test(command) && !/[\r\n;&|<>`$]/.test(command) && native.toolSucceeded(tool)
-    && currentWorktreeGit(tool, root, /^(?:rev-parse\s+(?:--verify\s+)?HEAD|status(?:\s+(?:--porcelain(?:=v1)?|--short|-s|--untracked-files=all|-uall))+)\s*$/);
-}
 function nativePath(root: string, file: string): string {
   return realProjectPath(root, path.relative(root, path.resolve(root, file)).replace(/\\/g, '/'), 'native source');
 }
@@ -110,23 +97,81 @@ export function requestStartFromReflog(root: string, at: string): string | undef
   } catch { return; }
 }
 
-function sourceReads(root: string, tools: NativeTool[], candidates = false): string[] {
-  const paths = new Set<string>();
-  for (const tool of tools) {
-    if (!candidates && (!native.toolSucceeded(tool) || !tool.output.trim() && !tool.read)) continue;
-    const input = native.toolInput(tool);
-    if (!/(?:Read|read_file|exec|shell|command|functions|pwsh|bash)/i.test(tool.name)) continue;
-    // Only actual read commands, never an edit mentioning a source path.
-    if (!/^(?:Read|read_file)$/i.test(tool.name) && !/(?:Get-Content|\bcat\s|\brg\s|readFile|read_file)/.test(input)) continue;
-    for (const match of input.matchAll(/(?:[A-Za-z]:[\\/]|\.{0,2}[\\/])?[\w.@\-/\\]+\.(?:[cm]?[jt]sx?|ets|json5?|ya?ml|md|sql)/g)) {
-      try { const file = nativePath(root, match[0]); if (candidates || fs.existsSync(file) && fs.statSync(file).isFile()) paths.add(path.relative(root, file).replace(/\\/g, '/')); } catch { /* Tool paths outside this project are not request sources. */ }
-    }
-    const structured = tool.input as { file_path?: string; filePath?: string; path?: string };
-    for (const file of [structured?.file_path, structured?.filePath, structured?.path]) if (file) {
-      try { const abs = nativePath(root, file); if (!fs.existsSync(abs) || fs.statSync(abs).isFile()) paths.add(path.relative(root, abs).replace(/\\/g, '/')); } catch { /* Same boundary. */ }
-    }
-  }
-  return [...paths].sort();
+const referencePattern = /(?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|\/)?[\p{L}\p{N}_@.\-/\\]+\.[a-zA-Z0-9]+/gu;
+
+function references(text: string): string[] {
+  return [...new Set([
+    ...[...text.matchAll(/`([^`\r\n]+\.[\p{L}\p{N}]+)`/gu)].map(match => match[1]),
+    ...[...text.matchAll(referencePattern)].map(match => match[0]),
+  ])];
+}
+
+function projectReferences(root: string, text: string): string[] {
+  return [...new Set(references(text).flatMap(file => {
+    try { return [path.relative(root, nativePath(root, file)).replace(/\\/g, '/')]; } catch { return []; }
+  }))];
+}
+
+function readableReferences(root: string, text: string): string[] {
+  return projectReferences(root, text).filter(file => {
+    try {
+      const absolute = nativePath(root, file);
+      fs.accessSync(absolute, fs.constants.R_OK);
+      return fs.statSync(absolute).isFile();
+    } catch { return false; }
+  });
+}
+
+/** Only an actual user reference that disambiguates this request can extend it. */
+function refersToRequest(message: NativeMessage, origin: NativeMessage, earlier: NativeMessage[], root: string, targets: string[]): boolean {
+  if (!/(?:纠正|更正|继续|刚才|原请求|原任务|原验收|仍然|仍未|还是|接着|补跑|补验|恢复|correction|continue|still)/i.test(message.text)
+    || /(?:另外|另一个|新请求|新任务|separate request|new task)/i.test(message.text)) return false;
+  if (message.text.includes(origin.id) && !/(?:引用|举例|example|quote)/i.test(message.text)) return true;
+  const candidates = new Set([...projectReferences(root, origin.text), ...targets]);
+  if (projectReferences(root, message.text).some(file => candidates.has(file)
+    && !earlier.some(other => other.id !== origin.id && projectReferences(root, other.text).includes(file)))) return true;
+  const text = origin.text + ' ' + targets.join(' ');
+  const businessPhrases = message.text.replace(/刚才|原请求|原任务|原验收|继续|纠正|更正|还是|仍然|还是|还有/g, ' ')
+    .match(/[\p{Script=Han}]{4,}|\bAC-\d+\b/gu) ?? [];
+  return businessPhrases.some(phrase => {
+    const anchors = phrase.startsWith('AC-') ? [phrase] : Array.from({ length: phrase.length - 3 }, (_, index) => phrase.slice(index, index + 4));
+    return anchors.some(anchor => text.includes(anchor)
+      && !earlier.some(other => other.id !== origin.id && other.text.includes(anchor)));
+  });
+}
+
+function compareFullAttribution(root: string, frameworkRoot: string, origin: NativeMessage, tools: NativeTool[], targets: string[]) {
+  const permittedGit = (tool: NativeTool, command: RegExp) => {
+    const input = tool.input as { cwd?: string; workdir?: string };
+    return native.toolSucceeded(tool) && native.samePath(input?.cwd ?? input?.workdir ?? root, root) && command.test(native.toolInput(tool).trim());
+  };
+  const capture = tools.find(tool => permittedGit(tool, /^git rev-parse (?:--verify )?HEAD$/) && /^[\da-f]{40}$/i.test(tool.output.trim()));
+  const status = tools.find(tool => permittedGit(tool, /^git status(?:\s+(?:--porcelain(?:=v1)?|--short|-s|--untracked-files=all|-uall))+$/));
+  const base = capture?.output.trim() ?? (origin.at ? requestStartFromReflog(root, origin.at) : undefined);
+  if (!base || !status) return { unresolved: [], gaps: ['完整 diff 归属缺少可信的开工提交、状态或作者原件'] };
+  const diff = diffChangedFilesWithStatus({ projectRoot: root, baseRef: base });
+  if (!diff.executed) return { unresolved: [], gaps: [`完整 diff 归属缺少可核比较范围：${diff.error}`] };
+  const disclosures: NonNullable<RequestIntake['attribution_disclosures']> = [];
+  const unresolved = diff.entries.filter(entry => {
+    const file = entry.path;
+    try {
+      if (!isProductTarget(root, frameworkRoot, file, targets)) return false;
+      const writes = tools.filter(tool => native.editedPaths([tool], true).some(candidate => {
+        try { return nativePath(root, candidate) === nativePath(root, file); } catch { return false; }
+      }));
+      const write = writes.at(-1);
+      if (!write || !native.toolSucceeded(write) || !native.toolCompletedBefore(status, write.line)
+        || capture && !native.toolCompletedBefore(capture, write.line) || entry.oldPath) return true;
+      const openingStatus = status.output.split(/\r?\n/).filter(Boolean);
+      if (openingStatus.some(row => row.slice(3).replace(/\\/g, '/').includes(file))) return true;
+      const input = write.input as { content?: string };
+      if (!/^write$/i.test(write.name) || typeof input?.content !== 'string'
+        || !fs.readFileSync(nativePath(root, file)).equals(Buffer.from(input.content))) return true;
+      disclosures.push({ path: file, reason: `开工比较 ${base}，${toolLocation(write)} 成功写入的字节与现文件一致` });
+      return false;
+    } catch { return true; }
+  }).map(entry => entry.path);
+  return { unresolved, disclosures, gaps: unresolved.length ? [`完整 diff 归属缺少可信的开工状态与作者原件：${unresolved.join('、')}`] : [] };
 }
 
 export function resolveRequestSessionReference(requested?: string, projectRoot?: string): { sessionRef?: string; gap?: string } {
@@ -138,191 +183,104 @@ export function resolveRequestSessionReference(requested?: string, projectRoot?:
   return located.file ? { sessionRef: located.file } : { gap: located.gap };
 }
 
-export function readRequestIntake(options: { projectRoot: string; frameworkRoot: string; sessionRef?: string; explicitTargets?: string[]; previous?: RequestIntake; captureDirtyAtPrepare?: boolean }): RequestIntake {
+export function readRequestIntake(options: { projectRoot: string; frameworkRoot: string; sessionRef?: string; explicitTargets?: string[]; previous?: RequestIntake }): RequestIntake {
   const root = fs.realpathSync(options.projectRoot);
   const location = resolveRequestSessionReference(options.sessionRef ?? options.previous?.session_ref, root);
   if (!location.sessionRef) throw new Error(location.gap);
   const session = native.readNativeSession(location.sessionRef, root);
-  const origin = session.request;
   const allUsers = session.messages.filter(message => message.role === 'user');
-  const relatedUsers = new Set<string>([origin.id]);
-  const boundaries = new Map<string, NativeMessage>();
-  for (let index = 0; index < allUsers.length; index++) {
-    const user = allUsers[index];
-    if (user.line < origin.line) continue;
-    const next = allUsers[index + 1]?.line ?? Infinity;
-    const explanation = [...session.messages].reverse().find(message => message.role === 'assistant'
-      && (message.origin?.store === 'opencode' ? message.origin.parentId === user.id : message.line > user.line && message.line < next)
-      && /(?:本请求|继续原任务|request boundary)/i.test(message.text) && !/新独立请求|new independent request/i.test(message.text)
-      && (user.id === origin.id || message.text.includes(origin.id)));
-    if (explanation) { relatedUsers.add(user.id); boundaries.set(user.id, explanation); }
+  const selected = session.request;
+  const priorUsers = allUsers.filter(user => user.line < selected.line);
+  const previousReferences = location.sessionRef.includes('#') ? [] : priorUsers.filter(user => refersToRequest(selected, user, priorUsers, root, []));
+  const origin = previousReferences.length === 1 ? previousReferences[0] : selected;
+  if (options.previous && (options.previous.session_id !== session.sessionId || options.previous.user.id !== origin.id || options.previous.user.text !== origin.text)) {
+    throw new Error('原request不属于本次定位的真实用户请求');
+  }
+  const explicit = [...new Set((options.explicitTargets ?? options.previous?.explicit_targets ?? []).map(file =>
+    path.relative(root, realProjectPath(root, file, 'target')).replace(/\\/g, '/')))].sort();
+  const relatedUsers = new Set([origin.id]);
+  for (const user of allUsers) {
+    if (user.line > origin.line && refersToRequest(user, origin, allUsers.filter(other => other.line < user.line && !relatedUsers.has(other.id)), root, explicit)) {
+      relatedUsers.add(user.id);
+    }
   }
   const belongs = (record: NativeMessage | NativeTool | NativeAssociation): boolean => relatedUsers.has(record.origin?.store === 'opencode'
     ? record.origin.parentId ?? ('id' in record ? record.id : '') : allUsers.filter(user => user.line <= record.line).at(-1)?.id ?? '');
   const messages = session.messages.filter(message => message.line >= origin.line && belongs(message));
   const tools = session.tools.filter(tool => tool.line >= origin.line && belongs(tool));
-  const observations = tools.filter(native.toolSucceeded).map(tool => ({ tool, files: sourceReads(root, [tool]) }));
-  const reads = [...new Set(observations.flatMap(item => item.files))].sort();
   const facts = {} as DeliveryFacts;
-  const anchors = {} as Record<keyof DeliveryFacts, { line: number; known: Set<string> }>;
-  for (const key of Object.keys(labels) as Array<keyof DeliveryFacts>) facts[key] = { value: 'unknown', reason: `${labels[key]}尚无带来源的调研判断`, sources: [] };
+  const factKeys = Object.keys(labels) as Array<keyof DeliveryFacts>;
+  for (const key of factKeys) facts[key] = { value: 'unknown', reason: `${labels[key]}尚无带来源的调研判断`, sources: [] };
+  const factLabel = new RegExp(`(${Object.values(labels).join('|')})\\s*[=:：]\\s*(是|否|未知|true|false|unknown)`, 'gi');
   for (const message of messages.filter(message => message.role === 'assistant')) {
-    const available = observations.filter(item => native.toolCompletedBefore(item.tool, message));
-    const known = new Set(available.flatMap(item => item.files));
-    for (const key of Object.keys(labels) as Array<keyof DeliveryFacts>) {
-      const match = new RegExp(`${labels[key]}\\s*[=:：]\\s*(是|否|未知|true|false|unknown)`, 'i').exec(message.text);
-      if (!match) continue;
-      const sources = [...known].filter(file => message.text.includes(file));
-      if (!sources.length) continue;
-      const raw = match[1].toLowerCase();
-      const value = raw === '是' || raw === 'true' ? true : raw === '否' || raw === 'false' ? false : 'unknown';
-      const anchor = anchors[key];
-      if (anchor && facts[key].value !== value) {
-        const newBasis = sources.some(file => !anchor.known.has(file));
-        const edited = native.editedPaths(tools.filter(tool => tool.line > anchor.line && native.toolCompletedBefore(tool, message))).flatMap(file => {
-          try { return [path.relative(root, nativePath(root, file)).replace(/\\/g, '/')]; } catch { return []; }
-        });
-        const actualChange = sources.some(file => edited.includes(file));
-        const correction = /(?:纠正|原(?:判断|事实).{0,8}(?:错误|有误))/.test(message.text);
-        if (!newBasis && !actualChange && !correction) continue;
-      }
-      if (!anchor || facts[key].value !== value || sources.some(file => !facts[key].sources.includes(file))) facts[key] = { value, reason: message.text, sources };
-      anchors[key] = { line: message.line, known };
+    const matches = [...message.text.matchAll(factLabel)];
+    if (!matches.length) continue;
+    // A cited path in a judgment belongs to that judgment. A shared basis before
+    // the labels or introduced explicitly after them can support the other labels.
+    const last = matches.at(-1)!;
+    const lastEnd = last.index! + last[0].length;
+    const sharedStart = /[。；;\n]\s*[*_]*\s*(?:判(?:断|档)依据|共同依据|依据|来源)(?:[（(][^）)]*[）)])?\s*[:：]?/.exec(message.text.slice(lastEnd));
+    const common = message.text.slice(0, matches[0].index) + (sharedStart ? message.text.slice(lastEnd + sharedStart.index) : '');
+    for (const [index, match] of matches.entries()) {
+      const key = factKeys.find(id => labels[id].toLowerCase() === match[1].toLowerCase())!;
+      const end = matches[index + 1]?.index ?? (sharedStart ? lastEnd + sharedStart.index : message.text.length);
+      const line = message.text.slice(match.index, end);
+      const cited = references(line).length ? line : references(common).length ? common : message.text;
+      const sources = readableReferences(root, cited);
+      const raw = match[2].toLowerCase();
+      const value = !sources.length || raw === '未知' || raw === 'unknown' ? 'unknown' : raw === '是' || raw === 'true';
+      const previous = facts[key];
+      if (previous.value !== 'unknown' && previous.value !== value && value !== 'unknown'
+        && !sources.some(file => !previous.sources.includes(file)) && !/(?:纠正|更正|原(?:判断|事实).{0,8}(?:错误|有误))/.test(message.text)) continue;
+      facts[key] = { value, reason: line.trim(), sources };
     }
   }
-  const latestUser = (session.origin?.store === 'opencode' ? allUsers.filter(user => relatedUsers.has(user.id)) : allUsers).at(-1)!;
-  const boundaryMessage = boundaries.get(latestUser.id);
-  const associated = relatedUsers.has(latestUser.id);
-  const boundary = { origin_user_id: origin.id, explanation: boundaryMessage?.text ?? '当前定位的原始 user 消息；语义请求归属尚待原入口解释', source_line: boundaryMessage?.line ?? origin.line };
+  const boundary = { origin_user_id: origin.id, explanation: '已定位原始真实用户请求及其明确指向的补充', source_line: origin.line };
   let control: RequestIntake['control'] = { exempt: false, scope: 'request', excluded: [], sources: [] };
-  for (const message of session.messages.filter(message => message.role === 'user' && session.userControlVerified !== false)) {
+  for (const message of allUsers.filter(message => session.userControlVerified !== false)) {
     const change = native.userControl(message.text);
     const current = relatedUsers.has(message.id);
     if (current && change.transport) control.transport = { mode: change.transport, source: `${session.file}#${message.id}` };
     if (current && change.fullDiffAttribution !== undefined) control.full_diff_attribution = change.fullDiffAttribution;
     if (change.revoke && (current || control.scope === 'session')) control = { ...control, exempt: false, sources: [...control.sources, `${session.file}#${message.id}`] };
-    if (change.exempt && (change.session || current && boundaryMessage)) control = { ...control, exempt: true, scope: change.session ? 'session' : 'request', sources: [...control.sources, `${session.file}#${message.id}`] };
+    if (change.exempt && (change.session || current)) control = { ...control, exempt: true, scope: change.session ? 'session' : 'request', sources: [...control.sources, `${session.file}#${message.id}`] };
     if (current && (change.fixed || change.excluded.length)) control = { ...control, ...(change.fixed ? { fixed: scales[change.fixed] } : {}), excluded: [...new Set([...control.excluded, ...change.excluded])], sources: [...control.sources, `${session.file}#${message.id}`] };
     if (current && change.included.length) control = { ...control, excluded: control.excluded.filter(family => !change.included.includes(family)), sources: [...control.sources, `${session.file}#${message.id}`] };
   }
-  let baseline: RequestIntake['baseline'] = { head: 'WORKTREE', source: 'unknown', detail: '起始HEAD未核', initial_dirty: 'unknown' };
-  const firstWrite = tools.find(tool => !tool.error && native.isEditCall(tool));
-  const beforeWrite = (tool: NativeTool): boolean => !firstWrite || (Number.isFinite(firstWrite.startedTime) ? native.toolCompletedBefore(tool, { id: '', role: '', text: '', at: new Date(firstWrite.startedTime!).toISOString(), line: firstWrite.line }) : native.toolCompletedBefore(tool, firstWrite.line));
-  const capture = tools.find(tool => native.toolSucceeded(tool) && beforeWrite(tool) && currentWorktreeGit(tool, root, /^rev-parse\s+(?:--verify\s+)?HEAD\b/) && /\b[a-f0-9]{40}\b/.test(tool.output));
-  if (capture) {
-    const hashes = [...new Set(capture.output.match(/\b[a-f0-9]{40}\b/g))];
-    const location = capture.origin?.partId ? `${session.file} (native part=${capture.origin.partId}${capture.origin.callId ? ', call=' + capture.origin.callId : ''})`
-      : Number.isInteger(capture.resultLine) ? `${session.file}:${capture.resultLine}` : `${session.file} (normalized position=${capture.line})`;
-    if (hashes.length === 1) try { baseline = { ...baseline, base: git(root, ['rev-parse', '--verify', `${hashes[0]}^{commit}`]), source: 'captured', detail: location }; } catch { /* An unreachable object is unknown. */ }
-  }
-  if (!baseline.base && origin.at) {
-    const base = requestStartFromReflog(root, origin.at);
-    if (base) baseline = { ...baseline, base, source: 'reflog', detail: `本worktree HEAD reflog覆盖${origin.at}` };
-  }
-  const status = tools.find(tool => native.toolSucceeded(tool) && beforeWrite(tool) && currentWorktreeGit(tool, root, /^status\b[^\n]*(?:--porcelain|--short|\s-s(?=[\s"';]|$))/));
-  const statuses = new Map<string, string>();
-  if (status) {
-    for (const line of status.output.split(/\r?\n/).filter(line => /^[ MADRCU?!]{2} /.test(line))) {
-      const file = line.slice(3).split(' -> ').at(-1)!.replace(/\\/g, '/');
-      statuses.set(file, line.slice(0, 2));
-    }
-    baseline.initial_dirty = [...statuses.keys()];
-  }
-  if (Array.isArray(baseline.initial_dirty)) {
-    const preimages: NonNullable<RequestIntake['baseline']['preimages']> = {};
-    const uncertain = tools.find(tool => status && tool.line > status.line && !initialEvidenceRead(tool, root));
-    const preimageReads = tools.filter(tool => native.toolSucceeded(tool) && beforeWrite(tool) && /^(?:Read|read_file)$/i.test(tool.name)
-      && (!uncertain || native.toolCompletedBefore(tool, { id: '', role: '', text: '', at: Number.isFinite(uncertain.startedTime) ? new Date(uncertain.startedTime!).toISOString() : undefined, line: uncertain.line })));
-    for (const file of baseline.initial_dirty) {
-      if (statuses.get(file) === ' D' || statuses.get(file) === 'D ') {
-        (baseline.initially_absent ??= []).push(file);
-        continue;
-      }
-      for (const read of preimageReads) {
-        if (!sourceReads(root, [read]).includes(file)) continue;
-        const preimage = read.readExact?.() ?? read.read;
-        // Numbered/truncated presentation cannot supply exact bytes.
-        if (preimage?.complete && preimage.exact !== false && path.relative(root, nativePath(root, preimage.path)).replace(/\\/g, '/') === file) preimages[file] = { content: preimage.content, source_line: read.resultLine ?? read.line };
-        else if (!read.read && read.resultLine && read.output && !/^\s*\d+[→\t]|<system-reminder>|truncated|被截断/m.test(read.output)) preimages[file] = { content: read.output, source_line: read.resultLine };
-        if (preimages[file]) break;
-      }
-    }
-    if (Object.keys(preimages).length) baseline.preimages = preimages;
-  }
-  if (options.previous) {
-    if (options.previous.session_id !== session.sessionId || options.previous.user.id !== origin.id) throw new Error('原request不属于本次定位的请求，不能重置基线或覆盖选择');
-    if (baseline.base && options.previous.baseline.base && baseline.base !== options.previous.baseline.base) throw new Error('原request基线与原生起始依据不一致，不能换当前HEAD重置');
-  }
-  const explicit = [...new Set((options.explicitTargets ?? options.previous?.explicit_targets ?? []).map(file => path.relative(root, realProjectPath(root, file, 'target')).replace(/\\/g, '/')))];
-  const relative = (file: string): string[] => { try { return [path.relative(root, nativePath(root, file)).replace(/\\/g, '/')]; } catch { return []; } };
-  const edits = native.editedPaths(tools).flatMap(relative);
-  const proposed = native.editedPaths(tools.filter(tool => tool.completed === false && !tool.error), true).flatMap(relative);
-  const diff = baseline.base ? diffChangedFilesWithStatus({ projectRoot: root, baseRef: baseline.base }) : undefined;
-  const dirty = baseline.initial_dirty;
-  const current = new Map<string, string | null>();
-  const digest = (file: string): string | null => {
-    if (!current.has(file)) {
-      const absolute = nativePath(root, file);
-      current.set(file, fs.existsSync(absolute) && fs.statSync(absolute).isFile() ? crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex') : null);
-    }
-    return current.get(file)!;
+  const legacyBaseline = options.previous?.baseline;
+  const baseline: RequestIntake['baseline'] = {
+    head: 'WORKTREE', source: legacyBaseline?.source ?? 'unknown',
+    ...(legacyBaseline?.base ? { base: legacyBaseline.base } : {}),
+    detail: '内容影响另用当前 HEAD 比较；保留原请求已记录的身份', initial_dirty: 'unknown',
   };
-  const product = (file: string): boolean => isProductTarget(root, options.frameworkRoot, file, [...explicit, ...edits, ...proposed]);
-  const overlaps = new Set([...explicit, ...edits, ...proposed]);
-  const dirtyProduct = dirty === 'unknown' ? [] : dirty.flatMap(relative).filter(product);
-  const previousBaseline = options.previous?.baseline;
-  if (previousBaseline?.dirty_digests && previousBaseline.base === baseline.base
-    && JSON.stringify(previousBaseline.initial_dirty) === JSON.stringify(dirty)) {
-    baseline.dirty_digests = previousBaseline.dirty_digests;
-    if (previousBaseline.dirty_digests_at === 'prepare') baseline.dirty_digests_at = 'prepare';
-  } else if (options.captureDirtyAtPrepare && !previousBaseline && session.userControlVerified !== false && status && baseline.base) {
-    const digests = Object.fromEntries(dirtyProduct.filter(file => !baseline.preimages?.[file] && !baseline.initially_absent?.includes(file)
-      && !statuses.has(`${file}/`)).map(file => [file, digest(file)]));
-    if (Object.keys(digests).length) {
-      baseline.dirty_digests = digests;
-      baseline.dirty_digests_at = 'prepare';
-    }
-  }
-  const changedDirty = new Set<string>();
-  const attribution_disclosures: NonNullable<RequestIntake['attribution_disclosures']> = [];
-  for (const file of dirtyProduct) {
-    const before = baseline.preimages?.[file], absent = baseline.initially_absent?.includes(file);
-    if (before || absent) {
-      const beforeDigest = before ? crypto.createHash('sha256').update(before.content).digest('hex') : null;
-      if (beforeDigest !== digest(file)) changedDirty.add(file);
-      continue;
-    }
-    const hasDigest = Object.prototype.hasOwnProperty.call(baseline.dirty_digests ?? {}, file);
-    const changed = hasDigest && baseline.dirty_digests![file] !== digest(file);
-    if (changed) changedDirty.add(file);
-    if (hasDigest && baseline.dirty_digests_at === 'prepare') {
-      const change = changed ? '首次准备后字节或存在性已变化' : '仅核实首次准备时的字节或存在性';
-      attribution_disclosures.push({ path: file, reason: `${change}，缺少可信写前存在性或字节依据来核实开工状态` });
-    } else if (changed) attribution_disclosures.push({ path: file, reason: '写前摘要证实路径再次变化，缺少用于归属和影响核验的写前原件' });
-    else if (!hasDigest) attribution_disclosures.push({ path: file, reason: '初始状态只有脏路径，缺少可信写前存在性或字节依据' });
-  }
-  const candidates = [...new Set([...explicit, ...edits, ...changedDirty, ...(diff?.entries ?? []).filter(entry => dirty !== 'unknown' && !dirty.includes(entry.path) || overlaps.has(entry.path)).map(entry => entry.path)])];
-  const targets = candidates.filter(file => product(file) && (explicit.includes(file) || !dirtyProduct.includes(file) || changedDirty.has(file)
-    || attribution_disclosures.some(item => item.path === file)));
-  const attribution_unknown = targets.filter(file => dirty === 'unknown' || attribution_disclosures.some(item => item.path === file));
-  const content_fingerprint = crypto.createHash('sha256').update(JSON.stringify(targets.sort().map(file => [file, digest(file)]))).digest('hex');
-  const source_results = tools.filter(tool => !native.toolSucceeded(tool)).map(tool => ({
-    detail: `${toolLocation(tool)} ${tool.error ? '执行失败' : '工具结果尚未配对'}`,
-    paths: [...new Set([...sourceReads(root, [tool], true), ...native.editedPaths([tool], true).flatMap(relative)])],
-  }));
-  const gaps = [...(!baseline.base ? ['起始提交未核：只可执行显式目标检查，不能签全部diff对账'] : []), ...(dirty === 'unknown' ? ['初始dirty未核'] : []), ...(!boundaryMessage ? ['本请求边界解释未核：继续原任务须给原始user消息定位，新需求不能复用旧豁免'] : []), ...(!reads.length ? ['本请求源码调研原件未核'] : []), ...(!targets.length ? ['本请求产品目标未定位'] : [])];
-  if (diff && !diff.executed) gaps.push(`起始提交与当前工作区 diff 未核：${diff.error}`);
-  if (!reads.length) gaps.push(...source_results.filter(item => item.paths.length).map(item => `${item.detail}，涉及 ${item.paths.join('、')} 的来源尚未核实`));
-  gaps.push(...(session.associations ?? []).filter(record => record.line >= origin.line && belongs(record)).map(record => record.detail));
-  if (!associated) for (const key of Object.keys(labels) as Array<keyof DeliveryFacts>) facts[key] = { ...facts[key], value: 'unknown', reason: '当前请求未关联到所指原始user；' + facts[key].reason };
-  gaps.push(...(session.gaps ?? []));
+  const targets = [...new Set([...explicit, ...projectReferences(root, origin.text).filter(file => {
+    try { return isProductTarget(root, options.frameworkRoot, file) && fs.statSync(nativePath(root, file)).isFile(); } catch { return false; }
+  })])].sort();
+  const rejectedAssociations = (session.associations ?? []).filter(record => record.line >= origin.line && belongs(record));
+  const source_results = [
+    ...tools.filter(tool => !native.toolSucceeded(tool)).map(tool => ({
+      detail: `${toolLocation(tool)} ${tool.error ? '执行失败' : '工具结果尚未配对'}`,
+      paths: [...new Set([...projectReferences(root, native.toolInput(tool)), ...native.editedPaths([tool], true).flatMap(file => projectReferences(root, file))])],
+    })),
+    ...rejectedAssociations.map(record => ({ detail: record.detail, paths: [] })),
+    ...(session.gaps ?? []).map(detail => ({ detail, paths: [] })),
+  ];
+  const { unresolved: attribution_unknown, disclosures, gaps } = control.full_diff_attribution
+    ? compareFullAttribution(root, options.frameworkRoot, origin, tools, targets) : { unresolved: [], disclosures: undefined, gaps: [] };
   return { session_ref: `${session.file}#${origin.id}`, session_id: session.sessionId,
     user: { id: origin.id, text: origin.text, at: origin.at, line: origin.line },
     user_messages: allUsers.filter(message => relatedUsers.has(message.id)).map(message => ({ id: message.id, text: message.text, at: message.at, line: message.line })), boundary,
-    front_door_loaded: native.frontDoorLoaded(session, root, options.frameworkRoot), control, facts,
-    policy: resolveDeliveryPolicy(facts, control.fixed), baseline, explicit_targets: explicit, targets, attribution_unknown,
-    ...(attribution_disclosures.length ? { attribution_disclosures } : {}), source_reads: reads,
-    ...(source_results.length ? { source_results } : {}), content_fingerprint, gaps };
+    control, facts, policy: resolveDeliveryPolicy(facts, control.fixed), baseline, explicit_targets: explicit, targets, attribution_unknown,
+    ...(disclosures?.length ? { attribution_disclosures: disclosures } : {}),
+    ...(source_results.length ? { source_results } : {}), content_fingerprint: requestTargetFingerprint(root, targets), gaps };
+}
+
+export function requestTargetFingerprint(root: string, targets: readonly string[]): string {
+  return crypto.createHash('sha256').update(JSON.stringify([...new Set(targets)].sort().map(file => {
+    const absolute = nativePath(root, file);
+    return [file, fs.existsSync(absolute) && fs.statSync(absolute).isFile()
+      ? crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex') : null];
+  }))).digest('hex');
 }
 
 export function intakeIdentity(intake: RequestIntake): string {

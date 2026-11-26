@@ -132,7 +132,7 @@ function makeCtx(root: string): CheckContext {
         ut_no_src_mutation: { description: 'UT 阶段不得擅改业务源码' },
       },
     } as unknown as CheckContext['phaseRule'],
-    featureSpec: { feature: FEATURE } as unknown as CheckContext['featureSpec'],
+    featureSpec: { feature: FEATURE, contracts: { files: [SRC_REL, CODING_ARTIFACT_REL], modules: [] } } as unknown as CheckContext['featureSpec'],
     resolvedProfile: loadResolvedProfile(root, cfg),
   } as unknown as CheckContext;
 }
@@ -187,7 +187,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         const r = one(root);
         assert(r.status === 'PASS', `期望 PASS，实际 ${r.status}：${r.details}`);
         assert(
-          (r.details ?? '').includes('基线=review closure attestation'),
+          (r.details ?? '').includes('本次范围内已审源码'),
           `details 应标注 attestation 基线：${r.details}`,
         );
         assert(
@@ -216,7 +216,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           const r = one(root);
           assert(r.status === 'PASS', `schema=${schemaVersion} 期望 PASS，实际 ${r.status}：${r.details}`);
           assert(
-            (r.details ?? '').includes('基线=review closure attestation'),
+            (r.details ?? '').includes('本次范围内已审源码'),
             `schema=${schemaVersion} 应走 attestation 基线而非 git：${r.details}`,
           );
         } finally {
@@ -249,7 +249,11 @@ const cases: Array<{ name: string; run: () => void }> = [
       try {
         writeAttestation(root);
         writeReviewSummary(root, true);
-        // review 之后改了一个业务源文件。
+        // 无关并行任务采用同一模块目录，也不会被归进本次审查。
+        const unrelated = path.posix.join(path.posix.dirname(SRC_REL), 'OtherFlow.ets');
+        writeFile(root, unrelated, 'export class OtherFlow {}');
+        assert(one(root).status === 'PASS', '无关路径不使当前 review 过期');
+        // review 所用输入实际变化。
         writeFile(root, SRC_REL, 'export class DemoFlow { run(): number { return 99; } }\n');
 
         const r = one(root);
@@ -338,7 +342,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         git(root, ['commit', '-q', '-m', 'orphan attestation + committed edit']);
 
         const r = one(root);
-        assert(r.status === 'FAIL', `期望 fail-closed，实际 ${r.status}：${r.details}`);
+        assert(r.status === 'WARN', `只披露 review 历史对照缺口，实际 ${r.status}：${r.details}`);
         assert(
           r.failure_kind === 'review_closure_baseline_unavailable',
           `闭环证据残缺应 fail-closed（failure_kind 实际 ${r.failure_kind}）`,
@@ -370,7 +374,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         );
 
         const r = one(root);
-        assert(r.status === 'FAIL', `期望 fail-closed，实际 ${r.status}：${r.details}`);
+        assert(r.status === 'WARN', `只披露 review 历史对照缺口，实际 ${r.status}：${r.details}`);
         assert(
           r.failure_kind === 'review_closure_baseline_unavailable',
           `failure_kind=${r.failure_kind}`,
@@ -382,47 +386,28 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '⑤ review 从未闭环（无 summary 且无 attestation）→ 与既有 git 行为等值：FAIL 归因/话术/affected_files 不变',
+    name: '未取得 review 原件时，工作区预存修改不被误判为 UT 越权',
     run: () => {
       const root = makeProject();
       try {
         writeFile(root, SRC_REL, 'export class DemoFlow { run(): number { return 7; } }\n');
 
         const r = one(root);
-        assert(r.status === 'FAIL' && r.severity === 'BLOCKER', `期望 FAIL：${r.status}`);
-        assert(r.failure_kind === 'unauthorized_src_mutation', `failure_kind=${r.failure_kind}`);
-        assert(r.blocking_class === 'ut_no_src_mutation', `blocking_class=${r.blocking_class}`);
-        assert(
-          JSON.stringify(r.affected_files) === JSON.stringify([SRC_REL]),
-          `affected_files=${JSON.stringify(r.affected_files)}`,
-        );
-        assert(
-          (r.details ?? '').includes('legacy approved_src_mutations/用户回复不参与质量放行'),
-          `既有 fallback 话术须逐字保留：${r.details}`,
-        );
-        assert(
-          (r.suggestion ?? '').includes('停止 UT 阶段改码'),
-          `既有 fallback suggestion 须逐字保留：${r.suggestion}`,
-        );
-        assert(
-          (r.details ?? '').includes('review 阶段 summary.json 未在盘'),
-          `fallback 应说明基线降级原因：${r.details}`,
-        );
-        assert((r.details ?? '').includes('baseRef='), `应走 git 基线：${r.details}`);
+        assert(r.status === 'WARN' && r.failure_kind === 'review_closure_baseline_unavailable', `缺对照只披露：${r.details}`);
+        assert(!r.affected_files?.length, '既有工作区差异不被认定为 UT 的越权操作');
       } finally {
         cleanup(root);
       }
     },
   },
   {
-    name: '⑤ review 从未闭环且工作区无业务改动 → 仍走 git 基线 PASS（等值：存量 fixture 形态）',
+    name: '干净工作区也不能补足缺失的 review 原件',
     run: () => {
       const root = makeProject();
       try {
         writeFile(root, UT_REL, 'describe("demo", () => {});\n');
         const r = one(root);
-        assert(r.status === 'PASS', `期望 PASS，实际 ${r.status}：${r.details}`);
-        assert((r.details ?? '').includes('baseRef='), `应走 git 基线：${r.details}`);
+        assert(r.status === 'WARN' && r.failure_kind === 'review_closure_baseline_unavailable', `缺 review 历史对照：${r.details}`);
       } finally {
         cleanup(root);
       }
@@ -474,7 +459,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         ));
 
         const r = one(root);
-        assert(r.status === 'FAIL', `删 summary 不得洗白已提交漂移，实际 ${r.status}：${r.details}`);
+        assert(r.status === 'WARN', `只披露 review 历史对照缺口，实际 ${r.status}：${r.details}`);
         assert(
           r.failure_kind === 'review_closure_baseline_unavailable',
           `failure_kind=${r.failure_kind}`,
@@ -507,7 +492,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert(!fs.existsSync(path.join(reportsDir, 'summary.json')), 'existsSync 前提：ENOTDIR 静默 false');
 
         const r = one(root);
-        assert(r.status === 'FAIL', `探测不可核实必须 fail-closed，实际 ${r.status}：${r.details}`);
+        assert(r.status === 'WARN', `只披露 review 历史对照缺口，实际 ${r.status}：${r.details}`);
         assert(
           r.failure_kind === 'review_closure_baseline_unavailable',
           `failure_kind=${r.failure_kind}`,
@@ -557,7 +542,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         writeFile(root, SRC_REL, 'export class DemoFlow { run(): number { return 5; } }\n');
 
         const r = one(root);
-        assert(r.status === 'FAIL', `期望 fail-closed，实际 ${r.status}`);
+        assert(r.status === 'WARN', `只披露 review 历史对照缺口，实际 ${r.status}`);
         assert(
           r.failure_kind === 'review_closure_baseline_unavailable',
           `failure_kind=${r.failure_kind}`,

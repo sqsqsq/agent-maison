@@ -73,7 +73,7 @@ Enforcement: `harness/scripts/utils/correction-state.ts`, `harness/harness-runne
 
 ### Requirement: No-feature corrections run via adhoc entry
 
-显式请求 no-feature 综合维护检查时，MUST 经 `--adhoc-correction` 专用入口执行验证；普通维护和仅编译请求 MUST NOT 被强制进入该链，MUST NOT 为此创建临时 feature 目录。契约：输入 MUST 为含 `base_commit` 的 correction state（缺失/stale → exit 非零）；changed-files MUST 取 `git diff --name-only <base_commit>` ∪ 工作区未提交变更，触及模块经 catalog 反查记录回 state；必跑检查 MUST 含 profile `coding.compile`、`coding.lint`、架构规则（层依赖/跨模块出口）与受保护前缀（no-feature 下以此替代 `diff_within_scope`，越界防护不豁免）；报告 MUST 落 `doc/reports/_adhoc/<timestamp>/` 并逐项列 revalidate 结果；revalidate 含 testing 时 evidence MUST 为 device 即席报告或 `manual_confirm` 记录，缺能力走验证转嫁禁令。
+显式请求 no-feature 综合维护检查时，MUST 经 `--adhoc-correction` 专用入口执行验证；普通维护和仅编译请求 MUST NOT 被强制进入该链，MUST NOT 为此创建临时 feature 目录。契约：输入 MUST 为含 `base_commit` 的 correction state（缺失/stale → exit 非零）；普通内容比较 MUST 取当前 HEAD 对最终工作区，含暂存和未跟踪文件。用户指定历史区间时沿原区间。无显式目标时，可从修正起点发现已提交候选，并分析全部可映射的候选模块。架构目标或问题归属不可核时，架构检查 MUST 标为欠验，编译与 lint 结果仍各自保留。差异和 catalog 只供查找本次修正及真实依赖，另一请求的路径无法映射 MUST NOT 单独使命令失败；必跑检查 MUST 含 profile `coding.compile`、`coding.lint`、架构规则（层依赖/跨模块出口）与受保护前缀（no-feature 下以此替代 `diff_within_scope`，越界防护不豁免）；报告 MUST 落 `doc/reports/_adhoc/<timestamp>/` 并逐项列 revalidate 结果；revalidate 含 testing 时 evidence MUST 为 device 即席报告或 `manual_confirm` 记录，缺能力走验证转嫁禁令。
 
 #### Scenario: 散修不造假目录
 - **WHEN** no-feature correction 完成实施并自检

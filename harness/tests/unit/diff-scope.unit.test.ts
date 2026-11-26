@@ -11,10 +11,14 @@
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
+import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
 import {
   classifyChangedFiles,
   isUnderLayerDir,
   resolveModulePathPrefixes,
+  readImplementationReviewChanges,
+  reviewCoverageDisclosure,
 } from '../../scripts/utils/diff-scope';
 import { resolveChainFromEvents } from '../../scripts/utils/goal-progress';
 import type { GoalRunEvent } from '../../scripts/utils/goal-runner-phase';
@@ -47,6 +51,44 @@ function writeCatalog(root: string, modulesYaml: string): void {
 const LAYERS = ['01-Product/', '02-Feature/', '03-Service/'];
 
 const cases: Array<{ name: string; run: () => void }> = [
+  {
+    name: 'Feature verifier binds the actual scope references and leaves independent module candidates unreviewed',
+    run: () => {
+      const root = tempRoot('feature-adopted-review-');
+      try {
+        const feature = 'search', frameworkRoot = path.resolve(__dirname, '../../..');
+        const main = 'src/search/Main.ts', dependency = 'src/search/Filter.ts', unrelated = 'src/search/Parallel.ts';
+        const write = (file: string, content: string) => {
+          const absolute = path.join(root, file);
+          fs.mkdirSync(path.dirname(absolute), { recursive: true });
+          fs.writeFileSync(absolute, content);
+        };
+        write('framework.config.json', JSON.stringify({ project_profile: { name: 'generic' }, architecture: {
+          outer_layers: [{ id: 'src', can_depend_on: [] }], module_inner_layers: ['domain'],
+        } }));
+        write('doc/features/search/contracts.yaml', JSON.stringify({ feature, modules: [{ name: 'search', layer: 'src', package_path: 'src/search' }], files: [main] }));
+        write('doc/features/search/review/review-report.md', `# Review\n\n## 审查范围\n\n- \`${main}\`\n- \`${dependency}\`\n`);
+        write(main, 'import { filter } from "./Filter"; export const value = filter(42);');
+        write(dependency, 'export const filter = (x: number) => x;');
+        const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: 'pipe' });
+        git('init', '-q');
+        git('add', '-A');
+        git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'reviewed implementation');
+        const build = () => buildVerifierMaterialView({ projectRoot: root, frameworkRoot, feature, phase: 'review',
+          gateFingerprint: null, phaseRuleText: '', templateText: '', checks: [], contextFiles: [] });
+        const original = build();
+        eq(original.files.some(file => file.path === dependency), true, 'a cited committed source enters verifier material');
+        write(unrelated, 'export const unrelated = true;');
+        eq(build().material_sha256, original.material_sha256, 'candidate path does not become adopted evidence');
+        const diff = readImplementationReviewChanges(root, feature, { frameworkRoot })!;
+        eq(diff.contextFiles.some(entry => entry.label === '(implementation review candidates)' && entry.content.includes(unrelated)), true, 'show the candidate to the reviewer');
+        eq(reviewCoverageDisclosure(root, [main, dependency]).includes(unrelated), true, 'unreviewed path stays disclosed');
+        write(dependency, 'export const filter = (x: number) => x + 1;');
+        eq(build().material_sha256 === original.material_sha256, false, 'a real cited dependency stales the original review');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+
   {
     name: 'classifyChangedFiles：层外 neutral / 命中 in_scope / 层内未命中 violation',
     run: () => {

@@ -30,6 +30,8 @@ import {
   phaseEvidenceManifestPath,
   resolvePhaseEvidenceManifest,
   recomputeManifestAggregate,
+  recomputePhaseEvidenceStaleness,
+  sha256File,
   verifyPhaseEvidenceManifestWithStagedOutputs,
   writePhaseEvidenceManifest,
 } from './phase-evidence-manifest';
@@ -463,8 +465,17 @@ function publishEvidenceBinding(
 ): { manifestRel: string; manifestSha: string } {
   const manifestAbs = phaseEvidenceManifestPath(opts.projectRoot, opts.feature, opts.phase);
   const manifestRel = path.relative(opts.projectRoot, manifestAbs).replace(/\\/g, '/');
+  const summaryRel = path.relative(opts.projectRoot, summaryPath).replace(/\\/g, '/');
+  const original = opts.prepareEvidence ? null : loadPhaseEvidenceManifest(opts.projectRoot, opts.feature, opts.phase);
+  if (original) {
+    const [freshness] = recomputePhaseEvidenceStaleness(opts.projectRoot, opts.feature, [opts.phase], {
+      frameworkRoot: opts.frameworkRoot, runId: opts.goalRunId,
+    });
+    const changed = freshness.changed_paths;
+    if (!original.integrityOk || freshness.verdict === 'missing' || freshness.verdict === 'tampered' || changed.length) throw new Error(`阶段原报告或检查输入已经变化：${changed.join('、') || freshness.integrity_errors?.join('；')}`);
+  }
   const evidence = opts.prepareEvidence ? opts.prepareEvidence() : productionEvidence(opts, summaryPath);
-  const manifest = resolvePhaseEvidenceManifest({
+  const manifest = original?.integrityOk ? structuredClone(original.manifest) : resolvePhaseEvidenceManifest({
     resolvedInputs: opts.resolvedInputs,
     factsContext: opts.factsContext ?? rebuildFactsContext(opts, summaryPath),
     projectRoot: opts.projectRoot,
@@ -477,6 +488,19 @@ function publishEvidenceBinding(
     stagedOutputs: [{ canonicalPath: summaryPath, sha256: summarySha }],
     now: opts.now,
   });
+  if (original?.integrityOk) {
+    const outputs = new Map(manifest.outputs.map(entry => [entry.path, entry]));
+    outputs.set(summaryRel, { path: summaryRel, role: 'output', exists: true, sha256: summarySha });
+    for (const file of evidence.extraOutputs ?? []) {
+      const absolute = path.resolve(opts.projectRoot, file);
+      const relative = validateProjectRelativePath(opts.projectRoot, path.relative(opts.projectRoot, absolute), 'closure output');
+      const sha256 = sha256File(absolute);
+      outputs.set(relative, { path: relative, role: 'output', exists: sha256 !== null, sha256 });
+    }
+    manifest.outputs = [...outputs.values()].sort((a, b) => a.path.localeCompare(b.path));
+    manifest.generated_at = (opts.now ? opts.now() : new Date()).toISOString();
+    manifest.aggregate_sha256 = recomputeManifestAggregate(manifest);
+  }
   const written = writePhaseEvidenceManifest(opts.projectRoot, manifest);
   maybeCrash(opts, 'after_manifest_publish');
   return { manifestRel, manifestSha: written.sha256 };

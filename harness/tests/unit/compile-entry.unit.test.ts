@@ -7,6 +7,7 @@ import { runCompile } from '../../scripts/compile';
 import { clearFrameworkConfigCache, enumerateFeatures, statefilePath } from '../../config';
 import { runAdhocCorrection } from '../../scripts/utils/correction-commands';
 import { buildCorrectionState, writeCorrectionState } from '../../scripts/utils/correction-state';
+import { provisionFrameworkUnder } from '../utils/real-chain-host';
 
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
 const HARNESS_ROOT = path.join(FRAMEWORK_ROOT, 'harness');
@@ -233,6 +234,91 @@ const cases: Array<{ name: string; run(root: string): void | Promise<void> }> = 
       assert(fs.existsSync(path.resolve(HARNESS_ROOT, summary.logPath)));
       const rejected = spawnSync(process.execPath, [...args, '--module', 'entry'], { cwd: HARNESS_ROOT, encoding: 'utf8', timeout: 30000 });
       assert.strictEqual(rejected.status, 1); assert.strictEqual(JSON.parse(rejected.stdout).executed, false);
+    },
+  },
+  {
+    name: 'adhoc 公共入口分析跨模块和已提交候选，精确报告架构未证实与实际违规',
+    run(root) {
+      const write = (file: string, contents: string) => {
+        const absolute = path.join(root, file);
+        fs.mkdirSync(path.dirname(absolute), { recursive: true });
+        fs.writeFileSync(absolute, contents);
+      };
+      const configFile = path.join(root, 'framework.config.json');
+      const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      config.paths.state_file = '.fixture-state/current-phase.json';
+      config.architecture.outer_layers = [
+        { id: 'entry', can_depend_on: ['common'], intra_layer_deps: 'forbid' },
+        { id: 'common', can_depend_on: [], intra_layer_deps: 'forbid' },
+      ];
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      const product = 'entry/Search/index.ets', helper = 'common/Filter/index.ets';
+      write(product, 'import { filter } from "../../common/Filter/index.ets"; export const value = filter(1);');
+      write(helper, 'export const filter = (x: number) => x;');
+      write('doc/module-catalog.yaml', [
+        'schema_version: "1.0"', 'modules:',
+        `  - { name: Search, layer: entry, entry_file: "${product}" }`,
+        `  - { name: Filter, layer: common, entry_file: "${helper}" }`, '',
+      ].join('\n'));
+      write('.gitignore', ['ide/', 'framework/', 'doc/reports/', 'calls.txt', '.fixture-state/', '*.log', ''].join('\n'));
+      const { frameworkRoot: installedFramework } = provisionFrameworkUnder(root);
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: 'pipe' }).trim();
+      git('init', '-q');
+      git('add', '-A');
+      git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline');
+      const cli = (...args: string[]) => spawnSync(process.execPath, [require.resolve('ts-node/dist/bin.js'), '--transpile-only',
+        path.join(HARNESS_ROOT, 'harness-runner.ts'), '--project-root', root, '--framework-root', installedFramework, ...args],
+        { cwd: HARNESS_ROOT, encoding: 'utf8', timeout: 30_000 });
+      const init = (request: string) => {
+        const result = cli('--correction-init', '--correction-request', request, '--q-requirement', 'n', '--q-contract', 'n', '--q-code', 'y');
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+      };
+      const check = () => {
+        const result = cli('--adhoc-correction');
+        const reports = path.join(root, 'doc/reports/_adhoc');
+        const last = fs.readdirSync(reports).sort().at(-1)!;
+        const data = JSON.parse(fs.readFileSync(path.join(reports, last, 'correction-report.json'), 'utf8'));
+        const architecture = data.results.find((check: { id: string }) => check.id === 'adhoc_architecture_rules');
+        assert.equal(data.results.find((check: { id: string }) => check.id === 'adhoc_coding_compile')?.status, 'PASS');
+        return { exit: result.status, verdict: data.verdict, architecture, output: result.stdout + result.stderr };
+      };
+      init('修正筛选行为');
+      const empty = check();
+      assert.equal(empty.exit, 1, empty.output);
+      assert.equal(empty.verdict, 'INCOMPLETE');
+      assert.equal(empty.architecture.status, 'SKIP');
+      const parallel = 'common/Filter/Parallel.ets';
+      write(product, 'import { filter } from "../../common/Filter/index.ets"; export const value = filter(2);');
+      write(parallel, 'export const independent = true;');
+      const concurrent = check();
+      assert.equal(concurrent.exit, 0, concurrent.output);
+      assert.deepEqual([...concurrent.architecture.affected_files].sort(), [parallel, product].sort());
+      fs.unlinkSync(path.join(root, parallel));
+      write(helper, 'export const filter = (x: number) => x + 1;');
+      const cross = check();
+      assert.equal(cross.exit, 0, cross.output);
+      assert.deepEqual([...cross.architecture.affected_files].sort(), [helper, product].sort());
+      git('add', '-A');
+      git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'actual correction');
+      const status = git('status', '--porcelain');
+      assert.equal(status, '', `fixture has no worktree delta after the correction commit: ${status}`);
+      const committed = check();
+      assert.equal(committed.exit, 0, committed.output);
+      assert.deepEqual([...committed.architecture.affected_files].sort(), [helper, product].sort());
+
+      write(parallel, 'import { value } from "../../entry/Search/index.ets"; export const bad = value;');
+      const ambiguous = check();
+      assert.equal(ambiguous.verdict, 'INCOMPLETE', ambiguous.output);
+      assert.equal(ambiguous.architecture.status, 'SKIP');
+      assert.deepEqual(ambiguous.architecture.affected_files, [parallel]);
+      init(`修正 \`${product}\``);
+      assert.equal(check().exit, 0, 'a proven independent change is outside this correction');
+      init(`修正 \`${parallel}\``);
+      const invalid = check();
+      assert.equal(invalid.exit, 1, invalid.output);
+      assert.equal(invalid.verdict, 'FAIL');
+      assert.equal(invalid.architecture.status, 'FAIL');
+      assert.deepEqual(invalid.architecture.affected_files, [parallel]);
     },
   },
   {

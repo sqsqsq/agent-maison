@@ -14,6 +14,10 @@ function samePath(left, right) {
 function openCodeDatabase(env = process.env, home = os.homedir()) {
   return path.join(env.XDG_DATA_HOME || path.join(home, '.local/share'), 'opencode/opencode.db');
 }
+function normalizeOpenCodeToolInput(input) {
+  return { ...(input ?? {}), ...(typeof input?.filePath === 'string' ? { file_path: input.filePath } : {}),
+    ...(typeof input?.patchText === 'string' ? { patch: input.patchText } : {}) };
+}
 function withOpenCodeSession(database, sessionId, cwd, consume, rootOnly = false) {
   const { DatabaseSync } = require('node:sqlite');
   const db = new DatabaseSync(database, { readOnly: true });
@@ -109,7 +113,7 @@ function readOpenCodeSession(ref, projectRoot, env = process.env) {
       const data = part.data, state = data.state ?? {}, name = ({ read: 'Read', edit: 'Edit', write: 'Write', bash: 'Bash' })[data.tool] ?? data.tool;
       const completed = ['completed', 'error'].includes(state.status) && Number.isFinite(state.time?.end);
       const error = state.status === 'error' || data.tool === 'bash' && (state.status === 'completed' && state.metadata?.exit !== 0);
-      const tool = { name, input: { ...(state.input ?? {}), ...(typeof state.input?.filePath === 'string' ? { file_path: state.input.filePath } : {}), ...(typeof state.input?.patchText === 'string' ? { patch: state.input.patchText } : {}) }, output: state.output ?? state.error ?? '', line: order.get(part.id), completed, error,
+      const tool = { name, input: normalizeOpenCodeToolInput(state.input), output: state.output ?? state.error ?? '', line: order.get(part.id), completed, error,
         startedTime: state.time?.start, completionTime: completed ? state.time.end : undefined,
         origin: { store: 'opencode', sessionId, messageId: part.message_id, parentId: assistant.data.parentID, partId: part.id, callId: data.callID, status: state.status, order: 'normalized', exit: state.metadata?.exit } };
       const prior = calls.get(data.callID);
@@ -141,4 +145,4 @@ function readOpenCodeSession(ref, projectRoot, env = process.env) {
     return { file: reference(fs.realpathSync(database), sessionId), sessionId, cwd: fs.realpathSync(session.directory), request, messages, tools, associations, origin: { store: 'opencode', order: 'normalized' } };
   }, true);
 }
-module.exports = { openCodeDatabase, withOpenCodeSession, currentOpenCodeSession, readOpenCodeSession, reference };
+module.exports = { openCodeDatabase, withOpenCodeSession, currentOpenCodeSession, readOpenCodeSession, reference, normalizeOpenCodeToolInput };

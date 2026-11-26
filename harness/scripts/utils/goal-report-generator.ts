@@ -2,6 +2,7 @@
  * Goal report generator — aggregates per-phase harness summaries into goal-report.{md,json}
  */
 
+import { featureReviewCoverageDisclosure } from './diff-scope';
 import { loadFidelityIntentSsot } from './fidelity-shared';
 import { resolveCompletionDisposition } from './verify-feature-completion';
 import { resolveCurrentDisposition, renderCurrentDisposition, type CurrentDisposition } from './check-disposition';
@@ -746,7 +747,7 @@ export function writeGoalReport(
       events: axesEvents,
       operatorNotes: collectOperatorNotes(projectRoot, report),
       disclosedFailures: collectDisclosedFailureRows(projectRoot, report),
-    }),
+    }).trimEnd() + '\n\n' + featureReviewCoverageDisclosure(projectRoot, report.feature) + '\n',
     'utf-8',
   );
   return { jsonPath, mdPath };

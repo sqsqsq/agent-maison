@@ -394,16 +394,18 @@ export interface SourceReconcileResult {
 export function reconcileSourceTreeAgainstAttestation(
   projectRoot: string,
   attestation: ReviewClosureAttestation,
+  select?: (file: string) => boolean,
 ): SourceReconcileResult {
-  const frozen = new Map(attestation.inventory.files.map((f) => [f.path, f.sha256]));
+  const frozen = new Map(attestation.inventory.files.filter(file => !select || select(file.path)).map((f) => [f.path, f.sha256]));
   const frozenRoots = new Set(attestation.inventory.roots);
   const currentRoots = discoverProductSourceRoots(projectRoot).roots;
-  const newRoots = currentRoots.filter((r) => !frozenRoots.has(r)).sort();
+  const candidateRoots = currentRoots.filter((r) => !frozenRoots.has(r)).sort();
   const unionRoots = [...new Set([...attestation.inventory.roots, ...currentRoots])].sort();
 
   const current = new Map<string, string>();
   for (const root of unionRoots) {
     for (const rel of collectProductSourceFiles(projectRoot, root)) {
+      if (select && !select(rel)) continue;
       const hash = sha256File(path.join(projectRoot, rel));
       if (hash) current.set(rel, hash);
     }
@@ -420,10 +422,25 @@ export function reconcileSourceTreeAgainstAttestation(
     if (!current.has(p)) deleted.push(p);
   }
   added.sort(); modified.sort(); deleted.sort();
+  const newRoots = select ? candidateRoots.filter(root => added.some(file => file.startsWith(root + '/'))) : candidateRoots;
   return {
     ok: added.length === 0 && modified.length === 0 && deleted.length === 0 && newRoots.length === 0,
     added, modified, deleted, new_roots: newRoots,
   };
+}
+
+/** The inventory is a historical comparator; use only this review's materials and current target scope. */
+export function reconcileReviewInputs(ctx: Pick<import('./types').CheckContext, 'projectRoot' | 'feature' | 'featureSpec' | 'resolvedInputs'>): SourceReconcileResult | null {
+  const attestation = loadReviewClosureAttestation(ctx.projectRoot, ctx.feature);
+  if (!attestation) return null;
+  const { loadPhaseEvidenceManifest } = require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest');
+  const { implementationPathSelector } = require('./diff-scope') as typeof import('./diff-scope');
+  const review = loadPhaseEvidenceManifest(ctx.projectRoot, ctx.feature, 'review');
+  const inputs = new Set(review?.integrityOk ? review.manifest.inputs.map(entry => entry.path) : []);
+  const select = implementationPathSelector(ctx.projectRoot, ctx.featureSpec.contracts, ctx.resolvedInputs);
+  const inScope = (file: string) => inputs.has(file) || select(file);
+  if (!attestation.inventory.files.some(entry => inScope(entry.path))) return null;
+  return reconcileSourceTreeAgainstAttestation(ctx.projectRoot, attestation, inScope);
 }
 
 // ---------------------------------------------------------------------------

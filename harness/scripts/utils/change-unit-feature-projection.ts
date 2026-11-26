@@ -721,6 +721,9 @@ export function checkChangeUnitFeatureProjection(
   dags: DagProjectionLike[] = [],
 ): CheckResult[] {
   const componentChecks = ['plan', 'coding', 'review'].includes(phase) ? checkComponentSelections(ctx) : [];
+  const contractsInput = ctx.resolvedInputs?.values.contracts;
+  // A consumer with unavailable frozen inputs cannot report an absent sidecar from a missing projection.
+  if (contractsInput && contractsInput.state !== 'resolved' && phase !== 'plan' && !ctx.featureSpec.contracts) return componentChecks;
   const result = validateChangeUnitFeatureProjection(
     ctx.projectRoot,
     ctx.feature,

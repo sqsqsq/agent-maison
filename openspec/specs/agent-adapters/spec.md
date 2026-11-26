@@ -580,17 +580,17 @@ Enforcement: `harness/scripts/utils/adapter-model.ts`, `harness/scripts/utils/ag
 
 所有已物化 adapter 的根入口/常驻规则/Skill 跳板 SHALL 指向 `docs/operations/project-entry.md` 同一前门，不各维护档位表。可用原生 payload/环境 SHALL 给原 compile/request 自动提供真实原件/session 与 user 消息定位；已有请求 SHALL 复用原 session-ref，显式交接支持该原生引用（含 JSONL/DSH 消息引用及 OpenCode SQLite 引用），reader 核真实用户来源/session/cwd；无可用原件 SHALL 准确降级，不把模型转述当用户覆盖。
 
-已验证的编辑 hook SHALL 仅机械核同一原生会话可消费上下文是否已加载前门规则，缺失拒绝本次产品编辑并提示补读后继续。压缩明确保留规则可复用，普通“继续”不因新 user 消息重复拒绝。语义新请求/本请求豁免边界 SHALL 由原入口解释并核真实用户来源，不宣称 hook 可逐请求分类。原派出作者 SHALL 复用 RUN_ID/ATTEMPT/ATTEMPT_PHASE/HEADLESS 的既有同源信号并集免重复入口，不免 framework 写保护、授权或真实完成核验。
+已验证的编辑 hook SHALL 保留适用的 framework 发布件保护、原生权限与受管写界。产品编辑 SHALL NOT 以文档读取事件为放行条件。各客户端 SHALL 核真实项目与用户锚，工具调用和结果按准确配对与退出信息分别判断。普通记录缺失或错配 SHALL 局部披露；缺少唯一原件的验收保持欠验。原入口 SHALL 按真实用户所指及已有原请求绑定识别续作和豁免。
 
-仅实测成立的客户端/事件/编辑工具 SHALL 声称写前保证。Shell/脚本/场外进程/未覆盖工具盲区、无 hook 的规则与后验降级 SHALL 披露；未测/环境缺认证或程序 SHALL NOT 写成产品不支持。Codex Desktop 与 CLI SHALL 分别取证，不绕原生信任、不改用户全局配置；现有 hook/settings 以结构化合并保留宿主其它条目。
+仅实测成立的客户端、事件与编辑工具 SHALL 声称相应写保护。Shell、脚本、场外进程及未覆盖工具依赖执行环境隔离。Codex Desktop 与 CLI SHALL 分别取证，保留原生信任和宿主已有设置。
 
-#### Scenario: Reading the rule recovers an intercepted edit
-- **WHEN** 同会话支持的产品编辑因未加载规则被拒，随后真实读取根入口与 project-entry
-- **THEN** 重试可继续原请求，既有成果保留；该结果只证明规则加载，不签专项通过
+#### Scenario: An edit proceeds with no prior document Read
+- **WHEN** 用户授权已定位，支持的编辑工具修改该请求的产品文件，原生记录没有读取入口文档的事件
+- **THEN** 写操作 SHALL 沿既有权限与写界执行，framework 发布件的写保护继续生效
 
-#### Scenario: Cursor author loses only the headless marker
-- **WHEN** 已派作者保留既有运行/attempt 信号而子进程缺 HEADLESS
-- **THEN** 仍沿同源作者谓词免重复入口，framework 写保护继续生效
+#### Scenario: An independent tool output is pending
+- **WHEN** 已定位真实用户，一条读取或编辑调用暂未配对，另一项有独立执行原件
+- **THEN** 只对所依赖的记录保留缺口，专项目标和独立结论继续消费其现有依据
 
 #### Scenario: A CLI result is not a Desktop result
 - **WHEN** Codex CLI 通过而 Desktop hook 未实测，或某客户端缺本机认证/程序

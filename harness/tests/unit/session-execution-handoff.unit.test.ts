@@ -25,7 +25,7 @@ import { execFileSync, spawn, spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import { buildGoalManifestFromInput, writeGoalManifest } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
-import { __testing_setDetachSpawn } from '../../scripts/goal-phase-runtime';
+import { GoalPhaseRuntime, __testing_setDetachSpawn } from '../../scripts/goal-phase-runtime';
 import { interruptedIssuanceCli, reusedGatePidCli, junctionSessionCli } from '../utils/session-recovery-cli';
 import { reconcileGuardianOwnership } from '../../scripts/utils/goal-containment-reconcile';
 import { invokeAgentHeadless as nativeInvokeAgentHeadless } from '../../scripts/utils/agent-invoke';
@@ -709,6 +709,64 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_t
       assert(!events.some(event => event.type === 'agent_process_settled'));
       assert.deepEqual(sessionValidationOnlyEligibility(events), { phase: 'coding', invoke_id: 'invoke-one' });
     } finally { f.cleanup(); }
+  },
+}, {
+  name: 'historical handback without a preimage uses its accepted current product without replay',
+  run() {
+    const f = fixture();
+    try {
+      const boundary = { ...f.boundary, executionRole: 'author' as const, protectedRoots: ['src', 'parallel.txt'] };
+      f.start();
+      const issued = issueSessionExecution({ context: f.context, invokeId: 'invoke-one', timeoutMs: 60_000,
+        gateTimeoutMs: 30_000, cleanupReserveMs: 500, preSnapshot: null, writeBoundary: boundary, emit: f.emit });
+      fs.writeFileSync(path.join(f.root, 'src/value.ts'), 'author result\n');
+      acceptSessionExecution({ runDir: f.runDir, issued, report: f.report, emit: f.emit });
+      const accepted = acceptedSessionReport(f.runDir, issued);
+      assert.equal(accepted?.event.status, 'passed');
+      const source = readHandoffMaterial<{ post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }>(
+        f.runDir, accepted!.event.handoff_report!);
+      assert(source.post_snapshot?.entries.some(entry => entry.path === 'src/value.ts' && entry.sha256 === hash('author result\n')));
+      const context = { ...f.context, attemptId: 'attempt-followup' };
+      const runtime = new GoalPhaseRuntime();
+      fs.writeFileSync(path.join(f.root, 'parallel.txt'), 'another request\n');
+      const duplicate = runtime.prepareExecutionContext(context);
+      assert('status' in duplicate && duplicate.status === 'waiting' && duplicate.details?.includes('沿原交回验证当前成果'));
+      assert(!duplicate.details?.includes('恢复该原观察'));
+      fs.writeFileSync(path.join(f.root, 'src/value.ts'), 'current related correction\n');
+      assert(!('status' in runtime.prepareExecutionContext(context)), 'an actual related change can be reassessed on current material');
+      assert.equal(sessionEvents(f.runDir).filter(event => event.type === 'agent_invoke_start').length, 1);
+    } finally { f.cleanup(); }
+  },
+}, {
+  name: 'session handback preserves parallel edits and scopes rejection to signed inputs or proven writes',
+  run() {
+    for (const scenario of ['parallel', 'signed', 'native', 'native-no-pre'] as const) {
+      const f = fixture();
+      try {
+        const boundary = { ...f.boundary, executionRole: 'author' as const, protectedRoots: ['src', 'parallel.ts'],
+          immutableInputPaths: scenario === 'signed' ? ['parallel.ts'] : [] };
+        const context = f.context;
+        f.start();
+        const preSnapshot = scenario === 'native-no-pre' ? null : capturePhaseInvocationSnapshot(boundary);
+        const issued = issueSessionExecution({ context, invokeId: 'invoke-one', purpose: 'author', timeoutMs: 60_000,
+          gateTimeoutMs: 30_000, cleanupReserveMs: 500, preSnapshot, writeBoundary: boundary, emit: f.emit });
+        if (preSnapshot) f.bind(issued);
+        fs.writeFileSync(path.join(f.root, 'parallel.ts'), 'current user bytes\n');
+        const native = scenario.startsWith('native');
+        if (native) {
+          const result = { type: 'item.completed', item: { type: 'file_change', id: 'write-1', status: 'completed', changes: [{ path: 'parallel.ts', kind: 'add' }] } };
+          fs.writeFileSync(path.join(f.runDir, path.dirname(issued.reference.path), 'agent-events.jsonl'),
+            JSON.stringify(result) + '\n');
+        }
+        acceptSessionExecution({ runDir: f.runDir, issued, report: f.report, emit: f.emit });
+        const accepted = acceptedSessionReport(f.runDir, issued)!;
+        assert.equal(accepted.event.status, scenario === 'parallel' ? 'passed' : 'failed');
+        const violation = sessionEvents(f.runDir).find(event => event.type === 'phase_write_violation');
+        const rows = (violation as { violations?: Array<{ authority_confirmed?: boolean }> } | undefined)?.violations;
+        assert.equal(rows?.some(row => row.authority_confirmed === true) ?? false, native);
+        assert.equal(fs.readFileSync(path.join(f.root, 'parallel.ts'), 'utf8'), 'current user bytes\n');
+      } finally { f.cleanup(); }
+    }
   },
 }, {
   name: 'P3 native executor preserves the actual canary tool deadline without reviving a default author phase deadline',

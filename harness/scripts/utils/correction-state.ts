@@ -38,6 +38,8 @@ export interface CurrentCorrectionState {
   request_fingerprint: string;
   enforcement_tier: EnforcementTier;
   expires_at: string;
+  /** Explicit paths from the original correction; used only to select verification inputs. */
+  target_files?: string[];
   /** --adhoc-correction 经 catalog 反查记录的触及模块（no-feature 越界防护替代证据） */
   touched_modules?: string[];
   /** legacy reader compatibility only；新 writer 不再生成，修正统一自动路由机器重验。 */

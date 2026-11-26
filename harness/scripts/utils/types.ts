@@ -1050,6 +1050,8 @@ export interface RequestCheckContext extends Pick<FeatureCheckContext, 'phase' |
   request: import('./capability-resolution-entry-input').PreparedRequest;
   reportDir: string;
   forceDevice?: boolean;
+  executionInputs?: import('./request-execution-inputs').RequestExecutionInputs | null;
+  executionArtifacts?: import('./request-execution-inputs').RequestBuildArtifact[];
   resolvedInputs: import('./capability-resolution').ResolvedPhaseInputs;
   factsContext: import('./context-facts').FactsInvocationContext;
 }

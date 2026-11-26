@@ -1543,8 +1543,22 @@ async function main(): Promise<void> {
     // Step 4/5 崩栈时 finalReport 已换成致命失败报告，writer 按报告身份核对后自行重算。
     phaseVerdict: scriptPhaseVerdict,
   });
-  if (!phaseIsGlobal) {
-  }
+  const publishCheckEvidence = (summary: HarnessRunSummary) => {
+    try {
+      const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || summary.run_id?.trim();
+      const requirementSha = currentRequirementEvidenceSha({ projectRoot, feature, runId, resolvedInputs });
+      if (runId && requirementSha === null) throw new Error(`当前run无法绑定原始需求血缘（run=${runId}）`);
+      const evidence = resolvePhaseEvidenceManifest({ projectRoot, feature, phase,
+        frameworkRoot: resolvedFrameworkRoot, resolvedInputs, factsContext, deviceTestEvidence: context.deviceTestEvidence,
+        requirementSha, extraInputs: [...executedEvidenceInputs(projectRoot, feature, phase, resolvedFrameworkRoot), ...(nativeUtInputs?.paths ?? [])] });
+      nativeUtInputs?.assertCurrent(evidence.inputs);
+      const published = writePhaseEvidenceManifest(projectRoot, evidence);
+      return { manifestSha256: published.sha256, stablePaths: evidence.inputs.map(entry => entry.path) };
+    } catch (error) {
+      console.warn(`检查原结果已保留；输入/证据绑定未完成，不能复用或据此签完成：${String(error)}`);
+      return undefined;
+    }
+  };
   const closureTrack = resolveFeatureTrack(loadFeatureTrackDecl(projectRoot, feature));
   // adjudicated-repair-loop P0 宿主回放：goal-runner 只有等本 gate 子进程返回后，才能从
   // script-report.json 读取 uncertain/disputed 信号。full track 若在这里先验 receipt 并关环，
@@ -1554,6 +1568,7 @@ async function main(): Promise<void> {
     !phaseIsGlobal &&
     closureTrack === 'full' &&
     hasGoalExecutionSignal();
+  if (!phaseIsGlobal && !deferFullClosureToGoalRunner && baseSummary.verdict === 'PASS') publishCheckEvidence(baseSummary);
   const receiptValidation =
     phaseIsGlobal || deferFullClosureToGoalRunner
       ? null
@@ -1627,24 +1642,9 @@ async function main(): Promise<void> {
       onCurrentDisposition,
     );
   }
-  // Bind real tool results, including FAIL, without requiring a phase receipt or closed state.
-  let authorToolEvidence: { manifestSha256: string; stablePaths: string[] } | undefined;
-  if (!phaseIsGlobal && !closureFinalized) {
-    try {
-      const runId = process.env.MAISON_GOAL_RUN_ID?.trim() || runSummary.run_id?.trim();
-      const requirementSha = currentRequirementEvidenceSha({ projectRoot, feature, runId, resolvedInputs });
-      if (runId && requirementSha === null) throw new Error(`当前run无法绑定原始需求血缘（run=${runId}）`);
-      const evidence = resolvePhaseEvidenceManifest({ projectRoot, feature, phase,
-        frameworkRoot: resolvedFrameworkRoot, resolvedInputs, factsContext, deviceTestEvidence: context.deviceTestEvidence,
-        requirementSha, extraInputs: [...executedEvidenceInputs(projectRoot, feature, phase, resolvedFrameworkRoot), ...(nativeUtInputs?.paths ?? [])] });
-      nativeUtInputs?.assertCurrent(evidence.inputs);
-      const published = writePhaseEvidenceManifest(projectRoot, evidence);
-      if (managedAuthorCheck) {
-        authorToolEvidence = { manifestSha256: published.sha256, stablePaths: evidence.inputs.map(entry => entry.path) };
-      }
-    }
-    catch (error) { console.warn(`检查原结果已保留；输入/证据绑定未完成，不能复用或据此签完成：${String(error)}`); }
-  }
+  // The final open summary remains bound to the result for standalone receipt sync and managed handback.
+  const openCheckEvidence = phaseIsGlobal || closureFinalized ? undefined : publishCheckEvidence(runSummary);
+  const authorToolEvidence = managedAuthorCheck ? openCheckEvidence : undefined;
   if (!phaseIsGlobal) {
     const currentResults = [{ phase, summary: runSummary, checks: finalReport.checks, resolvedInputs }];
     nextDisposition = resolveCurrentDisposition(readCurrentDispositionInput({ projectRoot, frameworkRoot: resolvedFrameworkRoot,

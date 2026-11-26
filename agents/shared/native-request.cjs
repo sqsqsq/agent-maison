@@ -128,7 +128,12 @@ function readNativeSession(reference, projectRoot, context = {}) {
   const selected = split < 0 ? undefined : reference.slice(split + 1);
   const store = nativeStore(file);
   if (store === 'dsh') return require('./dsh-native-session.cjs').readDshRequestSession(reference, projectRoot, { resultFailed });
-  const rows = fs.readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean).map(line => JSON.parse(line));
+  const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+  const rows = lines.flatMap((line, index) => {
+    if (!line.trim()) return [];
+    try { return [JSON.parse(line)]; }
+    catch (error) { if (index !== lines.length - 1) throw error; return []; }
+  });
   const meta = rows.find(row => row.type === 'session_meta' || row.type === 'session/header' || row.type === 'session');
   const header = meta?.payload ?? meta?.data?.header ?? meta?.data ?? meta;
   const sessionId = header?.id ?? header?.sessionId ?? header?.session_id ?? rows.find(row => row.sessionId || row.session_id)?.sessionId ?? rows.find(row => row.session_id)?.session_id ?? (store === 'cursor' ? context.sessionId : undefined);
@@ -136,32 +141,43 @@ function readNativeSession(reference, projectRoot, context = {}) {
   if (typeof sessionId !== 'string' || !cwd || !samePath(cwd, projectRoot)) throw new Error('原生会话缺少准确 session/项目身份');
   if (!path.basename(file).includes(sessionId)) throw new Error('原生文件名与session身份不一致');
   if (store !== 'codex' && rows.some(row => row.isSidechain === true || row.agentId)) throw new Error('子代理原件不能冒充根用户原请求或授权');
+  const gaps = [];
   if (store === 'codex') {
     const located = codexSession(sessionId);
     if (!located.file || !samePath(located.file, file)) throw new Error(located.gap || 'Codex索引已指向其它历史页，当前分页原件未完整覆盖');
     if (header?.parent_thread_id || header?.thread_source === 'subagent' || header?.source?.subagent) throw new Error('子代理原件不能冒充根用户原请求或授权');
-    if (header?.history_base || rows.some(row => row.type === 'history_base')) throw new Error('Codex history_base前段未可靠覆盖；仅可执行局部能力，不签完整请求通过');
+    if (header?.history_base || rows.some(row => row.type === 'history_base')) gaps.push('Codex history_base前段未可靠覆盖');
   }
   const messages = [];
   const tools = [];
   const pending = new Map();
   const associations = [];
   const duplicate = new Set();
+  const finished = new Map();
   const addCall = (callId, tool) => {
     if (typeof callId !== 'string' || !callId) return;
-    const previous = pending.get(callId);
+    const previous = pending.get(callId) ?? finished.get(callId);
     if (previous) {
       associations.push({ ...previous, detail: `原生调用 ID ${callId} 在行 ${previous.line} 与 ${tool.line} 重复` });
       duplicate.add(callId);
-      tools.push({ ...previous, error: true });
+      previous.error = true;
+      if (!finished.has(callId)) tools.push(previous);
     }
     pending.set(callId, { ...tool, origin: { store, callId } });
   };
   const addResult = (callId, result) => {
     if (typeof callId !== 'string' || !callId) return;
     const call = pending.get(callId);
-    if (call) { tools.push({ ...call, ...result, error: duplicate.has(callId) || result.error }); pending.delete(callId); }
-    else if (store !== 'cursor') associations.push({ line: result.resultLine, detail: `原生工具结果行 ${result.resultLine} 的调用 ID ${callId} 无对应调用` });
+    if (call) {
+      const combined = { ...call, ...result, error: duplicate.has(callId) || result.error };
+      tools.push(combined);
+      finished.set(callId, combined);
+      pending.delete(callId);
+    } else if (store !== 'cursor') {
+      const prior = finished.get(callId);
+      if (prior) prior.error = true;
+      associations.push({ line: result.resultLine, detail: `原生工具结果行 ${result.resultLine} 的调用 ID ${callId} 无唯一对应调用` });
+    }
   };
   let turn;
   let seq = 0;
@@ -185,7 +201,7 @@ function readNativeSession(reference, projectRoot, context = {}) {
       if (content && !injected) messages.push({ id, role, text: content, at, line: seq, prompt_id: row.promptId });
       for (const item of Array.isArray(message?.content) ? message.content : []) {
         if (item.type === 'tool_use') addCall(item.id, { name: item.name, input: item.input, line: seq, at, output: '', completed: false });
-        if (item.type === 'tool_result') addResult(item.tool_use_id, { output: typeof row.toolUseResult?.stdout === 'string' ? row.toolUseResult.stdout : text(item.content), error: item.is_error === true, read: fullRead(row), resultLine: seq, completed: true });
+        if (item.type === 'tool_result') addResult(item.tool_use_id, { output: typeof row.toolUseResult?.stdout === 'string' ? row.toolUseResult.stdout : text(item.content), error: resultFailed({ ...row.toolUseResult, output: text(item.content), is_error: item.is_error || row.toolUseResult?.isError }), read: fullRead(row), resultLine: seq, completed: true });
       }
     }
     if (row.type === 'response_item' && ['function_call', 'custom_tool_call'].includes(payload.type)) {
@@ -199,18 +215,12 @@ function readNativeSession(reference, projectRoot, context = {}) {
   }
   // Claude tool-result envelopes carry role=user but grant no new user instruction.
   const users = messages.filter(message => message.role === 'user');
-  let request = selected ? users.find(message => message.id === selected || message.prompt_id === selected) : users.at(-1);
-  if (!selected && request) {
-    const boundary = [...messages].reverse().find(message => message.role === 'assistant' && message.line > request.line
-      && /继续原任务|本请求.{0,12}续作/.test(message.text) && !/新独立请求/.test(message.text));
-    const originals = boundary ? users.filter(message => message.line < request.line && boundary.text.includes(message.id)) : [];
-    if (originals.length === 1) request = originals[0];
-  }
+  const request = selected ? users.find(message => message.id === selected || message.prompt_id === selected) : users.at(-1);
   if (!request) throw new Error('找不到定位的真实 user 消息');
   if (store !== 'cursor') tools.push(...pending.values());
   tools.sort((left, right) => left.line - right.line);
   return { file: fs.realpathSync(file), sessionId, cwd: fs.realpathSync(cwd), request, messages, tools, associations,
-    ...(store === 'cursor' ? { userControlVerified: false, gaps: ['Cursor历史格式已核；原生包装授权及线上hook对应未验，不授用户豁免或固定档位'] } : {}) };
+    ...(store === 'cursor' ? { userControlVerified: false, gaps: ['Cursor历史格式已核；原生包装授权及线上hook对应未验，不授用户豁免或固定档位'] } : gaps.length ? { gaps } : {}) };
 }
 
 function userControl(message) {
@@ -272,29 +282,6 @@ function editedPaths(tools, candidates = false) {
   return [...files];
 }
 
-function frontDoorLoaded(session, projectRoot, frameworkRoot) {
-  const entry = path.join(frameworkRoot, 'docs/operations/project-entry.md');
-  const after = [...session.messages].reverse().find(message => message.role === 'summary');
-  const retained = after && /(?:project-entry\.md|统一前门).{0,80}(?:已(?:读|加载)|loaded|read)|(?:已(?:读|加载)|loaded|read).{0,80}project-entry\.md/i.test(after.text);
-  let body, unseen;
-  return Boolean(retained || session.tools.some(tool => {
-    if (after && tool.line < after.line) return false;
-    const input = toolInput(tool).replace(/\\\\/g, '/').replace(/\\/g, '/');
-    if (!toolSucceeded(tool) || !/(?:Read|read_file|exec|shell|command|functions|pwsh|bash)/i.test(tool.name) || !input.includes('project-entry.md')) return false;
-    if (!(input.includes(entry.replace(/\\/g, '/')) || input.includes('framework/docs/operations/project-entry.md') || (samePath(projectRoot, frameworkRoot) && input.includes('docs/operations/project-entry.md')))) return false;
-    if (tool.read) return tool.read.complete === true && typeof tool.read.path === 'string' && samePath(path.resolve(projectRoot, tool.read.path), entry);
-    // A successful path lookup is not a rule read. Native preludes and display-only final LF loss are harmless.
-    try { body ??= fs.readFileSync(entry, 'utf8').replace(/\r\n/g, '\n').trimEnd(); } catch { return false; }
-    if (!body) return false;
-    const output = tool.output.replace(/\r\n/g, '\n');
-    if (output.includes(body)) return true;
-    // Existing split reads and native line prefixes still expose the same rule lines.
-    unseen ??= new Set(body.split('\n').filter(line => line.trim()));
-    for (const line of unseen) if (output.includes(line)) unseen.delete(line);
-    return unseen.size === 0;
-  }));
-}
-
 function productTarget(projectRoot, frameworkRoot, filePath, roots = [], explicit = false) {
   const abs = path.resolve(projectRoot, filePath);
   const rel = path.relative(projectRoot, abs).replace(/\\/g, '/');
@@ -312,4 +299,4 @@ function productTarget(projectRoot, frameworkRoot, filePath, roots = [], explici
     || /(?:^|\/)(?:package|oh-package|module|build-profile|app)\.json5?$/.test(rel);
 }
 
-module.exports = { samePath, claudeSession, codexSession, currentNativeSession, nativeStore, toolSucceeded, toolCompletedBefore, isEditingTool, isEditCall, readNativeSession, userControl, resolveTransportIntent, editedPaths, frontDoorLoaded, toolInput, unquote, productTarget };
+module.exports = { samePath, claudeSession, codexSession, currentNativeSession, nativeStore, toolSucceeded, toolCompletedBefore, isEditingTool, isEditCall, readNativeSession, userControl, resolveTransportIntent, editedPaths, toolInput, unquote, productTarget };

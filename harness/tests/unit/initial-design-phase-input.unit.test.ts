@@ -54,6 +54,10 @@ function compactControlFixture(excludeReviewTesting=false){
   profile.name='hmos-app';profile.capabilities['coding.compile']={provider:'node-syntax',severity:'BLOCKER'};fs.writeFileSync(profileFile,YAML.stringify(profile));
   fs.writeFileSync(path.join(frameworkRoot,'profiles/hmos-app/harness/coding-host-rules.js'),`const fs=require('fs'),path=require('path'),cp=require('child_process');exports.profileCodingHost={sourceFileSuffixes:['js'],runStructureChecks(){return[]},runTraceabilityChecks(){return[]},checkCodingCompile(){return[]},compileProject(ctx){const r=cp.spawnSync(process.execPath,['--check',path.join(ctx.projectRoot,'src/value.js')],{encoding:'utf8'});fs.writeFileSync(path.join(ctx.reportDir,'node-check.log'),r.stdout+r.stderr);return{checks:[{id:'coding_compile',category:'structure',severity:'BLOCKER',status:r.status===0?'PASS':'FAIL',description:'actual Node syntax',details:r.stdout+r.stderr}],execution:{executed:true,exitCode:r.status,command:'node --check src/value.js'}}}};`);
   fs.writeFileSync(path.join(root,'framework.config.json'),JSON.stringify({schema_version:'1.1',project_name:'compact control',project_profile:{name:'hmos-app'},active_workflow:'obligation-driven',materialized_adapters:['codex'],paths:{features_dir:'doc/features'}}));
+  fs.writeFileSync(path.join(root,'doc/module-catalog.yaml'),YAML.stringify({modules:[
+    {name:'value',layer:'source',entry_file:'src/value.js'},
+    {name:'value-tests',layer:'tests',entry_file:'tests/value.test.cjs'},
+  ]}));
   fs.writeFileSync(path.join(root,'AGENTS.md'),'# Isolated request fixture\n');
   writeLocalConfig(root,{schema_version:'1.0',agent_adapter:'codex'});clearFrameworkConfigCache();
   const requirement='把 src/value.js 的 value 从41改为42；单元测试核对42，保留其它行为。',source='requirements/value.txt';
@@ -362,7 +366,7 @@ for(const frame of ['small','trivial'] as const)cases.push({
     assert.equal(oldRequest.context.phase,'initial-design-author');assert(oldRequest.write_boundary);
     assert(!workUnitMayWritePath(oldRequest.write_boundary!,'src/value.js'),'full initial author acquired product write authority before a user adjustment');
     const options=initialDesignRequestOptions(f.root,f.frameworkRoot,manifest),originalRequest=json(path.resolve(f.root,options.requestFile));
-    assert.equal(originalRequest.baseline.base,f.base);assert.equal(originalRequest.intake_context.user.id,'original-medium');
+    assert.deepEqual(originalRequest.baseline,{head:'WORKTREE'});assert.equal(originalRequest.intake_context.user.id,'original-medium');
     if(frame==='trivial')assert.deepEqual(originalRequest.intake_context.control.excluded,['review','testing']);
     assert.equal(readInitialDesignRequest(f.root,f.frameworkRoot,manifest),undefined);
     const ordinary=f.value(f.next(['--next']));assert.equal(ordinary.request.path,old.request.path,'ordinary continuation silently selected a light frame');
@@ -376,10 +380,10 @@ for(const frame of ['small','trivial'] as const)cases.push({
     let active=json(current.request.path) as SessionExecutionRequest;
     assert.equal(active.context.runId,f.runId);assert(active.context.instruction?.includes(frame==='small'?'小型':'特别简单'));
     assert(workUnitMayWritePath(active.write_boundary!,'src/value.js'),'adjusted original author cannot reach the original product target');
-    assert(workUnitMayWritePath(active.write_boundary!,'tests/value.test.cjs'),'originally read test target is not writable');
+    assert(!workUnitMayWritePath(active.write_boundary!,'tests/value.test.cjs'),'a prior read must not authorize test writes');
     assert(!workUnitMayWritePath(active.write_boundary!,'framework/agents/README.md'));
     const subject=readInitialDesignRequest(f.root,f.frameworkRoot,manifest)!;assert.equal(subject.frame,frame);
-    assert.equal(subject.prepared.intake?.baseline.base,f.base);assert.equal(subject.prepared.intake?.user.id,'original-medium');assert(!subject.prepared.originGap,subject.prepared.originGap);
+    assert.equal(subject.prepared.intake?.baseline.base,undefined);assert.equal(subject.prepared.intake?.user.id,'original-medium');assert(!subject.prepared.originGap,subject.prepared.originGap);
     assert(!subject.prepared.intake?.control.excluded.includes('ut'));assert.deepEqual(subject.prepared.sourceRefs,[f.source]);
     if(frame==='trivial')assert.deepEqual(subject.prepared.intake?.control.excluded,['review','testing'],'completion exclusions did not retain the original user source');
     assert.equal(json(subject.prepared.requestFile).origin_request,path.relative(f.root,born.manifest).replace(/\\/g,'/'));
@@ -408,8 +412,9 @@ for(const frame of ['small','trivial'] as const)cases.push({
       const next=f.next(['--request',previousRequest,'--report-result',JSON.stringify({phase:active.context.phase,status:'passed',details:'已沿原request准备尚缺的src/aux.js，尚未写该路径或运行测试；请求下一同源作者窗口继续实际实现。'})]);
       assert.equal(next.status,0,next.stderr+next.stdout);current=f.value(next);assert.equal(current.type,'phase_execute_request',next.stderr+next.stdout);
       assert.notEqual(current.request.path,previousRequest);assert(readSessionExecution(born.run_dir,current.request.path));active=json(current.request.path) as SessionExecutionRequest;
-      assert.equal(active.context.runId,f.runId);assert.equal(active.context.runtimeFacts.runBaseSha,f.base);
-      assert(workUnitMayWritePath(active.write_boundary!,auxiliary),'prepared auxiliary target did not reach the next original owner window');
+      assert.equal(active.context.runId,f.runId);assert.equal(active.context.runtimeFacts.runBaseSha,undefined);
+      assert(!workUnitMayWritePath(active.write_boundary!,auxiliary),'a verification target does not confer product write authority');
+      assert(workUnitMayWritePath(active.write_boundary!,testFile),'the original authorized test preparation must reach the next author');
       assert(!workUnitMayWritePath(active.write_boundary!,'framework/agents/README.md'));
       assert(!workUnitMayWritePath(active.write_boundary!,'doc/features/other-goal/goal-runs/foreign/manifest.json'));
       fs.writeFileSync(auxFile,'exports.nextValue = () => 42;\n');fs.writeFileSync(path.join(f.root,'src/value.js'),"exports.value = require('./aux').nextValue();\n");
@@ -419,7 +424,7 @@ for(const frame of ['small','trivial'] as const)cases.push({
       const check=f.invoke('scripts/check-component-blueprint.ts',['--blueprint',f.feature,'--request-file',options.requestFile,'--prepare-source','--json']);
       assert.equal(check.status,0,check.stderr+check.stdout);assert.equal(JSON.parse(check.stdout).design_scope,'small-request-design');
     }
-    const compile=f.invoke('scripts/compile.ts',['--session-ref',f.originalRef,'--target','src/value.js','--report-dir',options.reportDir+'/compile','--json']);
+    const compile=f.invoke('scripts/compile.ts',['--request-file',options.requestFile,'--target','src/value.js','--json']);
     assert.equal(compile.status,0,compile.stderr+compile.stdout);
     assert(json(path.join(f.root,options.reportDir,'compile/compile-report.json')).execution.executed);
     const ut=f.invoke('harness-runner.ts',['--phase','ut','--request-file',options.requestFile,'--test-target','tests/value.test.cjs','--allow-test-write','tests/value.test.cjs']);
@@ -465,7 +470,7 @@ cases.push({name:'B2-1 public small resume preserves malformed YAML and returns 
     assert.equal(resumed.status,0,resumed.stderr+resumed.stdout);const feedback=f.value(resumed);assert.equal(feedback.type,'phase_execute_request',resumed.stderr+resumed.stdout);
     assert.deepEqual(fs.readFileSync(blueprint),badBytes,'machine source preparation changed a malformed author draft');
     const repair=json(feedback.request.path) as SessionExecutionRequest;
-    assert.equal(repair.context.runId,f.runId);assert.equal(repair.context.phase,'initial-design-author');assert.equal(repair.context.runtimeFacts.runBaseSha,f.base);
+    assert.equal(repair.context.runId,f.runId);assert.equal(repair.context.phase,'initial-design-author');assert.equal(repair.context.runtimeFacts.runBaseSha,undefined);
     assert(/canonical YAML 无法解析/.test(repair.context.instruction??''),repair.context.instruction);
     assert(workUnitMayWritePath(repair.write_boundary!,path.relative(f.root,blueprint).replace(/\\/g,'/')));assert(!workUnitMayWritePath(repair.write_boundary!,'framework/agents/README.md'));
     const again=f.next(['--next']);assert.equal(again.status,0,again.stderr+again.stdout);assert.equal(f.value(again).request.path,feedback.request.path);assert.deepEqual(fs.readFileSync(blueprint),badBytes);
@@ -477,7 +482,7 @@ cases.push({name:'B2-1 public small resume preserves malformed YAML and returns 
     const nextRequest=json(next.request.path) as SessionExecutionRequest;assert.equal(nextRequest.context.runId,f.runId);assert(nextRequest.context.instruction?.includes('小型'));
     const history=eventRows(path.join(born.run_dir,'events.jsonl'));assert(!history.some(row=>row.type==='run_end'&&row.status==='INTERRUPTED'),JSON.stringify(history.slice(-8)));
     assert(!history.some(row=>row.type==='agent_invoke_start'&&String(row.phase).includes('questioning')));assert.equal(enumerateCanonicalChangeUnits(f.root,f.feature).length,0);
-    assert.deepEqual(fs.readFileSync(born.manifest),manifestBytes);assert.equal(readInitialDesignRequest(f.root,f.frameworkRoot,manifest)?.prepared.intake?.baseline.base,f.base);
+    assert.deepEqual(fs.readFileSync(born.manifest),manifestBytes);assert.equal(readInitialDesignRequest(f.root,f.frameworkRoot,manifest)?.prepared.intake?.baseline.base,undefined);
   });
 }});
 cases.push({name:'C1 public late fixed source does not reopen or erase published canonical CU responsibility',async run(){

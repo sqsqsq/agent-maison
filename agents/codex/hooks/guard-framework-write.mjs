@@ -1,9 +1,9 @@
 // Codex native PreToolUse shell. Published under <project>/framework/agents/codex/hooks/.
-// Only patch targets are adapted here; all protection/entry/author rules remain shared.
+// Only patch targets are adapted here; all protection and author rules remain shared.
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
-import { evaluateFrameworkWrite, evaluateProjectEntry } from '../../shared/guard-framework-write-core.mjs';
+import { evaluateFrameworkWrite } from '../../shared/guard-framework-write-core.mjs';
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 function deny(reason) {
@@ -23,16 +23,6 @@ function main() {
     const result = evaluateFrameworkWrite({ projectRoot, filePath });
     if (result.decision === 'deny') { deny(result.reason); return; }
   }
-  const context = new Set();
-  for (const filePath of targets) {
-    const result = evaluateProjectEntry({ projectRoot, filePath, payload });
-    if (result.decision === 'deny') { deny(result.reason); return; }
-    if (result.sessionRef) context.add(`Maison原生来源：--session-ref ${JSON.stringify(result.sessionRef)}`);
-    if (result.note) context.add(result.note);
-  }
-  if (context.size) process.stdout.write(JSON.stringify({ hookSpecificOutput: {
-    hookEventName: 'PreToolUse', additionalContext: [...context].join('\n'),
-  } }) + '\n');
   // No permissionDecision: allow. Exit 0 leaves original client permissions in control.
 }
 try { main(); } catch { /* Invalid input/unavailable native record follows the shared cooperative fail-open boundary. */ }

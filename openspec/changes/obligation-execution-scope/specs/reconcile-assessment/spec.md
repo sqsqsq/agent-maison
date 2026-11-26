@@ -25,7 +25,7 @@ Enforcement: `harness/scripts/utils/assess.ts`, `harness/scripts/utils/repair-ca
 - **THEN** a required `design-decision` fact SHALL be generated from that candidate's own files and the responsible phase SHALL re-enter the chain in this run, with the reason stating that plan must adjudicate
 
 #### Scenario: A named write-set violation stays with coding
-- **WHEN** coding fails `diff_within_scope` or an unauthorized contract reference check
+- **WHEN** coding has a confirmed unauthorized operation, or its actual deliverable or contract reference exceeds the original scope and fails `diff_within_scope`
 - **THEN** no spec/plan candidate and no revision input SHALL be produced, and the repair SHALL remain with coding
 
 #### Scenario: A correction outside the effective scope explains instead of proposing

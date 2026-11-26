@@ -14,10 +14,8 @@ import * as path from 'path';
 import * as crypto from 'crypto';
 import type { ResolutionDependency } from './capability-resolution';
 import { isInsideProjectRoot } from './project-relative-path';
-import { extractTables } from './markdown-parser';
-import { diffChangedFilesWithStatus, resolveEffectiveDiffBaseline } from './git-diff';
 
-import { featuresDirPath, relFeaturesDir } from '../../config';
+import { featuresDirPath } from '../../config';
 // M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT
 import { featureRelativePath } from './feature-identity';
 import { CheckResult } from './types';
@@ -30,8 +28,6 @@ import {
   type ContextExplorationCheckOptions,
   type ContextExplorationPhase,
 } from './context-exploration';
-import { loadFeatureTrackDecl } from './feature-track';
-import { resolveFeatureTrack } from './runtime-policy';
 
 /** 该 track 的首个 feature phase——建立 facts.md 全量事实的阶段。 */
 export const FACTS_ESTABLISHING_PHASES: ReadonlySet<string> = new Set(['spec']);
@@ -102,12 +98,17 @@ export function projectFactsForPhase(raw: string, phase: string): { baseline: st
   return { baseline: factsBaseline(raw), delta: findPhaseDeltaSection(body, phase) };
 }
 
-/** Bind the baseline and this phase's delta, not later append-only investigation. */
-export function factsPhaseFingerprint(raw: string, phase: string): string {
+/** Match an intact historical digest, then use the current decision and its actual source declarations. */
+export function factsPhaseFingerprint(raw: string, phase: string, recorded?: string | null): string {
   const { baseline, delta } = projectFactsForPhase(raw, phase);
-  return crypto.createHash('sha256').update(JSON.stringify([
-    crypto.createHash('sha256').update(baseline).digest('hex'), delta,
-  ])).digest('hex');
+  const hash = (value: unknown) => crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex');
+  if (recorded && hash([factsBaselineFingerprint(raw), delta]) === recorded) return recorded;
+
+  const { fm, body } = parseContextExploration(baseline);
+  const business = { ...fm };
+  for (const field of ['key_inputs_read', 'files_inspected_count', 'searches_performed_estimate',
+    'subagents_used', 'exploration_mode', 'legacy_backfill'] as const) delete business[field];
+  return hash([business, body, delta]);
 }
 
 function checkEstablishingFacts(
@@ -129,42 +130,6 @@ function checkEstablishingFacts(
     relPath,
     options,
   );
-}
-
-function checkDeltaFacts(body: string, phase: string, relPath: string): CheckResult[] {
-  const { present, content } = findPhaseDeltaSection(body, phase, true);
-  if (!present) {
-    return [{
-      id: 'context_exploration_facts_phase_delta_missing',
-      category: 'structure',
-      description: 'facts.md 须含本阶段 `## phase_delta: <phase>` 增量节',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `未找到 "## phase_delta: ${phase}" 小节。`,
-      suggestion: `在 facts.md 末尾追加 "## phase_delta: ${phase}"，无新增事实须显式写 "none"（不得留空）。`,
-      affected_files: [relPath],
-    }];
-  }
-  if (!content) {
-    return [{
-      id: 'context_exploration_facts_phase_delta_empty',
-      category: 'structure',
-      description: '`## phase_delta: <phase>` 节内容不得为空',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `"## phase_delta: ${phase}" 节存在但内容为空。`,
-      suggestion: '无新增事实时显式写 "none"，不要留空——空节无法区分"忘写"与"确实没有"。',
-      affected_files: [relPath],
-    }];
-  }
-  return [{
-    id: 'context_exploration_facts_phase_delta_present',
-    category: 'structure',
-    description: 'facts.md 本阶段 phase_delta 节已声明',
-    severity: 'BLOCKER',
-    status: 'PASS',
-    details: `"## phase_delta: ${phase}" 节已声明（${content.length} 字符）。`,
-  }];
 }
 
 function checkFactsFile(
@@ -192,24 +157,8 @@ function checkFactsFile(
   const results: CheckResult[] = [];
   const schemaVersion = typeof fm.schema_version === 'string' ? fm.schema_version.trim() : '';
   const invocation = options?.factsContext;
-  const deltaPaths = extractTables(findPhaseDeltaSection(body, phase, true).content)
-    .filter(table => table.headers.some(header => /事实/.test(header)))
-    .flatMap(table => { const column = table.headers.findIndex(header => /路径/.test(header)); return column < 0 ? [] : table.rows.map(row => {
-      const source = (row[column] ?? '').replace(/`/g, '').trim().replace(/\\/g, '/');
-      const absolute = path.resolve(projectRoot, source);
-      return source && isInsideProjectRoot(projectRoot, absolute) ? path.relative(projectRoot, absolute).replace(/\\/g, '/') : '';
-    }); });
-  let ownedSourceDelta = false;
   if (invocation) {
-    const issue = (id: string, details: string): void => { results.push({ id, category: 'structure', description: 'facts 调用身份、来源与范围一致', severity: 'BLOCKER', status: 'FAIL', details, suggestion: id === 'context_exploration_facts_baseline_stale'
-      ? `保留已核基线正文及原身份，仅在 ## phase_delta: ${phase} 精确追加变化来源与事实；来源实际失效时回责任阶段重建，不只改run_id。`
-      : '按实际调用身份与目标补齐 facts；来源或基线已变化时回责任方重新验证，不伪造建立阶段。', affected_files: [relPath] }); };
-    // plan e7a2c4f1 §3.4（G01）：账本类缺口的披露出口——同一 check id，只降档不改名。
-    // 「声明的来源没进基线登记」不影响产品，能补登记的已由入口补齐（见
-    // capability-resolution-entry-input 的 facts baseline 组装），补不了的在这里如实
-    // 披露，不单独阻断阶段。
-    const ledgerWarn = (id: string, details: string, suggestion = '来源不可读或不在项目内时无法自动补登记：确认该来源是否仍属本次探索面；仍需要就把它放回项目内并重跑建立阶段，否则从 facts 的 source_code_paths 去掉。追溯弱一级，不阻断本阶段。'): void => { results.push({ id, category: 'structure', description: 'facts 调用身份、来源与范围一致', severity: 'MAJOR', status: 'WARN', details, suggestion, affected_files: [relPath] }); };
-    const registrationSuggestion = (source: string): string => `可在 ## phase_delta: ${phase} 的「路径 | 事实 | 影响」表补一行 ${source} 以完善追溯；缺少登记只披露，不阻断本阶段。`;
+    const issue = (id: string, details: string): void => { results.push({ id, category: 'structure', description: 'facts 调用身份、来源与范围一致', severity: 'BLOCKER', status: 'FAIL', details, suggestion: '按实际身份、原需求与当前可读依据核实事实。', affected_files: [relPath] }); };
     const subject = invocation.subject;
     if (!options?.resolvedInputs || options.resolvedInputs.phase !== phase) issue('context_exploration_facts_input_context', '须由当前调用提供同一 resolvedInputs，不能回退读取旧 Feature 文件');
     const inputSubject = options?.resolvedInputs?.context.subject;
@@ -217,10 +166,6 @@ function checkFactsFile(
       ? !('feature' in inputSubject) || inputSubject.feature !== subject.feature
       : !('request_sha256' in inputSubject) || inputSubject.request_sha256 !== subject.request_sha256)) issue('context_exploration_facts_input_context', 'facts 与输入解析 subject 不一致');
     const record = fm as Record<string, unknown>;
-    const declared = Array.isArray(fm.source_code_paths) ? fm.source_code_paths.filter((source): source is string => typeof source === 'string') : [];
-    if (new Set(declared.map(source => path.posix.normalize(source.replace(/\\/g, '/')))).size !== declared.length) {
-      issue('context_exploration_facts_scope_coverage', 'facts source paths contain duplicates; rebuild canonical source declarations');
-    }
     if (schemaVersion !== '1.1' && !(schemaVersion === '1.0' && invocation.baseline)) {
       issue('context_exploration_facts_schema_version', '新事实须使用 1.1；旧 1.0 仅可经显式 baseline 承接');
       issue('context_exploration_facts_input_context', '未验证的旧schema不能建立当前调用事实；须由责任阶段真正建立schema 1.1');
@@ -244,118 +189,13 @@ function checkFactsFile(
       issue('context_exploration_facts_request_match', 'request subject 不匹配或混入 Feature/run 身份');
     }
     const expectedPhase = invocation.baseline?.established_by ?? invocation.first_phase;
-    const currentTargets = new Set(Object.values(options?.resolvedInputs?.values ?? {}).flatMap(input => input.state === 'resolved'
+    if (!expectedPhase || record.established_by !== expectedPhase) issue('context_exploration_facts_established_by_invalid', '事实建立阶段必须与本请求或已验证原件相符');
+    const actualSources = Object.values(options?.resolvedInputs?.values ?? {}).flatMap(input => input.state === 'resolved'
       && input.binding.source.kind === 'derive' && ['derive.codebase', 'derive.test-targets'].includes(input.binding.source.provider_id)
-      ? input.binding.dependencies.filter(dep => dep.exists && dep.role === 'derive').map(dep => path.resolve(dep.path)) : []));
-    // UT's test_targets input is declared but need not belong to an active capability.
-    // The entry still supplies its actual test targets in source_paths; ownership and
-    // the existing write boundary below remain necessary before treating one as writable.
-    if (phase === 'ut') for (const source of invocation.source_paths) if (invocation.source_owners?.[source] === phase) currentTargets.add(path.resolve(projectRoot, source));
-    let admission: FactsInvocationContext | undefined;
-    const { loadFactsInvocationContext, loadFormalFactsObservation, loadCompletedFactsObservation, resolveFactsPhaseOwnedSources } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
-    let formal: ReturnType<typeof loadFormalFactsObservation>;
-    let completed: ReturnType<typeof loadCompletedFactsObservation>;
-    if ('run_id' in invocation.subject) {
-      try {
-        const lookup = { projectRoot, frameworkRoot: options?.frameworkRoot, feature: invocation.subject.feature, phase, runId: invocation.subject.run_id,
-          attemptId: options?.goalAttemptId ?? process.env.MAISON_GOAL_ATTEMPT };
-        formal = loadFormalFactsObservation(lookup);
-        completed = loadCompletedFactsObservation({ ...lookup, featuresDir: relFeaturesDir(projectRoot), goalAttemptId: lookup.attemptId }, invocation.subject.run_id,
-          options?.frameworkRoot ?? path.resolve(__dirname, '../../..'));
-        admission = formal?.context ?? loadFactsInvocationContext(lookup);
-      } catch { /* No verifiable admission: strict dependency comparison below. */ }
-    }
-    const actorPhase = admission && 'run_id' in invocation.subject && process.env.MAISON_GOAL_RUN_ID === invocation.subject.run_id
-      && process.env.MAISON_GOAL_ATTEMPT === (options?.goalAttemptId ?? process.env.MAISON_GOAL_ATTEMPT)
-      ? process.env.MAISON_GOAL_ATTEMPT_PHASE?.trim() || phase : phase;
-    let invocationPre: import('./phase-write-boundary').PhaseInvocationSnapshot | undefined;
-    if (admission && 'run_id' in invocation.subject) try {
-      const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
-      const { executionRequestForInvoke } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
-      const manifest = loadGoalManifestFromRun(projectRoot, invocation.subject.run_id, { feature: invocation.subject.feature });
-      const request = executionRequestForInvoke(path.resolve(projectRoot, manifest.report_dir))?.request;
-      if (request?.context.phase === actorPhase && request.context.runId === invocation.subject.run_id
-        && request.context.feature === invocation.subject.feature && request.context.attemptId === (options?.goalAttemptId ?? process.env.MAISON_GOAL_ATTEMPT)
-        && request.pre_snapshot && !request.pre_snapshot.failureReason) invocationPre = request.pre_snapshot;
-    } catch { /* Without the original P1 preimage, missing research stays strict. */ }
-    const ownedSources = 'feature' in invocation.subject ? resolveFactsPhaseOwnedSources({ projectRoot,
-      frameworkRoot: options?.frameworkRoot ?? path.resolve(__dirname, '../../..'), feature: invocation.subject.feature, phase: actorPhase,
-      ...('run_id' in invocation.subject ? { runId: invocation.subject.run_id } : {}) }, invocation) : new Set<string>();
-    for (const source of ownedSources) if (admission?.source_owners?.[source] === actorPhase) currentTargets.add(path.resolve(projectRoot, source));
-    const mayAdvanceSource = (source: string, hash: string | null): boolean => (!!formal?.sources.get(source)?.written
-      && formal.sources.get(source)?.sha256 === hash) || (!!completed?.sources.get(source)?.written
-      && completed.sources.get(source)?.sha256 === hash) || ownedSources.has(source)
-      && currentTargets.has(path.resolve(projectRoot, source)) && invocation.source_owners?.[source] === actorPhase
-      && ('run_id' in invocation.subject
-        ? !!admission && (invocation.baseline ? admission.baseline?.fingerprint === invocation.baseline.fingerprint
-          : !!invocationPre && !admission.baseline && admission.first_phase === invocation.first_phase)
-          && admission.source_owners?.[source] === actorPhase
-        : !!invocation.baseline);
-    const { createObservedSourceHashReader } = require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest');
-    const inheritedSourceHash = invocation.baseline && 'run_id' in invocation.subject
-      ? createObservedSourceHashReader(projectRoot, invocation.subject.feature, { frameworkRoot: options?.frameworkRoot,
-        runId: invocation.subject.run_id }) : undefined;
-    const unitFacts = !invocation.baseline && (actorPhase === 'work-unit-author' && !!invocationPre && !!admission
-      || !!formal?.context && !formal.context.baseline || !!completed?.context && !completed.context.baseline);
-    if (record.established_by !== expectedPhase || !expectedPhase || (!invocation.baseline && phase !== invocation.first_phase && !unitFacts)) issue('context_exploration_facts_established_by_invalid', '建立资格必须来自首个实际调用或经验证的已有基线');
-    if (invocation.baseline) {
-      if (factsBaselineFingerprint(raw) !== invocation.baseline.fingerprint) issue('context_exploration_facts_baseline_stale', `facts 基线正文或原身份已变化；保留已核基线，在 ## phase_delta: ${phase} 精确追加当前变化来源与事实，不通过改正文或run_id洗新`);
-      const { factsBaselineBusinessDependencies } = require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest');
-      const businessDependencies = feature ? factsBaselineBusinessDependencies(projectRoot, feature, invocation, {
-        frameworkRoot: options?.frameworkRoot, resolvedInputs: options?.resolvedInputs,
-      }) : invocation.baseline.dependencies;
-      for (const dep of businessDependencies) {
-        if (!isInsideProjectRoot(projectRoot, dep.path)) { issue('context_exploration_facts_source_stale', '事实来源不在项目内'); continue; }
-        let hash: string | null = null;
-        try { hash = crypto.createHash('sha256').update(fs.readFileSync(dep.path)).digest('hex'); } catch { /* stale below */ }
-        if (hash !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) {
-          const source = path.relative(projectRoot, dep.path).replace(/\\/g, '/');
-          const observed = inheritedSourceHash?.({ path: source, role: 'input', exists: dep.exists, sha256: dep.sha256 }, '');
-          if (!mayAdvanceSource(source, hash) && (!observed || observed.sha256 !== hash)) issue('context_exploration_facts_source_stale', source);
-          else {
-            ownedSourceDelta = true;
-            if (!deltaPaths.includes(source)) ledgerWarn('context_exploration_facts_source_stale', `本阶段授权内源码已变化但未登记精确 delta：${source}；追溯弱一级，不阻断本阶段。`, registrationSuggestion(source));
-          }
-        }
-      }
-      for (const source of declared) {
-        if (!invocation.baseline.dependencies.some(dep => path.resolve(dep.path) === path.resolve(projectRoot, source) && dep.exists && dep.sha256)) ledgerWarn('context_exploration_facts_source_stale', `基线未绑定原有来源：${source}（该来源不在项目内或不可读，无法自动补登记；追溯弱一级，不阻断本阶段）`);
-      }
-    }
-    for (const input of Object.values(options?.resolvedInputs?.values ?? {})) {
-      if (input.state !== 'resolved' || input.binding.source.kind !== 'derive' || !['derive.codebase', 'derive.test-targets'].includes(input.binding.source.provider_id)) continue;
-      for (const dep of input.binding.dependencies.filter(dep => dep.exists && dep.role === 'derive')) {
-        if (!invocation.source_paths.some(source => path.resolve(projectRoot, source) === path.resolve(dep.path))) issue('context_exploration_facts_scope_coverage', `facts 未承接解析后的真实目标：${dep.path}`);
-      }
-    }
-    for (const source of invocation.source_paths) {
-      if (!fs.existsSync(path.resolve(projectRoot, source)) && mayAdvanceSource(source, null)) continue;
-      if (!declared.includes(source) && !deltaPaths.includes(source)) {
-        const absolute = path.resolve(projectRoot, source);
-        let hash: string | null = null;
-        try { hash = crypto.createHash('sha256').update(fs.readFileSync(absolute)).digest('hex'); } catch { /* Strict unreadable check below. */ }
-        const before = (admission?.baseline ?? invocation.baseline)?.dependencies.find(dep => path.resolve(dep.path) === absolute);
-        let changedInPhase = before ? before.exists !== fs.existsSync(absolute) || before.sha256 !== hash
-          : invocationPre ? (invocationPre.entries.find(entry => entry.path === source)?.sha256 ?? null) !== hash
-          : !!admission && !admission.source_paths.includes(source);
-        if (!before && !admission && 'feature' in invocation.subject && !('run_id' in invocation.subject)) {
-          const baseline = resolveEffectiveDiffBaseline(projectRoot, invocation.subject.feature);
-          const diff = baseline.available ? diffChangedFilesWithStatus({ projectRoot, baseRef: baseline.baseSha }) : undefined;
-          changedInPhase = !!diff?.executed && diff.entries.some(entry => entry.path === source && entry.status === 'A');
-        }
-        // 既有下游合法新增原件只承接来源，不声称本作者已读，也不改写原 facts 基线。
-        if (formal?.sources.get(source)?.sha256 === hash) {
-          ledgerWarn('context_exploration_facts_scope_coverage', `当前正式门按同单元已完成调用的原件承接当前来源：${source}；不补写旧作者研究。`, registrationSuggestion(source));
-        } else if (!before && inheritedSourceHash?.({ path: source, role: 'input', exists: false, sha256: null }, phase)) {
-          // 原 phase_write_observed 的连续哈希与当前字节已核对，继续由真实业务 gate 验证。
-        } else if (changedInPhase && mayAdvanceSource(source, hash)) {
-          ownedSourceDelta = true;
-          ledgerWarn('context_exploration_facts_scope_coverage', `本阶段授权内新增或修改的源码未登记：${source}；追溯弱一级，不阻断本阶段。`, registrationSuggestion(source));
-        } else issue('context_exploration_facts_scope_coverage', `当前目标未覆盖：${source}`);
-      }
-      try {
-        assertFactsSourceReadable(projectRoot, source, options);
-      } catch { issue('context_exploration_facts_scope_coverage', `当前来源不可读或越界：${source}`); }
+      ? input.binding.dependencies.filter(dep => dep.exists && dep.role === 'derive').map(dep => dep.path) : []);
+    for (const source of new Set([...actualSources, ...invocation.source_paths].map(source => path.relative(projectRoot, path.resolve(projectRoot, source)).replace(/\\/g, '/')))) {
+      try { assertFactsSourceReadable(projectRoot, source, options); }
+      catch { issue('context_exploration_facts_scope_coverage', `当前来源不可读或越界：${source}`); }
     }
   } else if (schemaVersion !== '1.0') {
     // P1-8（plan d9b4f7e2，07-13 chrys 案 i4/i5 实证连踩两轮）：facts.md 的 "1.0" 与隔壁
@@ -428,13 +268,8 @@ function checkFactsFile(
 
   if ((invocation && options?.resolvedInputs) || (!invocation && isFactsEstablishingPhase(phase))) {
     results.push(...checkEstablishingFacts(projectRoot, feature, phase, fm, body, relPath, {
-      ...options, deltaSourcePaths: deltaPaths, checkExplorationMode: isFactsEstablishingPhase(phase, invocation),
+      ...options,
     }));
-  }
-  if (!isFactsEstablishingPhase(phase, invocation)) {
-    results.push(...checkDeltaFacts(body, phase, relPath).map(check => ownedSourceDelta && check.status === 'FAIL'
-      ? { ...check, severity: 'MAJOR' as const, status: 'WARN' as const,
-        suggestion: `可在 ## phase_delta: ${phase} 的「路径 | 事实 | 影响」表补齐本阶段变化以完善追溯；缺少登记只披露，不阻断本阶段。` } : check));
   }
 
   return results;
@@ -479,10 +314,10 @@ export function checkFactsArtifact(
         {
           id: 'context_exploration_facts_legacy_fallback',
           category: 'structure',
-          description: '使用旧版 per-phase context-exploration.md（建议 backfill 到 facts.md）',
+          description: '使用旧版 per-phase context-exploration.md',
           severity: 'MINOR',
           status: 'WARN',
-          details: `${factsRel} 缺失，回落旧版 per-phase 契约校验；建议运行 backfill-context-exploration.ts --to-facts 归并。`,
+          details: `${factsRel} 缺失，沿用可核的旧 per-phase facts。`,
         },
       ];
     }
@@ -497,7 +332,7 @@ export function checkFactsArtifact(
     details: `缺失：${factsRel}`,
     suggestion: isFactsEstablishingPhase(phase, options?.factsContext)
       ? '本阶段负责建立 facts.md（frontmatter + Code Facts 表）；必须记录实际建立阶段，不补造 spec/change 执行。'
-      : '本阶段依赖已建立的 facts.md；若上游建立阶段尚未产出，请先完成该阶段，或运行 backfill-context-exploration.ts --to-facts 从旧产物归并。',
+      : '本阶段依赖已建立的 facts.md；请从当前需求、契约与可读来源核对实际决定。',
     affected_files: [factsRel],
   }];
 }

@@ -227,7 +227,9 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
         const prepared = runtime.prepareExecutionContext(raw); assert(!('status' in prepared)); if ('status' in prepared) return;
         assert(!prepared.workInput || Object.isFrozen(prepared.workInput.material.segments));
         const invokeId = `${raw.phase}-i1`;
-        const boundary = { projectRoot: root, feature: 'demo', executionRole: raw.executionRole!, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [], protectedRoots: ['product'] };
+        const boundary = { projectRoot: root, feature: 'demo', executionRole: raw.executionRole!, phaseOrder: ['spec'],
+          domains: verifier ? [] : [{ owner: 'spec', kind: 'source' as const, match: 'exact' as const, path: 'product/input.txt', source: 'signed fixture input' }],
+          immutableInputPaths: verifier ? ['product/input.txt'] : [], diagnostics: [], unresolvedSourcePhases: [], protectedRoots: ['product'] };
         const snapshotOptions = { runtimeExcluded: ['run'] };
         const pre = capturePhaseInvocationSnapshot(boundary, snapshotOptions); assert(!pre.failureReason, pre.failureReason ?? 'snapshot must be observable');
         const emit = (event: Record<string, unknown>) => fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
@@ -1118,20 +1120,25 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
   },
 }, {
   name: 'request current-result reader binds saved checks to the prepared native input snapshot',
-  run() {
+  async run() {
     const f = requestFixture('ut');
     try {
       const request = prepareExplicitRequest(f.options);
-      fs.mkdirSync(request.reportDir, { recursive: true });
-      fs.writeFileSync(path.join(request.reportDir, 'script-report.json'), JSON.stringify({ subject: 'request', request_sha256: request.request_sha256,
-        targets: request.bindings, checks: [{ id: 'native_assertion', status: 'PASS', severity: 'BLOCKER' }], summary: { verdict: 'PASS' } }));
-      assert(resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'request', projectRoot: f.root, request })).completionEligible);
+      const { facts } = require('./request-entry.unit.test') as typeof import('./request-entry.unit.test');
+      const { runExplicitRequest } = require('../../scripts/utils/request-phase') as typeof import('../../scripts/utils/request-phase');
+      facts(request, f.root);
+      assert.equal(await runExplicitRequest({ projectRoot: f.root, frameworkRoot: f.framework, args: {
+        phase: 'ut', 'request-file': f.options.requestFile, 'report-dir': f.options.reportDir,
+      } }), 0);
+      const current = (prepared: typeof request) => resolveCurrentDisposition(readCurrentDispositionInput({
+        endpoint: 'request', projectRoot: f.root, frameworkRoot: f.framework, request: prepared,
+      }));
+      assert(current(request).completionEligible);
       fs.writeFileSync(path.join(f.root, 'src/value.js'), 'exports.value = 43;\n');
-      assert.throws(() => prepareExplicitRequest(f.options), /another request\/baseline/);
-      const changed = prepareExplicitRequest({ ...f.options, reportDir: 'doc/reports/changed' });
-      fs.mkdirSync(changed.reportDir, { recursive: true });
-      fs.copyFileSync(path.join(request.reportDir, 'script-report.json'), path.join(changed.reportDir, 'script-report.json'));
-      assert(!resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'request', projectRoot: f.root, request: changed })).completionEligible);
+      const changed = prepareExplicitRequest(f.options);
+      assert.equal(changed.reportDir, request.reportDir);
+      assert.notEqual(changed.request_sha256, request.request_sha256);
+      assert(!current(changed).completionEligible);
     } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {

@@ -230,47 +230,45 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: '建立阶段（spec）source_code_paths 重复同一路径凑数 → 去重后不满足阈值仍 FAIL（codex review 采纳）',
+    name: '同一可读来源重复出现时仍能使用事实',
     run: () => {
       const dir = mkProject();
       try {
         fs.writeFileSync(path.join(dir, 'doc', 'module-catalog.yaml'), 'modules: []', 'utf-8');
-        // spec 阈值 min_source_code_paths=2；写同一条路径 5 遍，去重后只有 1 条，应仍 FAIL。
         const gamed = passingEstablishingFacts('demo', 'spec').replace(
           'source_code_paths: [doc/module-catalog.yaml, framework.config.json]',
           'source_code_paths: [doc/module-catalog.yaml, doc/module-catalog.yaml, doc/module-catalog.yaml, doc/module-catalog.yaml, doc/module-catalog.yaml]',
         );
         writeFactsFile(dir, 'demo', gamed);
         const results = checkFactsArtifact(dir, 'demo', 'spec');
-        eq(includesId(results, 'context_exploration_source_code_paths_min', 'FAIL'), true, '重复路径去重后应仍命中 source_code_paths_min FAIL');
+        eq(results.filter(r => r.status === 'FAIL'), [], '当前可读事实足以支撑决定');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     },
   },
   {
-    name: '建立阶段（spec）source_code_paths 用路径变体（a/../a、./a、a//b）凑数 → normalize 后仍去重 FAIL（codex review 补强建议）',
+    name: '不同写法引用同一真实来源，仍核实当前文件',
     run: () => {
       const dir = mkProject();
       try {
         fs.mkdirSync(path.join(dir, 'doc', 'a'), { recursive: true });
         fs.writeFileSync(path.join(dir, 'doc', 'a', 'b.ts'), '// b\n', 'utf-8');
-        // 同一个 doc/a/b.ts 用 3 种不同写法表达，spec 阈值 min_source_code_paths=2；
-        // path.posix.normalize 折叠后应视为同一路径，仍不满足阈值。
+
         const gamed = passingEstablishingFacts('demo', 'spec').replace(
           'source_code_paths: [doc/module-catalog.yaml, framework.config.json]',
           'source_code_paths: [doc/a/b.ts, doc/a/../a/b.ts, ./doc/a/b.ts]',
         );
         writeFactsFile(dir, 'demo', gamed);
         const results = checkFactsArtifact(dir, 'demo', 'spec');
-        eq(includesId(results, 'context_exploration_source_code_paths_min', 'FAIL'), true, '路径变体归一后应仍命中 source_code_paths_min FAIL');
+        eq(results.filter(r => r.status === 'FAIL'), [], '当前可读事实足以支撑决定');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     },
   },
   {
-    name: '建立阶段（spec）facts.md 量化不足（files_inspected_count 过低）→ 命中量化 FAIL',
+    name: '当前事实不依赖此前读取次数',
     run: () => {
       const dir = mkProject();
       try {
@@ -278,48 +276,48 @@ const cases: Array<{ name: string; run: () => void }> = [
         const weak = passingEstablishingFacts('demo', 'spec').replace('files_inspected_count: 4', 'files_inspected_count: 0');
         writeFactsFile(dir, 'demo', weak);
         const results = checkFactsArtifact(dir, 'demo', 'spec');
-        eq(includesId(results, 'context_exploration_files_inspected_min', 'FAIL'), true, '应命中 files_inspected_min FAIL');
+        eq(results.filter(r => r.status === 'FAIL'), [], '当前可读事实足以支撑决定');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     },
   },
   {
-    name: 'delta 阶段（plan）phase_delta 节缺失 → FAIL phase_delta_missing',
+    name: '当前事实足够时省略 phase_delta',
     run: () => {
       const dir = mkProject();
       try {
         writeFactsFile(dir, 'demo', passingEstablishingFacts('demo', 'spec'));
         const results = checkFactsArtifact(dir, 'demo', 'plan');
-        eq(includesId(results, 'context_exploration_facts_phase_delta_missing', 'FAIL'), true, '应命中 phase_delta_missing');
+        eq(results.filter(r => r.status === 'FAIL'), [], '仅登记形式不影响事实判断');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     },
   },
   {
-    name: 'delta 阶段（plan）phase_delta 节存在但为空 → FAIL phase_delta_empty',
+    name: '空的 phase_delta 不改变实际决定',
     run: () => {
       const dir = mkProject();
       try {
         const content = `${passingEstablishingFacts('demo', 'spec')}\n## phase_delta: plan\n\n`;
         writeFactsFile(dir, 'demo', content);
         const results = checkFactsArtifact(dir, 'demo', 'plan');
-        eq(includesId(results, 'context_exploration_facts_phase_delta_empty', 'FAIL'), true, '应命中 phase_delta_empty');
+        eq(results.filter(r => r.status === 'FAIL'), [], '仅登记形式不影响事实判断');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
       }
     },
   },
   {
-    name: 'delta 阶段（plan）phase_delta 节存在且非空（含 "none"）→ PASS',
+    name: '旧 phase_delta 填 none 的 facts 仍可读',
     run: () => {
       const dir = mkProject();
       try {
         const content = `${passingEstablishingFacts('demo', 'spec')}\n## phase_delta: plan\n\nnone\n`;
         writeFactsFile(dir, 'demo', content);
         const results = checkFactsArtifact(dir, 'demo', 'plan');
-        eq(includesId(results, 'context_exploration_facts_phase_delta_present', 'PASS'), true, '应命中 phase_delta_present PASS');
+        eq(results.filter(r => r.status === 'FAIL'), [], '仅登记形式不影响事实判断');
         eq(results.some((r) => r.status === 'FAIL'), false, '不应有 FAIL');
       } finally {
         fs.rmSync(dir, { recursive: true, force: true });
@@ -512,7 +510,7 @@ function modernFactsCase(request: boolean, sourceCount = 6, phase = request ? 'r
       const expanded = { ...context, source_paths: [...sourcePaths, 'src/created.test.ts'] };
       const parsed = parseContextExploration(raw);
       const original = runQuantitativeChecks(dir, 'demo', 'plan', parsed.fm, parsed.body, 'context/facts.md', { ...options, factsContext: expanded });
-      eq(includesId(original, 'context_exploration_source_code_paths_min', 'FAIL'), true, 'establishing research still requires both actual research targets');
+      eq(includesId(original, 'context_exploration_source_code_paths_min', 'FAIL'), false, 'current inputs need no duplicate declaration in the research ledger');
       for (const downstream of ['coding', 'review', 'ut'] as const) {
         const check = (factsBody: string) => runQuantitativeChecks(dir, 'demo', downstream, parsed.fm, factsBody, 'context/facts.md',
           { ...options, factsContext: expanded, resolvedInputs: { ...resolvedInputs, phase: downstream } });
@@ -535,7 +533,7 @@ function modernFactsCase(request: boolean, sourceCount = 6, phase = request ? 'r
       const extended = checkFactsArtifact(dir, 'demo', 'testing', { ...options, factsContext: { ...inherited, source_paths: [...sourcePaths, 'src/new.ts'] }, resolvedInputs: { ...resolvedInputs, phase: 'testing' } });
       eq(extended.filter(r => r.status === 'FAIL'), [], 'new facts extend delta without mutating baseline');
       fs.writeFileSync(file, raw.replace('ready_to_produce: true', 'ready_to_produce: false') + '\n## phase_delta: testing\nnone\n');
-      eq(includesId(checkFactsArtifact(dir, 'demo', 'testing', { ...options, factsContext: inherited, resolvedInputs: { ...resolvedInputs, phase: 'testing' } }), 'context_exploration_facts_baseline_stale', 'FAIL'), true, 'changed baseline rejected');
+      eq(includesId(checkFactsArtifact(dir, 'demo', 'testing', { ...options, factsContext: inherited, resolvedInputs: { ...resolvedInputs, phase: 'testing' } }), 'context_exploration_facts_ready', 'FAIL'), true, 'the current facts are not ready');
       fs.writeFileSync(file, raw);
       eq(includesId(checkFactsArtifact(dir, 'demo', 'coding'), 'context_exploration_facts_schema_version', 'FAIL'), true, 'new record cannot silently enter legacy');
     }
@@ -584,14 +582,10 @@ function unboundDeclaredSourceIsLedgerWarn(): void {
     // 基线少登记了一条声明来源（补不了的那种）→ WARN，不 FAIL。
     const partial = run(dependenciesFor(sourcePaths.slice(1)));
     eq(partial.filter(r => r.status === 'FAIL'), [], '未登记的声明来源不得再阻断阶段');
-    const warned = partial.filter(r => r.id === 'context_exploration_facts_source_stale' && r.status === 'WARN');
-    eq(warned.length, 1, '未登记的声明来源必须留 WARN 披露（不得静默）');
-    eq(warned[0].severity, 'MAJOR', '账本类披露不占 BLOCKER 档');
-    eq(warned[0].details.includes(sourcePaths[0]), true, 'WARN 必须点名具体来源');
-    // 反例：登记了但字节真变了 —— 仍是 BLOCKER，本条降档不得外溢。
-    const tampered = dependenciesFor(sourcePaths).map((dep, i) => (i === 0 ? { ...dep, sha256: '0'.repeat(64) } : dep));
-    eq(run(tampered).some(r => r.id === 'context_exploration_facts_source_stale' && r.status === 'FAIL'), true,
-      '来源内容变化仍须阻断（降档只对"没登记"）');
+    fs.writeFileSync(path.join(dir, sourcePaths[0]), 'new bytes; current source still readable');
+    eq(run(dependenciesFor(sourcePaths.slice(1))).filter(r => r.status === 'FAIL'), [], 'current source can be reconsidered from its bytes');
+    fs.unlinkSync(path.join(dir, sourcePaths[0]));
+    eq(includesId(run(dependenciesFor(sourcePaths.slice(1))), 'context_exploration_facts_scope_coverage', 'FAIL'), true, 'missing actual reference is reported');
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
@@ -626,10 +620,8 @@ cases.push(
       }
       const baselineOnly = original.split('## phase_delta: plan')[0];
       const otherPhase = baselineOnly + '\n## phase_delta: ut\n| 路径 | 事实 | 影响 |\n|---|---|---|\n| module.json5 | read | test |\n';
-      const missing = run(otherPhase).find(c => c.id === 'context_exploration_inputs_coverage');
-      eq(missing?.status, 'FAIL', 'later phase cannot supply plan input');
-      eq(missing && resolveCheckDisposition(missing).action, 'disclose', 'missing registration is disclosed');
-      eq(includesId(run(original.replace('ready_to_produce: true', 'ready_to_produce: false')), 'context_exploration_facts_baseline_stale', 'FAIL'), true, 'baseline edit still fails');
+      eq(run(otherPhase).filter(check => check.status === 'FAIL'), [], 'current facts work without a stage-specific read ledger');
+      eq(includesId(run(original.replace('ready_to_produce: true', 'ready_to_produce: false')), 'context_exploration_facts_ready', 'FAIL'), true, 'current facts must be ready');
       fs.unlinkSync(path.join(dir, sources[0]));
       eq(run(original).some(c => c.status === 'FAIL' && /source_stale|scope_coverage|sources_exist/.test(c.id)), true, 'unreadable source still fails');
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }
@@ -637,7 +629,7 @@ cases.push(
   { name: 'facts 1.1: coding establishes real baseline and successor preserves provenance', run: () => modernFactsCase(false) },
   { name: 'facts 1.1: a one-source plan run uses its admitted source budget and keeps baseline checks', run: () => modernFactsCase(false, 1, 'plan') },
   { name: 'facts 1.1: request review uses explicit report directory and exclusive subject', run: () => modernFactsCase(true) },
-  { name: 'P3-T9 an unregistered declared source is disclosed as a ledger WARN, while a changed source still blocks', run: unboundDeclaredSourceIsLedgerWarn },
+  { name: 'P3-T9 current readable sources need no write or read ledger; a missing source remains visible', run: unboundDeclaredSourceIsLedgerWarn },
 );
 
 export function runAll(): UnitCaseResult[] {

@@ -84,26 +84,34 @@ function changedKeys(left: unknown, right: unknown, prefix = ''): string[] {
   return [...new Set([...Object.keys(left), ...Object.keys(right)])].flatMap(key => changedKeys((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key], `${prefix}.${key}`));
 }
 
-/** Paths select candidates; only parsed before/after content produces specialized duties. */
-export function deriveContentImpact(root: string, intake: RequestIntake): ContentImpact[] {
+export interface RequestComparison { base?: string; head?: string }
+
+export function compareRequestContent(projectRoot: string, range?: RequestComparison) {
+  return diffChangedFilesWithStatus({ projectRoot, baseRef: range?.base ?? 'HEAD', headRef: range?.head });
+}
+
+export function readRequestRevision(root: string, revision: string, file: string): Buffer | undefined {
+  try { return execFileSync('git', ['show', `${revision}:${file}`], { windowsHide: true, cwd: root, stdio: ['ignore', 'pipe', 'pipe'] }); }
+  catch { return undefined; }
+}
+
+/** Declared paths select obligations; the diff supplies before/after and candidate paths. */
+export function deriveContentImpact(root: string, intake: RequestIntake, range?: RequestComparison, comparison = compareRequestContent(root, range)): ContentImpact[] {
   const impacts: ContentImpact[] = [];
   const add = (kind: ContentImpact['kind'], file: string, detail: string, verification: string, state: ContentImpact['state'] = 'required'): void => {
     const verification_family = IMPACT_VERIFICATION_FAMILY[kind];
     impacts.push({ kind, files: [file], detail, verification, state, verification_family, excluded_by_user: intake.control.excluded.includes(verification_family) });
   };
-  const diff = intake.baseline.base ? diffChangedFilesWithStatus({ projectRoot: root, baseRef: intake.baseline.base }) : undefined;
+  if (!comparison.executed) return impacts;
+  const explicitHead = range?.head && range.head !== 'WORKTREE' ? range.head : undefined;
   for (const file of intake.targets) {
-    const entry = diff?.entries.find(item => item.path === file);
-    if (intake.baseline.dirty_digests && Object.prototype.hasOwnProperty.call(intake.baseline.dirty_digests, file) && intake.attribution_unknown.includes(file)) {
-      const detail = intake.baseline.dirty_digests_at === 'prepare' ? '初始脏文件仅有首次准备摘要，开工时原件待核' : '初始脏文件的字节或存在性再次变化，写前原件待核';
-      add('behavior', file, detail, '原作者核对本次新增影响并完成适用验证', 'unknown');
-      continue;
-    }
-    let before = '';
-    let after = '';
-    try { if (intake.baseline.preimages?.[file]) before = intake.baseline.preimages[file].content;
-      else if (intake.baseline.base && !intake.baseline.initially_absent?.includes(file)) before = execFileSync('git', ['show', `${intake.baseline.base}:${entry?.oldPath ?? file}`], { windowsHide: true, cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }); } catch { /* Added files have no old content. */ }
-    if (fs.existsSync(path.resolve(root, file))) after = fs.readFileSync(path.resolve(root, file), 'utf8');
+    const entry = comparison.entries.find(item => item.path === file || item.oldPath === file);
+    if (!entry) continue;
+    const before = readRequestRevision(root, comparison.baseSha!, entry.oldPath ?? file)?.toString('utf8') ?? '';
+    const absolute = path.resolve(root, entry.path);
+    const current = explicitHead ? readRequestRevision(root, explicitHead, entry.path)
+      : fs.existsSync(absolute) && fs.statSync(absolute).isFile() ? fs.readFileSync(absolute) : undefined;
+    const after = current?.toString('utf8') ?? '';
     if (before === after || codeTokens(before) === codeTokens(after)) continue;
     if (/\.json5?$/i.test(file)) {
       try {

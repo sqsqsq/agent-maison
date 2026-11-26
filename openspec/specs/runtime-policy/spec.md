@@ -233,11 +233,11 @@ Task automation authority SHALL be a single explicit input: `authorization.auton
 
 ### Requirement: Unified intake derives one proportionate envelope
 
-所有产品修改 SHALL 默认消费 `docs/operations/project-entry.md` 的唯一规则，Agent SHALL 提供有原文/实际读路径来源的 Q1/Q2/Q3、独立结果及依赖、跨部件、预期明确和做法唯一事实；机器 SHALL 从事实派生外框，SHALL NOT 只接受档位名。复杂优先，其次三问任一是为中型；三问全否且预期可验/有源、唯一做法为特别简单，否则局部选择/预期待补为小型。unknown SHALL 保留并只补影响当前决定的事实，不当否、不自动永久升档，不新增分类 CLI/模型/用户表单。
+所有产品修改 SHALL 默认消费 `docs/operations/project-entry.md` 的唯一规则，Agent SHALL 提供有理由和当前可读项目内路径的 Q1/Q2/Q3、独立结果及依赖、跨部件、预期明确和做法唯一事实；机器 SHALL 核引用当前可读并从事实派生外框，SHALL NOT 要求历史 Read 或只接受档位名。复杂优先，其次三问任一是为中型；三问全否且预期可验/有源、唯一做法为特别简单，否则局部选择/预期待补为小型。unknown SHALL 保留并只补影响当前决定的事实，不当否、不自动永久升档，不新增分类 CLI/模型/用户表单。
 
 真实 user 明确升/降档、豁免或验证限制 SHALL 优先；原件角色、session/cwd 与请求关联 SHALL 核实，assistant 转述/引用文件/代码块 SHALL NOT 授豁免。默认豁免只及本请求/续作，明确会话范围才扩展，撤销恢复。无固定选择仅新依据或有据纠错可重算；真实失败、既有成果、授权和硬预算 SHALL 保留。
 
-compile/request SHALL 按精确起始基线与最终内容派生专项，复用原 parser/provider/结果，SHALL NOT 按路径命中把注释当逻辑改变。接口、路由、持久化、金额/幂等与架构等适用验证独立于外框；用户明确限制时披露未执行，编译绿 SHALL NOT 冒充 review/UT/真机通过。途中 commit/恢复 SHALL NOT 重置基线，无关初始 dirty 排除，重叠无前像/原件或 reflog 不唯一 SHALL 保持 unknown，不签完整对账。
+compile/request SHALL 按当前工作区字节和比较时的 HEAD 给内容影响提示，用户明确指定比较区间时使用其 base/head。当前目标和实际依赖决定应审测范围。读取、dirty 或普通原生工具诊断 SHALL NOT 扩大写权或覆盖独立验收结论。完整 diff 归属仅在用户要求时核原件。接口、路由、持久化、金额/幂等和架构等适用验证独立于外框。未执行、实际失败与用户排除 SHALL 如实标记。
 
 #### Scenario: User fixes a smaller envelope
 - **WHEN** user 明确按小型且未排除专项，实际 diff 改变接口签名
@@ -247,9 +247,9 @@ compile/request SHALL 按精确起始基线与最终内容派生专项，复用�
 - **WHEN** 支付目录的实际内容仅注释/错字变化
 - **THEN** 不仅因路径触发支付逻辑专项，用户明确验证要求仍保留
 
-#### Scenario: An ambiguous baseline is not replaced by current HEAD
-- **WHEN** 无首次 HEAD 记录且 user 开始时刻的 reflog 同秒多次移动或记录缺失
-- **THEN** 起点与相关完整 diff 结论保持 unknown，已可执行的显式局部能力继续，不将当前 HEAD 当可信起点
+#### Scenario: Current verification can proceed with incomplete comparison history
+- **WHEN** 项目无 Git 或显式历史比较基准不可读
+- **THEN** 比较缺口 SHALL 披露，已具备独立依据的显式局部验证继续。普通内容比较 SHALL 用当前 HEAD，用户显式指定的区间 SHALL 按其 base/head。比较基准不重置原请求出生身份
 
 > **Enforced by:** 原 compile/request 入口、`harness/scripts/utils/execution-scope.ts` 及同源原生请求/内容影响解析；真实客户端与业务验收分开记录。
 

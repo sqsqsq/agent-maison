@@ -47,6 +47,8 @@ import * as path from 'path';
 
 import { featureDir } from '../../config';
 import { extractAcceptanceIdRefs } from './check-acceptance';
+import { visualGateAllowsEvidence } from './check-disposition';
+export { visualGateAllowsEvidence } from './check-disposition';
 import { extractTables, getSectionContent, type MdTable } from './markdown-parser';
 import type { AcceptanceFlowsDoc } from './p0-semantic-gates';
 import type { CheckResult } from './types';
@@ -195,22 +197,6 @@ export interface VisualEvidenceOptions {
   currentBuildFingerprint?: string | null;
   /** 本轮 visual aggregate；必须在 visual 检查后传入，缺省/不可用均拒绝。 */
   visualGate: Pick<CheckResult, 'id' | 'status' | 'severity' | 'structured' | 'affected_files'> | null;
-}
-
-/**
- * 稳定 visual aggregate 的证据资格：PASS 与 WARN **读同一个** `channel_evidence_usable` 布尔。
- *
- * plan e7a2c4f1 §3.1：判据改成逐屏真值 + 覆盖条件之后，PASS 不再蕴含"逐屏覆盖成立"——
- * 全屏 pass、hits 为空、但 OCR 不可用且无 region_attest 的轮次照样能产出 PASS 聚合，却不该
- * 被绑定消费。gate 缺席 / id 不是 visual_diff 仍直接拒（那是身份，不是档位）。
- */
-export function visualGateAllowsEvidence(
-  gate: Pick<CheckResult, 'id' | 'status' | 'severity' | 'structured'> | null | undefined,
-): boolean {
-  if (!gate || gate.id !== 'visual_diff') return false;
-  if (gate.status !== 'PASS' && gate.status !== 'WARN') return false;
-  const payload = gate.structured as { kind?: string; channel_evidence_usable?: unknown } | undefined;
-  return payload?.kind === 'visual_diff' && payload.channel_evidence_usable === true;
 }
 
 /**

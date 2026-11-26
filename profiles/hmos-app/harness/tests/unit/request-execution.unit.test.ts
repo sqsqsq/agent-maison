@@ -19,6 +19,7 @@ import type { RequestCheckContext, CheckResult } from '../../../../../harness/sc
 import { clearFrameworkConfigCache } from '../../../../../harness/config';
 import { materializeAutomaticFacts, prepareAutomaticRequest } from '../../../../../harness/scripts/utils/automatic-request';
 import { prepareExplicitRequest } from '../../../../../harness/scripts/utils/capability-resolution-entry-input';
+import { DEVICE_TEST_BUILD_RESULT, snapshotDeviceTestBuildInputs } from '../../device-test-build-reuse';
 
 const repo = path.resolve(__dirname, '../../../../..');
 const golden = path.join(repo, 'profiles/hmos-app/vendor/hylyre/src/hylyre/contracts/golden/step/valid');
@@ -35,7 +36,8 @@ function fixture(phase: 'ut' | 'testing') {
   const ctx = { subject: 'request', phase, projectRoot: root, frameworkRoot: repo, frameworkRel: 'framework', harnessRoot: path.join(repo, 'harness'), reportDir,
     phaseRule: { structure_checks: {}, traceability_checks: {}, semantic_checks: {} },
     resolvedProfile: { name: 'hmos-app', profileDir: path.join(repo, 'profiles/hmos-app'), capabilities: { 'ut.run': { provider: 'hvigor_hypium', severity: 'BLOCKER' }, 'device_test.run': { provider: 'hylyre', severity: 'BLOCKER' } }, personalPrerequisites: {}, phasesDisabled: new Set() },
-    request: { request_sha256: 'request-only', requested_result: 'check the selected behavior', reportDir, targets: { files: [], tests: phase === 'ut' ? [test] : [] },
+    request: { request_sha256: 'request-only', requested_result: 'check the selected behavior', requestFile: path.join(root, 'request.json'),
+      reportDir, targets: { files: [], tests: phase === 'ut' ? [test] : [] },
       sourceContents: [{ path: test, content: source }], inputs: { test_plan: path.join(root, 'plan.md') }, bindings: [], baseline: {}, allowed_test_writes: [] },
     resolvedInputs: { values: {}, context: {} }, factsContext: {},
   } as unknown as RequestCheckContext;
@@ -97,7 +99,7 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       const prepare = () => prepareExplicitRequest(parseOptions);
       const pending = prepare();
       assert.equal(pending.intake_context?.user.id, 'same-request', 'exercise the native writer path');
-      assert.equal(pending.baseline.base, git('rev-parse', 'HEAD'));
+      assert.equal(pending.baseline.base, undefined);
       assert.deepEqual(pending.targets.tests, [test]);
       assert.deepEqual(pending.test_registrations, [registration]);
       assert.deepEqual(pending.allowed_test_writes, [registration, test].sort());
@@ -112,7 +114,7 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       flush();
       assert(git('status', '--short', '--untracked-files=all').includes(registration));
       const prepared = prepare();
-      assert(prepared.intake_context?.targets.includes(registration), 'the registration really returns through native and diff attribution');
+      assert(!prepared.intake_context?.targets.includes(registration), 'a native edit does not broaden the product target');
       assert.deepEqual(prepared.targets.files, [source]);
       assert(prepared.bindings.find(binding => binding.path === registration)?.sha256);
       assert.equal(await publicRequest(args), 0, 'the native writer can prepare again after the recorded registration write');
@@ -341,6 +343,59 @@ const cases: Array<{ name: string; run(): Promise<void> | void }> = [{
       const outside = await run();
       assert(outside.some(check => check.id === 'request_device_native' && check.status === 'FAIL' && check.details.includes('AC-3')));
       assert.equal(executions, beforeGroup + 1);
+      f.ctx.forceDevice = false;
+      f.ctx.resolvedInputs.values.test_plan = { state: 'resolved', value: plan()
+        + '\n| TC-002 | matching rows | already open | {"back":{}} ; {"wait_for":{"by_text":"Bank","match":"exact"}} | Matching banks are visible | P0 | AC-2 |' } as RequestCheckContext['resolvedInputs']['values'][string];
+      const beforeTwo = executions;
+      const two = await run();
+      assert.equal(two.filter(check => check.id === 'request_device_native' && check.status === 'PASS').length, 2);
+      assert.equal(executions, beforeTwo + 2);
+      const saved = listExecutionKeyRuns(f.ctx.reportDir)[0];
+      fs.unlinkSync(path.join(saved.runDir, 'frozen.case-2.expected-check.response.json'));
+      const restored = (await run()).filter(check => check.id === 'request_device_native');
+      assert.equal(executions, beforeTwo + 3, 'only the TC with missing evidence runs again');
+      assert.match(restored[0].details, /TC-001 \(reused_by_execution_key\)/);
+      assert.match(restored[1].details, /^TC-002:/);
+      assert(restored.every(check => check.status === 'PASS'));
+      const source = 'entry/src/main/BankFilter.ets';
+      fs.mkdirSync(path.dirname(path.join(f.root, source)), { recursive: true });
+      fs.writeFileSync(path.join(f.root, source), 'export const filter = 1;');
+      fs.writeFileSync(path.join(f.root, 'build-profile.json5'), JSON.stringify({ app: { products: [{ name: 'phone' }] },
+        modules: [{ name: 'entry', srcPath: './entry' }] }));
+      const built = path.join(f.root, 'entry/build/signed.hap');
+      fs.mkdirSync(path.dirname(built), { recursive: true });
+      fs.writeFileSync(built, 'observed installed valid app package');
+      const hapSha256Full = computeHapSha256Full(built);
+      patch(hdc, 'runHdcRaw', (_exe: string, argv: string[]) => argv[3] === 'bm'
+        ? { status: 0, stdout: JSON.stringify({ name: 'com.example.request', hapModuleInfos: [{ name: 'entry', hapPath: '/data/app/entry.hap' }] }) }
+        : { status: 0, stdout: hapSha256Full + '  /data/app/entry.hap' }, restores);
+      f.ctx.request.origin_request = path.join(f.root, 'request.json');
+      f.ctx.request.bindings = [{ path: source, exists: true, sha256: null }];
+      const unbound = await run();
+      assert(unbound.some(check => check.id === 'request_test_execution' && check.status === 'PASS'), 'keep installed package execution');
+      assert(unbound.some(check => check.id === 'request_input_unresolved' && check.details.includes('当前源码对应')));
+      assert.equal(generateRequestScriptReport(f.ctx, unbound).verdict, 'INCOMPLETE');
+      const buildInputs = snapshotDeviceTestBuildInputs(f.root, 'phone', 'debug');
+      assert(buildInputs);
+      fs.writeFileSync(path.join(f.ctx.reportDir, DEVICE_TEST_BUILD_RESULT), JSON.stringify({ artifactValidation: { status: 'valid' },
+        hvigor: { executed: true, exitCode: 0, successMarkerFound: true },
+        hapPath: built, hapSha256Full, resolvedProduct: 'phone', resolvedBuildMode: 'debug', buildInputsSha256: buildInputs.sha256 }));
+      const sourced = await run();
+      assert(!sourced.some(check => check.id === 'request_input_unresolved'), JSON.stringify(sourced));
+      assert.equal(f.ctx.executionArtifacts?.[0].sha256, hapSha256Full);
+      const assertStep = spawn.spawnHylyre;
+      patch(spawn, 'spawnHylyre', (options: Parameters<typeof assertStep>[0]) => {
+        fs.writeFileSync(path.join(f.root, source), 'export const filter = 2;');
+        return assertStep(options);
+      }, restores);
+      f.ctx.forceDevice = true;
+      const during = await run();
+      assert(during.some(check => check.id === 'request_test_execution' && check.status === 'PASS'));
+      assert(during.some(check => check.id === 'request_execution_inputs_changed' && check.details.includes('实际执行期间')));
+      f.ctx.forceDevice = false;
+      const stale = await run();
+      assert(stale.some(check => check.id === 'request_test_execution' && check.status === 'PASS'));
+      assert(stale.some(check => check.id === 'request_input_unresolved' && check.details.includes('当前源码对应')));
       f.ctx.forceDevice = true;
       bindPlan('AC-1');
       let execution = { executed: true, exitCode: 0 as number | null };

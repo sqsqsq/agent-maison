@@ -26,6 +26,7 @@ import { loadWorkflowSpec } from '../../workflow-loader';
 import type { CheckContext, CheckResult, ContextFileEntry, ScriptReport } from '../../scripts/utils/types';
 import { clearFrameworkConfigCache, featurePhaseReportsDir, resolveFeatureArtifact, statefilePath } from '../../config';
 import { publishFixtureVerifierEvidence } from '../utils/verifier-evidence-fixture';
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { computeProductWorktreeDigest } from '../../scripts/utils/worktree-digest';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
@@ -155,6 +156,7 @@ function buildProject(phase: string, opts: ReceiptOpts): { root: string; sha: st
   }
   if (opts.omitTrace) fs.unlinkSync(tracePath);
   if (opts.corruptTrace) fs.writeFileSync(tracePath, '{ this is not json', 'utf-8');
+  bindPolicyResult(root, phase);
 
   const verifierBlock = opts.omitVerifier
     ? 'verifier_subagent: {}\n'
@@ -399,8 +401,17 @@ function writePolicyPacket(root: string, phase: string, report: ScriptReport, pl
     contextFiles,
     ...(goalBriefText === undefined ? {} : { goalBriefText }),
   } as Parameters<typeof buildVerifierMaterialView>[0]);
-  const write = () => writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: plan, verifierMaterial: material });
+  const write = () => {
+    const summary = writeRunSummaryBase(root, report, frameworkRoot, { verifierPlan: plan, verifierMaterial: material });
+    bindPolicyResult(root, phase);
+    return summary;
+  };
   return runId ? withGoalRunEnv(root, runId, write) : write();
+}
+
+function bindPolicyResult(root: string, phase: string, extraInputs: string[] = []): void {
+  const manifest = resolvePhaseEvidenceManifest({ projectRoot: root, feature: 'demo', phase, frameworkRoot: path.dirname(HARNESS_ROOT), extraInputs });
+  writePhaseEvidenceManifest(root, manifest);
 }
 
 /** 材料视图的文件面（仓根相对路径）——钉住"某文件经哪条路进视图"的构造性前提。 */
@@ -438,6 +449,32 @@ function phaseOutputRelPath(root: string, phase: string, basename: string): stri
 
 const cases: Array<{ name: string; run: () => void }> = [
   {
+    name: 'slim receipt stays valid after unrelated commit, and rejects changes to the inputs actually checked',
+    run: () => {
+      const phase = 'review', { root } = buildProject(phase, { evidenceProfile: 'balanced', omitVerifier: true });
+      try {
+        const source = 'app/demo/src/main/ets/Main.ets';
+        bindPolicyResult(root, phase, [source]);
+        const git = (...args: string[]) => execFileSync('git', args, { cwd: root, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+        fs.writeFileSync(path.join(root, 'app/Other.ets'), 'export const other = 1;');
+        git('add', 'app/Other.ets'); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'parallel request');
+        fs.writeFileSync(path.join(root, 'app/Other.ets'), 'export const other = 2;');
+        const unaffected = tryValidateReceipt(HARNESS_ROOT, root, phase, 'demo');
+        assert(unaffected.status === 'passed', unaffected.message ?? unaffected.status);
+        const summaryPath = path.join(featurePhaseReportsDir(root, 'demo', phase, path.dirname(HARNESS_ROOT)), 'summary.json');
+        const original = fs.readFileSync(summaryPath, 'utf8');
+        fs.writeFileSync(summaryPath, JSON.stringify({ ...JSON.parse(original), next_action: 'phase_closed_wait_user' }));
+        const miscited = tryValidateReceipt(HARNESS_ROOT, root, phase, 'demo');
+        assert(miscited.status === 'failed' && !!miscited.message?.includes('summary.json'), miscited.message ?? miscited.status);
+        fs.writeFileSync(summaryPath, original);
+        fs.appendFileSync(path.join(root, source), '// changed actual input');
+        const changed = tryValidateReceipt(HARNESS_ROOT, root, phase, 'demo');
+        assert(changed.status === 'failed' && !!changed.message?.includes(source), changed.message ?? changed.status);
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+
+  {
     name: 'V8 policy off retains a veto for identical D/R preimages and drops it when only the preimage changes',
     run: () => {
       const phase = 'review', { root } = buildProject(phase, { omitVerifier: true });
@@ -452,6 +489,9 @@ const cases: Array<{ name: string; run: () => void }> = [
         fs.writeFileSync(configFile, JSON.stringify(config), 'utf8');
         clearFrameworkConfigCache();
         const removed = '02-Feature/Demo/before.ets';
+        const contracts = resolveFeatureArtifact(root, 'demo', 'contracts.yaml').canonicalPath;
+        fs.mkdirSync(path.dirname(contracts), { recursive: true });
+        fs.writeFileSync(contracts, JSON.stringify({ feature: 'demo', files: [removed], modules: [] }), 'utf8');
         fs.mkdirSync(path.dirname(path.join(root, removed)), { recursive: true });
         fs.writeFileSync(path.join(root, removed), 'export const original = "A";\n', 'utf8');
         git('add', '-A'); git('-c', 'commit.gpgsign=false', 'commit', '-qm', 'original A');
@@ -1005,6 +1045,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         const summary = withGoalRunEnv(root, 'run-X', () =>
           writeRunSummaryBase(root, passScriptReport('review', root), path.dirname(HARNESS_ROOT), { verifierPlan: plan }),
         );
+        bindPolicyResult(root, 'review');
         assert(!summary.verifier_subject_id, '无报告时不得凭空沿用 subject');
         assert(!summary.verifier_report, '无报告时不得写 verifier_report');
         assert(

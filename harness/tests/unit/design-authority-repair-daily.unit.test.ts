@@ -404,7 +404,6 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
     let questionCalls = 0, calls = 0;
     const draft = path.join(runDir, 'design-repair/component-blueprint.yaml');
     const affected = mode === 'questioner-cu' ? path.join(runDir, 'design-repair/change-unit.yaml') : draft;
-    let beforeQuestioning: Buffer | undefined;
     const invoke: Parameters<typeof runUnattendedDesignRepair>[0]['invoke'] = async (purpose, _prompt, guard) => {
       assert(guard);
       const phase = designRepairInvokeLabel(purpose), invokeId = `${phase}-${++calls}`;
@@ -421,7 +420,6 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
         write(draft, doc);
       } else {
         questionCalls++;
-        beforeQuestioning = fs.readFileSync(affected);
         if (mode === 'questioner-blueprint' || mode === 'questioner-missing-preimage') { doc.title = 'unauthorized Q title'; write(draft, doc); }
         if (mode === 'questioner-cu') {
           const cu = path.join(runDir, 'design-repair/change-unit.yaml'), value = read(cu);
@@ -442,7 +440,7 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
     };
     const first = await runUnattendedDesignRepair({ ...input, brief, invoke });
     assert(first.outcome === (mode === 'unscoped-decline' ? 'failed' : 'violation') && first.step === 'questioning', JSON.stringify(first)); assert.equal(questionCalls, 1);
-    assert(first.reason.includes(mode === 'unscoped-decline' ? '拒修理由未被独立质询' : '设计交回不能采信'), first.reason);
+    assert(first.reason.includes(mode === 'unscoped-decline' ? '拒修理由未被独立质询' : '原签发输入发生变化'), first.reason);
     const events = fs.readFileSync(path.join(runDir, 'events.jsonl'), 'utf8').trim().split('\n').map(line => JSON.parse(line));
     const question = events.find(event => event.type === 'agent_invoke_start' && event.phase === 'design-repair-questioning');
     const saved = readDesignQuestioningOriginal(runDir, question, events);
@@ -457,33 +455,30 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
     } else {
       assert.equal(diffPhaseInvocationSnapshots(original.preSnapshot, original.postSnapshot).kind, 'changed');
       assert(events.some(event => event.type === 'phase_write_violation' && event.invoke_id === question.invoke_id));
-      assert.equal(saved, null, 'the actual violation invalidates Q reuse before any later transaction');
+      assert(saved, 'rejected results remain inspectable');
+      assert(saved.output.includes('当前原验收未满足') && !saved.completed, 'a rejected result cannot close a scope');
+      assert.equal(reusableDesignQuestioning({ ...saved, projectRoot: root, blueprintPath: draft, blueprint: read(draft) }), null);
+      assert(!phaseWriteConflictProblems(root, events).some(problem => problem.files?.includes(path.relative(root, affected).replace(/\\/g, '/'))));
+      assert(first.outcome === 'violation' && first.recheckCurrentInputs === true);
     }
-    const conflictPaths = phaseWriteConflictProblems(root, events).flatMap(problem => problem.files ?? []);
-    const affectedDraft = path.relative(root, affected).replace(/\\/g, '/');
-    assert.equal(conflictPaths.includes(affectedDraft), mode !== 'unscoped-decline', 'the callback supplies no bound execution window');
-    if (mode === 'questioner-blueprint' || mode === 'questioner-cu') {
-      assert(beforeQuestioning);
-      fs.writeFileSync(affected, beforeQuestioning);
-    }
+    const current = fs.readFileSync(affected);
     let received: { purpose: string; blueprint: Json; cu?: Json } | undefined;
     const second = await runUnattendedDesignRepair({ ...input, brief, invoke: async purpose => {
       received = { purpose, blueprint: read(draft), ...(mode === 'questioner-cu' ? { cu: read(path.join(runDir, 'design-repair/change-unit.yaml')) } : {}) };
-      return { started: false, ok: false, detail: 'fresh author receives only authorized baseline' };
+      return { started: false, ok: false, detail: 'original responsibility reached on the current candidate' };
     } });
-    if (mode === 'questioner-missing-preimage') {
-      assert.equal(second.outcome, 'waiting'); assert.equal(received, undefined);
-      assert.equal(read(draft).title, 'unauthorized Q title');
-      assert.equal(rows.filter(row => row.stage === 'attempted').length, 1);
-      assert(fs.readFileSync(loaded.canonicalPath).equals(canonical));
-      return;
+    assert(received, JSON.stringify(second));
+    if (mode === 'unscoped-decline') {
+      assert.equal(received.purpose, 'author');
+      assert.equal(received.blueprint.title, defective.title, 'unscoped author work does not become the next baseline');
+      assert.deepEqual(node(received.blueprint).acceptance, node(defective).acceptance);
+    } else {
+      assert.equal(received.purpose, 'questioning', 'terminal transport and signed drift reuse the same design transaction');
+      assert.deepEqual(fs.readFileSync(affected), current, 'current signed input is retained for evidence and review');
     }
-    assert(received, JSON.stringify(second)); assert.equal(received.purpose, 'author');
-    assert.equal(received.blueprint.title, defective.title, 'unreviewed or unscoped work must not become the next author baseline');
-    assert.deepEqual(node(received.blueprint).acceptance, node(defective).acceptance, 'rebuild the candidate from the actual canonical baseline');
-    if (mode === 'questioner-cu') assert.notEqual(received.cu!.description, 'unauthorized Q CU description');
-    assert(second.outcome === 'failed' && second.reason.includes('fresh author receives only authorized baseline'), JSON.stringify(second));
-    assert.equal(rows.filter(row => row.stage === 'attempted').length, 2); assert(!rows.some(row => row.stage === 'published'));
+    assert(second.outcome === 'failed' && second.reason.includes('original responsibility reached on the current candidate'), JSON.stringify(second));
+    assert.equal(rows.filter(row => row.stage === 'attempted').length, mode === 'unscoped-decline' ? 2 : 1);
+    assert(!rows.some(row => row.stage === 'published'));
     assert(fs.readFileSync(loaded.canonicalPath).equals(canonical));
   }),
 })), ...(['allowed', 'outside', 'canonical', 'questioning'] as const).map(mode => ({
@@ -501,13 +496,29 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
     assert(acquired.ok); let questionCalls = 0;
     const runtime = new GoalPhaseRuntime({ executor: { execute: async context => {
       const draftFile = path.join(runDir, 'design-repair/component-blueprint.yaml');
+      const observeWrite = (target: string): void => {
+        const directory = path.join(runDir, 'phases', context.phase, context.attemptId);
+        fs.mkdirSync(directory, { recursive: true });
+        const events = [
+          { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'known-edit', name: 'Write', input: { file_path: target } }] } },
+          { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'known-edit', is_error: false }] } },
+        ];
+        fs.writeFileSync(path.join(directory, 'agent-events.jsonl'), events.map(event => JSON.stringify(event)).join('\n') + '\n');
+      };
       if (context.phase === 'design-repair-author') {
         assert(context.instruction?.includes('原资产writer') || context.instruction?.includes('原资产 writer'));
         const candidate = read(draftFile);
         candidate.decisions_and_gaps.decisions.find((row: Json) => row.decision_id === 'seam-shape').knowledge_refs = [`${relative}#decision:seam-shape`];
         const writes = [[draftFile, YAML.stringify(candidate)], [file, YAML.stringify({ terms: [{ term: 'LedgerDataSource', aliases: ['decision:seam-shape'], definition: decision.stable_contract }] })]];
-        if (mode === 'outside') writes.push([path.join(root, 'requirements/ledger.md'), 'unauthorized replacement\n']);
-        if (mode === 'canonical') writes.push([loaded.canonicalPath, YAML.stringify(candidate)]);
+        if (mode === 'outside') {
+          const target = path.join(root, 'requirements/ledger.md');
+          writes.push([target, 'unauthorized replacement\n']);
+          observeWrite(target);
+        }
+        if (mode === 'canonical') {
+          writes.push([loaded.canonicalPath, YAML.stringify(candidate)]);
+          observeWrite(loaded.canonicalPath);
+        }
         execFileSync(process.execPath, ['-e', 'const fs=require("fs");for(const [p,s] of JSON.parse(fs.readFileSync(0,"utf8")))fs.writeFileSync(p,s)'], { input: JSON.stringify(writes) });
         return { status: 'passed', phase: context.phase, exitCode: 0, stdout: '', stderr: '', command: 'real node asset writer' };
       }
@@ -531,7 +542,10 @@ const cases: Array<{ name: string; group: Group; run: () => Promise<void> }> = [
       assert.equal(terms.find((item: Json) => item.term === 'LedgerDataSource').definition, decision.stable_contract,
         '沿当前path能核到原批准结论的准确落盘值');
       assert(context.instruction?.includes('未涉及条目未被改写'));
-      if (mode === 'questioning') execFileSync(process.execPath, ['-e', 'require("fs").appendFileSync(process.argv[1],"# forbidden Q write\\n")', file]);
+      if (mode === 'questioning') {
+        execFileSync(process.execPath, ['-e', 'require("fs").appendFileSync(process.argv[1],"# forbidden Q write\\n")', file]);
+        observeWrite(file);
+      }
       return { status: 'passed', phase: context.phase, exitCode: 0, stdout: '', stderr: '', command: 'independent Q transport', details: JSON.stringify(doc.review_summary.questioning) };
     } } });
     const result = await runUnattendedDesignRepair({ ...input, designTarget: designRepairTarget(root, BLUEPRINT),

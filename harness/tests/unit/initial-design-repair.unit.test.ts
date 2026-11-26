@@ -1510,7 +1510,8 @@ const timer=setInterval(()=>{const bound=process.platform!=='win32'||fs.readFile
 
     const settled = events();
     const earlier = settled.find(event => event.type === 'agent_invoke_start' && event.invoke_id === first.request.invoke_id)!;
-    const refused = { ...earlier, type: 'phase_write_violation' as const };
+    const refused = { ...earlier, type: 'phase_write_violation' as const,
+      violations: [{ path: path.relative(host.root, canonical.canonicalPath).replace(/\\/g, '/'), authority_confirmed: true }] };
     const history = openDesignQuestioningHistory(runDir, [...settled, refused], host.root);
     assert(history.before(settled.length).read(earlier)?.completed, 'the earlier prefix retains its original result');
     assert.equal(history.read(earlier), null, 'a later refusal cannot reuse the earlier history interpretation');
@@ -1818,7 +1819,7 @@ async function freshCandidateRejection(repair: boolean): Promise<void> {
   } finally { clearFrameworkConfigCache(); fs.rmSync(f.root, { recursive: true, force: true }); }
 }
 
-type QuestioningBoundaryCase = 'restore' | 'missing-preimage' | 'later-edit' | 'other-file' | 'mixed';
+type QuestioningBoundaryCase = 'restore' | 'missing-preimage' | 'later-edit' | 'other-file' | 'mixed' | 'confirmed-write' | 'unrelated';
 
 async function questioningBoundaryReplay(host: Host, stage: 'initial' | 'repair', transport: 'session' | 'background', fault: QuestioningBoundaryCase): Promise<void> {
   const canonical = loadCanonicalBlueprint(host.root, BLUEPRINT_ID);
@@ -1828,8 +1829,9 @@ async function questioningBoundaryReplay(host: Host, stage: 'initial' | 'repair'
   const confirmed = '重新核对原蓝图后确认本项由原证据支撑';
   const rejected = 'THIS REJECTED ANSWER MUST NOT BE USED';
   const clean = withAnswer(confirmed), refused = withAnswer(rejected);
-  const product = path.join(host.root, 'src/ledger/LedgerRepository.ts');
+  const product = path.join(host.root, fault === 'unrelated' ? 'src/independent/parallel.ts' : 'src/ledger/LedgerRepository.ts');
   const productBefore = 'export class LedgerRepository {}\n';
+  if (fault === 'unrelated') fs.writeFileSync(path.join(host.root, 'src/ledger/LedgerRepository.ts'), productBefore);
   fs.mkdirSync(path.dirname(product), { recursive: true });
   fs.writeFileSync(product, productBefore);
   const units = enumerateCanonicalChangeUnits(host.root, BLUEPRINT_ID);
@@ -1871,7 +1873,7 @@ const timer = setInterval(() => {
     return;
   }
   clearInterval(timer);
-  let answer = fixture.clean;
+  let answer = fixture.clean, change;
   if (phase === 'design-repair-author') {
     const doc = yaml.parse(fs.readFileSync(fixture.cuDraft, 'utf8'));
     doc.design_refs = fixture.approvedRefs.map(ref => ({ ...doc.component_blueprint_ref, target: ref.target }));
@@ -1881,9 +1883,11 @@ const timer = setInterval(() => {
     const first = events.filter(row => row.type === 'agent_invoke_start' && row.phase === phase).length === 1;
     fs.copyFileSync(fixture.blueprint, path.join(fixture.fixtureDirectory, attempt + '-bound.yaml'));
     if (first) {
-      if (fixture.fault !== 'other-file') fs.appendFileSync(fixture.blueprint, fixture.append);
-      if (['other-file', 'mixed'].includes(fixture.fault)) fs.appendFileSync(fixture.product, fixture.append);
-      answer = fixture.refused;
+      if (!['other-file', 'confirmed-write', 'unrelated'].includes(fixture.fault)) fs.appendFileSync(fixture.blueprint, fixture.append);
+      if (['other-file', 'mixed', 'confirmed-write', 'unrelated'].includes(fixture.fault)) fs.appendFileSync(fixture.product, fixture.append);
+      if (fixture.fault === 'confirmed-write') change = { type: 'item.completed', item: { type: 'file_change', status: 'completed',
+        changes: [{ path: fixture.product, kind: 'update' }] } };
+      if (fixture.fault !== 'unrelated') answer = fixture.refused;
     }
   } else if (phase !== 'initial-design-questioning') {
     process.stderr.write('error: unexpected argument --fixture-stops-after-questioning (' + phase + ')');
@@ -1891,7 +1895,7 @@ const timer = setInterval(() => {
     return;
   }
   for (const row of [{ type: 'thread.started', thread_id: 'q-boundary-' + phase },
-    { type: 'item.completed', item: { type: 'agent_message', text: answer } }, { type: 'turn.completed' }]) process.stdout.write(JSON.stringify(row) + '\\n');
+    ...(change ? [change] : []), { type: 'item.completed', item: { type: 'agent_message', text: answer } }, { type: 'turn.completed' }]) process.stdout.write(JSON.stringify(row) + '\\n');
 }, 20);
 `);
   const stop = installControlledCodex(host.root, native);
@@ -1926,114 +1930,50 @@ const timer = setInterval(() => {
     assert.equal(first.command, transport === 'session' ? 'phase_execute_request' : 'headless');
     const original = fs.readFileSync(path.join(fixtureDirectory, first.invoke_id + '-bound.yaml'));
     const violation = rows.find(row => row.type === 'phase_write_violation' && row.invoke_id === first.invoke_id);
-    assert(violation, JSON.stringify(outcome));
-    const changedPaths = [fault === 'other-file' ? product : blueprint, ...(fault === 'mixed' ? [product] : [])]
-      .map(file => path.relative(host.root, file).replace(/\\/g, '/')).sort();
-    assert.deepEqual(violation.violations.map((change: Document) => change.path).sort(), changedPaths);
-    assert(fs.readFileSync(firstFile(first, 'agent-output.log'), 'utf8').includes(rejected));
-    assert.equal(readDesignQuestioningOriginal(runDir, first), null, 'the original write violation forbids consuming its answer');
-    const restored = rows.find(row => row.type === 'phase_write_observed' && row.invoke_id === first.invoke_id);
-    const backtrack = rows.find(row => row.type === 'phase_backtrack_requested' && row.invoke_id === first.invoke_id
-      && row.reason === 'phase_write_violation' && row.from_phase === phase && row.to_phase === phase);
-    if (fault !== 'restore') {
+    assert.equal(fs.existsSync(firstFile(first, 'agent-output.log')), true);
+    if (fault === 'unrelated') {
+      assert.equal(violation, undefined, JSON.stringify(outcome));
       assert.equal(calls.length, 1);
-      assert.equal(restored, undefined);
-      assert.equal(backtrack, undefined);
-      assert(rows.some(row => row.type === 'run_end' && row.halt_reason === 'unauthorized_source_mutation'), JSON.stringify(rows.slice(-6)));
-      assert.deepEqual(fs.readFileSync(blueprint), Buffer.concat([original, Buffer.from(fault === 'other-file' ? '' : append + (fault === 'later-edit' ? '\n# subsequent owner work\n' : ''))]));
-      assert.equal(fs.readFileSync(product, 'utf8'), productBefore + (['other-file', 'mixed'].includes(fault) ? append : ''));
-      if (stage === 'repair' && fault === 'other-file') {
-        const draftBefore = fs.readFileSync(cuDraft);
-        const canonicalBytes = fs.readFileSync(canonical.canonicalPath);
-        const canonicalCuBytes = fs.readFileSync(approved.canonicalPath);
-        const rejectedCount = (records: Document[]) => records.filter(row => row.type === 'design_authority_repair' && row.stage === 'failed' && row.failed_step === 'questioning').length;
-        const failures = rejectedCount(rows);
-        assert.equal(failures, 1);
-        const next = (force?: boolean) => new Promise<Document>((resolve, reject) => {
-          // The old runtime would append unsuccessful repair settlements until killed.
-          const child = spawn(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(host.harnessDir, 'scripts/goal-mode-entry.ts'),
-            '--project-root', host.root, '--framework-root', host.frameworkRoot, '--feature', BLUEPRINT_ID, '--run-id', manifest.run_id, '--adapter', adapter,
-            '--run-mode', 'attended', '--authorize-autonomy', '--next', ...(force ? ['--force-takeover'] : [])],
-          { cwd: host.harnessDir, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
-          let stdout = '', stderr = '', stopReason = '';
-          child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
-          child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
-          const deadline = Date.now() + 30_000;
-          const timer = setInterval(() => {
-            const text = fs.readFileSync(eventFile, 'utf8');
-            const complete = text.slice(0, text.lastIndexOf('\n')).split('\n').map(line => JSON.parse(line) as Document);
-            const count = rejectedCount(complete);
-            if (!stopReason && (count >= failures + 2 || Date.now() > deadline)) {
-              stopReason = count >= failures + 2 ? `the old questioning failure settled ${count - failures} more times` : 'next exceeded 30s';
-              child.kill('SIGKILL');
-            }
-          }, 10);
-          child.once('error', reject);
-          child.once('close', (status, signal) => {
-            clearInterval(timer);
-            try {
-              assert(!stopReason && !signal && stdout.trim(), JSON.stringify({ stopReason, status, signal, stderr }));
-              resolve(JSON.parse(stdout));
-            } catch (error) { reject(error); }
-          });
-        });
-        const stillBlocked = await next(true);
-        assert.equal(stillBlocked.result?.halt_reason, 'unauthorized_source_mutation', JSON.stringify(stillBlocked));
-        assert.deepEqual(fs.readFileSync(cuDraft), draftBefore);
-        assert.equal(fs.readFileSync(product, 'utf8'), productBefore + append);
-        assert.equal(createHash('sha256').update(productBefore).digest('hex'), violation.violations[0].pre_sha256);
-        fs.writeFileSync(product, productBefore);
-        const resumed = await next();
-        assert.equal(resumed.type, 'phase_execute_request', JSON.stringify(resumed));
-        assert.equal(resumed.run_id, manifest.run_id);
-        assert.equal(resumed.phase, 'design-repair-author');
-        const updated = events();
-        assert.equal(rejectedCount(updated), failures, 'the original rejection is settled exactly once');
-        assert.equal(updated.filter(row => row.type === 'agent_invoke_start' && row.phase === phase).length, 1);
-        assert.equal(updated.filter(row => row.type === 'design_authority_repair' && row.stage === 'attempted').length, 2);
-        assert(!updated.some(row => row.type === 'design_authority_repair' && row.stage === 'published'));
-        assert.equal(readDesignQuestioningOriginal(runDir, first, updated), null);
-        assert.deepEqual(blueprintAuthorContent(read(blueprint)), blueprintAuthorContent(read(canonical.canonicalPath)));
-        assert.deepEqual(fs.readFileSync(canonical.canonicalPath), canonicalBytes);
-        assert.deepEqual(fs.readFileSync(approved.canonicalPath), canonicalCuBytes);
-        assert.deepEqual(read(cuDraft).design_refs, YAML.parse(canonicalCuBytes.toString('utf8')).design_refs, 'the new author sees the canonical CU baseline');
-        assert.equal(fs.readFileSync(product, 'utf8'), productBefore);
-        const returnedAuthor = await runGoalModeSessionStep({ ...session, requestPath: resumed.request.path, action: 'execute' });
-        assert.equal(returnedAuthor.type, 'goal_session_report_received');
-        const newQuestioning = await next();
-        assert.equal(newQuestioning.phase, phase, JSON.stringify(newQuestioning));
-        const returnedQuestioning = await runGoalModeSessionStep({ ...session, requestPath: newQuestioning.request.path, action: 'execute' });
-        assert.equal(returnedQuestioning.type, 'goal_session_report_received');
-        await next();
-        const delivered = events();
-        assert.equal(rejectedCount(delivered), failures);
-        assert.equal(delivered.filter(row => row.type === 'design_authority_repair' && row.stage === 'published').length, 1);
-        const published = read(canonical.canonicalPath).review_summary.questioning.items as Document[];
-        assert(published.some(item => item.answer === confirmed && String(item.review_original?.path).includes(newQuestioning.attempt_id)));
-      }
+      assert.equal(fs.readFileSync(product, 'utf8'), productBefore + append);
+      assert(rows.some(row => row.type === 'agent_invoke_start' && row.phase === 'initial-design-decomposition'));
       return;
     }
+    assert(violation, JSON.stringify(outcome));
+    const changedPaths = [fault === 'other-file' || fault === 'confirmed-write' ? product : blueprint, ...(fault === 'mixed' ? [product] : [])]
+      .map(file => path.relative(host.root, file).replace(/\\/g, '/')).sort();
+    assert.deepEqual([...new Set(violation.violations.map((change: Document) => change.path))].sort(), changedPaths);
+    assert(fs.readFileSync(firstFile(first, 'agent-output.log'), 'utf8').includes(rejected));
+    const raw = readDesignQuestioningOriginal(runDir, first);
+    if (fault === 'confirmed-write') {
+      assert(violation.violations.some((change: Document) => change.authority_confirmed === true));
+      assert.equal(raw, null);
+      assert.equal(calls.length, 1);
+      assert(!rows.some(row => row.type === 'agent_invoke_start' && row.phase === 'initial-design-decomposition'));
+      assert.equal(fs.readFileSync(product, 'utf8'), productBefore + append);
+      return;
+    }
+    assert(raw, 'the refused original stays available for diagnosis');
+    assert(raw.output.includes(rejected));
+    assert.equal(reusableDesignQuestioning({ ...raw, projectRoot: host.root, blueprintPath: blueprint, blueprint: read(blueprint) }), null);
+    assert(!violation.violations.some((change: Document) => change.authority_confirmed === true));
+    assert(!rows.some(row => row.type === 'phase_backtrack_requested' && row.invoke_id === first.invoke_id && row.reason === 'phase_write_violation'));
     assert.equal(calls.length, 2, JSON.stringify({ ...outcome, rejected: violation.violations }));
-    assert(restored, 'the restored bytes must be attributed to the rejected invocation');
-    assert(backtrack, 'the rejection must return to the same questioning phase');
-    assert(rows.indexOf(violation) < rows.indexOf(restored) && rows.indexOf(restored) < rows.indexOf(backtrack) && rows.indexOf(backtrack) < rows.indexOf(calls[1]));
+    const expectedBlueprint = Buffer.concat([original, Buffer.from(fault === 'other-file' ? ''
+      : append + (fault === 'later-edit' ? '\n# subsequent owner work\n' : ''))]);
+    assert.deepEqual(fs.readFileSync(path.join(fixtureDirectory, calls[1].invoke_id + '-bound.yaml')), expectedBlueprint,
+      'the next independent invocation must bind the actual current draft and preserve later edits');
+    assert.equal(fs.readFileSync(product, 'utf8'), productBefore + (['other-file', 'mixed'].includes(fault) ? append : ''));
     assert(!rows.slice(rows.indexOf(first) + 1, rows.indexOf(calls[1])).some(row => row.type === 'agent_invoke_start'), 'the retry must not dispatch an author');
-    const [change] = violation.violations as Document[];
-    assert(restored.observations.some((observation: Document) => observation.path === change.path
-      && observation.pre_sha256 === change.post_sha256 && observation.post_sha256 === change.pre_sha256));
-    assert.deepEqual(fs.readFileSync(path.join(fixtureDirectory, calls[1].invoke_id + '-bound.yaml')), original, 'the retry must see the original bytes');
     const requests = calls.map(call => executionRequestForInvoke(runDir, call.invoke_id)?.request);
     assert(requests.every(request => request?.purpose === 'questioning'));
-    const scopes = requests.map(request => readSignedQuestioningScopes(request?.context.workInput?.material.segments));
-    assert(scopes[0]?.size, 'the original request must have frozen independent scopes');
-    assert.deepEqual(scopes[1], scopes[0], 'the retry must ask the same independent questions');
-    assert.equal(readDesignQuestioningOriginal(runDir, calls[1])?.completed, true, 'the newly signed independent answer reached normal consumption');
-    assert.equal(fs.readFileSync(firstFile(calls[1], 'questioning-output.json'), 'utf8'), clean);
+    assert(readSignedQuestioningScopes(requests[1]?.context.workInput?.material.segments)?.size);
+    assert.equal(readDesignQuestioningOriginal(runDir, calls[1])?.completed, true);
     const published = read(canonical.canonicalPath).review_summary.questioning.items as Document[];
+    assert(published.every(item => item.answer !== rejected));
     assert(published.some(item => item.answer === confirmed && String(item.review_original?.path).includes(calls[1].invoke_id)));
     if (stage === 'repair') assert(rows.some(row => row.type === 'design_authority_repair' && row.stage === 'published')
-      && deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).ready, 'the original design repair can publish after the clean independent answer');
-    else assert(rows.some(row => row.type === 'agent_invoke_start' && row.phase === 'initial-design-decomposition'), 'the original design run can reach its own decomposition');
+      && deriveDesignPreparationReadiness(host.root, BLUEPRINT_ID).ready, 'the original repair publishes after the current independent answer');
+    else assert(rows.some(row => row.type === 'agent_invoke_start' && row.phase === 'initial-design-decomposition'));
   } catch (error) {
     const evidence = fs.readdirSync(fixtureDirectory).filter(name => name.endsWith('-bound.yaml')).map(name => path.join(fixtureDirectory, name));
     if (fs.existsSync(blueprint)) evidence.push(blueprint);
@@ -2049,14 +1989,14 @@ const timer = setInterval(() => {
 
 export function getCases() { return [...questioningRecoveryCases(), ...questioningRealReplayCases(), ...cases.map(test => ({ name: test.name, run: () => withFreshCuHost(host => scenario(host, test.mode)) })),
   ...(['initial', 'repair'] as const).flatMap(stage => (['session', 'background'] as const).map(transport => ({
-    name: `3ec91fa7 questioning write window restores ${stage} through ${transport}`,
+    name: `3ec91fa7 questioning rebinding preserves current ${stage} inputs through ${transport}`,
     run: () => withFreshCuHost(host => questioningBoundaryReplay(host, stage, transport, 'restore')),
   }))),
-  ...(['missing-preimage', 'later-edit', 'other-file', 'mixed'] as const).map(fault => ({
+  ...(['missing-preimage', 'later-edit', 'other-file', 'mixed', 'confirmed-write', 'unrelated'] as const).map(fault => ({
     name: `3ec91fa7 questioning write window preserves ${fault} without restoration`,
     run: () => withFreshCuHost(host => questioningBoundaryReplay(host, 'initial', 'session', fault)),
   })),
-  { name: '3ec91fa7 questioning write window resumes the same design repair session after its owner restores another file',
+  { name: '3ec91fa7 questioning rejects changed signed source and rebinds the same design repair session',
     run: () => withFreshCuHost(host => questioningBoundaryReplay(host, 'repair', 'session', 'other-file')) },
   { name: 'a920 mixed pending candidate rejection repairs authority once before returning only current mapping work to decomposition', run: mixedPendingCandidateRepair },
   { name: '7d2c49e8 fresh decomposition rejection sends new mapping feedback before accepting a corrected candidate', run: () => freshCandidateRejection(true) },

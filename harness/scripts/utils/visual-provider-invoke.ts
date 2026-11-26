@@ -32,7 +32,6 @@ import { adapterModelBinding, dshModelSource, parseAdapterModelBinding } from '.
 
 import { createHash } from 'crypto';
 import { invocationCompleted } from './invocation-completion';
-import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -370,27 +369,6 @@ export function projectVisualProviderBody(
 }
 
 // ---------------------------------------------------------------------------
-// ④ 脏检查第二防线：invoke 前后 `git status --porcelain` 对比
-// ---------------------------------------------------------------------------
-
-/**
- * 只读工作区快照。git 不可用 / 非仓库 / 超时 → null（**不报错、不阻断**）：脏检查是
- * argv 只读之外的**第二**防线，它自己不可用不该让开发循环停下来。
- */
-export function snapshotWorkspaceDirtiness(projectRoot: string): string | null {
-  try {
-    return execFileSync('git', ['status', '--porcelain'], {
-      cwd: projectRoot,
-      encoding: 'utf-8',
-      timeout: 30_000,
-      windowsHide: true,
-    });
-  } catch {
-    return null;
-  }
-}
-
-// ---------------------------------------------------------------------------
 // ② 统一执行：真实调用一律经既有 invokeAgentHeadless
 // ---------------------------------------------------------------------------
 
@@ -499,7 +477,7 @@ function dshReadImages(raw: string, projectRoot: string, imagePaths: string[]): 
  * 失败分档：
  *  · `unavailable` —— 传输面不成立：adapter 无完整声明、CLI 缺失/不可 spawn、spawn 失败、
  *    terminal failure、进程非零退出（非 review 的超时沿原能力投影）。
- *  · `invalid`     —— 当前没有可采信内容：review 超时、信封投影为空/为 null、工作区被弄脏；超时保留原原因。
+ *  · `invalid`     —— 当前没有可采信内容：review 超时、信封投影为空/为 null、指定图片不可读或变化；超时保留原原因。
  * 载荷 schema / 身份回显 / 图片 hash 的**逐项校验**由调用方在拿到 body 后进行
  * （review 与 spec 观察两种载荷形态不同，但都走同一条「不合法即丢弃」的路）。
  */
@@ -507,12 +485,13 @@ export async function invokeVisualProvider(
   input: VisualProviderInvokeInput,
 ): Promise<VisualProviderInvocation> {
   const started = Date.now();
-  const imageHashes = input.imagePaths.map(p => hashImageFile(p)).filter((h): h is string => h !== null);
+  const imageInputs = input.imagePaths.map(p => path.resolve(input.projectRoot, p));
+  const imageHashes = imageInputs.map(hashImageFile);
   const base = {
     invoke_id: input.invokeId,
     provider: input.provider,
     purpose: input.purpose,
-    image_hashes: imageHashes,
+    image_hashes: imageHashes.filter((hash): hash is string => hash !== null),
     workspace_dirtied: false,
     // 默认 unverified：没有证据就是没有证据。有解析器且事件确实覆盖本轮图片时才升 verified。
     input_provenance: 'unverified' as const,
@@ -557,7 +536,6 @@ export async function invokeVisualProvider(
     }
   }
 
-  const before = snapshotWorkspaceDirtiness(input.projectRoot);
   const timeoutMs = Math.min(input.timeoutMs ?? VISUAL_PROVIDER_DEFAULT_TIMEOUT_MS,
     Number.isFinite(input.deadlineMs) && input.deadlineMs! > 0 ? input.deadlineMs! - Date.now() : Infinity);
   if (!(timeoutMs > 0)) return fail('invalid', 'provider 共享 deadline 已耗尽，未启动调用');
@@ -576,8 +554,6 @@ export async function invokeVisualProvider(
     ...(built.extraEnv ? { extraEnv: built.extraEnv } : {}),
   });
 
-  const after = snapshotWorkspaceDirtiness(input.projectRoot);
-  const dirtied = before !== null && after !== null && before !== after;
   const eventsPath = outputLogPath ? path.join(path.dirname(outputLogPath), 'agent-events.jsonl') : undefined;
   const common = {
     ...(result.usage ? { usage: result.usage } : {}),
@@ -611,12 +587,9 @@ export async function invokeVisualProvider(
   if (dsh && !dshReadImages(raw, input.projectRoot, input.imagePaths)) {
     return fail('invalid', 'DSH 本次输入图片缺少配对的成功 read_image 证据', common);
   }
-  if (dirtied) {
-    // 丢弃本轮结果 + 记录事实；**不自动 revert**（那会覆盖人可能想留的现场），**不 halt**。
-    return fail('invalid', 'provider 调用前后工程工作区发生变化——本轮结果一律不采信', {
-      ...common,
-      workspace_dirtied: true,
-    });
+  const changedInput = imageInputs.find((file, index) => imageHashes[index] === null || hashImageFile(file) !== imageHashes[index]);
+  if (changedInput) {
+    return fail('invalid', `当前视觉结论的指定图片不可读或在调用期间已变化：${path.relative(input.projectRoot, changedInput)}`, common);
   }
 
   return {

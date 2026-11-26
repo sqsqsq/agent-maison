@@ -9,7 +9,7 @@ import type { NormalizedDeviceTestCase } from '../../../../harness/scripts/utils
 import { extractDerivedPlanCases, lintHylyrePlanMarkdown, parsePlannedStepsFromCell } from '../../../../harness/scripts/utils/derived-hylyre-plan';
 import { applyPhaseEntryDeviceGate } from '../../../../harness/scripts/utils/device-readiness-gate';
 import { loadAppBundleName, resolveExecutionDeviceIdentity } from '../hdc-runner';
-import { probeInstalledHapSha256 } from '../build-fingerprint';
+import { computeHapSha256Full, installedHapDigest, probeInstalledHaps } from '../build-fingerprint';
 import { resolveHylyreToolConfig } from '../../../../harness/config';
 import { findSameInvocationFailure, decideReuse, startExecutionKeyRun, writeExecutionKeyRecord, freezeRunArtifacts, restoreFrozenRunArtifacts, sha256Text, computeExecutionKey, type ExecutionKeyInputs } from '../execution-key';
 import { CheckExecutionError } from '../../../../harness/scripts/utils/check-execution';
@@ -23,11 +23,46 @@ import { findFilesRecursive } from '../../../../harness/scripts/utils/find-files
 import { extractAcceptanceIdRefs } from '../../../../harness/scripts/utils/check-acceptance';
 import { collectRequestDeviceAcceptance } from '../../../../harness/scripts/utils/acceptance-layering';
 import type { AcceptanceSpec } from '../../../../harness/scripts/utils/types';
+import { DEVICE_TEST_BUILD_RESULT, snapshotDeviceTestBuildInputs } from '../device-test-build-reuse';
+import { resolveDeviceTestBuildMode, resolveDeviceTestProduct } from '../testing-build-conventions';
+import { isBlockingCheck, isRequiredCheckGap } from '../../../../harness/scripts/utils/check-disposition';
+import { realProjectPath } from '../../../../harness/scripts/utils/project-relative-path';
+import type { RequestBuildArtifact } from '../../../../harness/scripts/utils/request-execution-inputs';
+import { isHvigorBuildSuccessful } from '../hvigor-runner';
 
 function reject(details: string, failure_kind?: string, logFile?: string): never {
   throw new CheckExecutionError({ id: 'request_device_native', category: 'structure', severity: 'BLOCKER', status: failure_kind ? 'SKIP' : 'FAIL', description: '专项设备测试未满足执行条件', details,
     ...(logFile ? { affected_files: [logFile] } : {}),
     ...(failure_kind ? { failure_kind, blocking_class: failure_kind === 'framework_bug' ? 'framework_internal' : 'externalBlocked' } : {}) });
+}
+
+function requestSourcePackage(ctx: RequestCheckContext, installed: ReturnType<typeof probeInstalledHaps>): RequestBuildArtifact | undefined {
+  if (installed?.length !== 1 || !ctx.executionInputs || !ctx.request.origin_request) return undefined;
+  const [hap] = installed;
+  const relative = (file: string) => path.relative(ctx.projectRoot, file).replace(/\\/g, '/');
+  const verifiedArtifact = (file: string): RequestBuildArtifact | undefined =>
+    computeHapSha256Full(realProjectPath(ctx.projectRoot, file, 'request build HAP')) === hap.sha256
+      ? { path: file, sha256: hap.sha256, module: hap.name } : undefined;
+  try {
+    const compile = JSON.parse(fs.readFileSync(path.join(path.dirname(ctx.request.origin_request), 'compile', 'compile-report.json'), 'utf8'));
+    if (compile.request_file === relative(ctx.request.origin_request) && compile.execution?.executed && compile.execution.exitCode === 0
+      && Array.isArray(compile.checks) && !compile.checks.some((check: CheckResult) => isBlockingCheck(check) || isRequiredCheckGap(check))
+      && compile.execution_inputs?.sha256 === ctx.executionInputs.sha256
+      && compile.execution_artifact?.module === hap.name && compile.execution_artifact.sha256 === hap.sha256) {
+      const artifact = verifiedArtifact(compile.execution_artifact.path);
+      if (artifact) return artifact;
+    }
+  } catch { /* The existing build provider may independently establish this same package. */ }
+  try {
+    const build = JSON.parse(fs.readFileSync(path.join(ctx.reportDir, DEVICE_TEST_BUILD_RESULT), 'utf8'));
+    const product = resolveDeviceTestProduct(ctx.projectRoot), mode = resolveDeviceTestBuildMode();
+    if ((build.reused === true || build.hvigor && isHvigorBuildSuccessful(build.hvigor))
+      && build.resolvedProduct === product && build.resolvedBuildMode === mode && build.artifactValidation?.status === 'valid'
+      && build.hapSha256Full === hap.sha256 && build.buildInputsSha256
+      && build.buildInputsSha256 === snapshotDeviceTestBuildInputs(ctx.projectRoot, product, mode)?.sha256) {
+      return verifiedArtifact(relative(path.resolve(ctx.projectRoot, build.hapPath)));
+    }
+  } catch { /* A device run without current source/package binding remains independently visible. */ }
 }
 
 /** The native steps-file entry has no Feature identity; assertions remain native v1 observations. */
@@ -63,18 +98,21 @@ export async function runRequestTests(ctx: RequestCheckContext) {
   const inputs: ExecutionKeyInputs = { hap_sha256_full: null, derived_plan_sha256: sha256Text(JSON.stringify(plans.map(plan => ({ id: plan.row.tc_id, steps: plan.steps, expected: plan.row.expected, ...(blueprint ? { acceptance: plan.acceptance } : {}) })))),
     device: process.env.HARNESS_HDC_TARGET?.trim() || null, display_env: '', reset_mode: 'cold_restart', hylyre_version: null,
     manifest_version: null, profile: ctx.resolvedProfile.name, tool_config_sha256: sha256Text(JSON.stringify(resolveHylyreToolConfig(ctx.projectRoot))),
-    flags: ['request_steps_file', 'cold_restart', 'skip_page_save', 'checked_vlm', 'bundle=' + bundleName] };
+    flags: ['request_steps_file', 'cold_restart', 'skip_page_save', 'checked_vlm', 'bundle=' + bundleName,
+      ...(ctx.executionInputs ? ['request_source=' + ctx.executionInputs.sha256] : [])] };
   const started = startExecutionKeyRun(ctx.reportDir, 'hylyre', inputs);
   const runDir = started.runDir; let record = started.record;
   const ready = ensureHylyreReady({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, harnessRoot: ctx.harnessRoot, phase: 'testing', reportDir: runDir });
   if (!ready.ok) reject(ready.errors.map(error => error.message).join('; '), 'capability_missing');
   const identity = resolveExecutionDeviceIdentity();
-  let installedHap = probeInstalledHapSha256(bundleName, identity.device);
+  let installed = probeInstalledHaps(bundleName, identity.device);
+  let installedHap = installedHapDigest(installed);
   Object.assign(inputs, { hap_sha256_full: installedHap, device: identity.device, display_env: identity.display_env, hylyre_version: ready.hylyreVersion, manifest_version: ready.manifestVersion,
     tool_config_sha256: sha256Text(JSON.stringify({ config: resolveHylyreToolConfig(ctx.projectRoot), python: ready.pythonPath, timeout: process.env.HARNESS_HYLYRE_RUN_TIMEOUT_MS ?? null })) });
   record = { ...record, inputs, execution_key: computeExecutionKey(inputs), ...(ctx.goalInvocation ? { goal_invocation: ctx.goalInvocation } : {}) }; writeExecutionKeyRecord(runDir, record);
-  const artifacts = plans.flatMap((_, index) => ['device-test-run.log', 'device-test-run.meta.json', 'native-trace.json', 'native-report.md', 'request-steps.json', 'expected-check.log', 'expected-check.response.json']
+  const caseArtifacts = plans.map((_, index) => ['device-test-run.log', 'device-test-run.meta.json', 'native-trace.json', 'native-report.md', 'request-steps.json', 'expected-check.log', 'expected-check.response.json']
     .map(name => ({ top: 'case-' + (index + 1) + '/' + name, frozen: 'frozen.case-' + (index + 1) + '.' + name, group: 'execution' as const })));
+  const artifacts = caseArtifacts.flat();
   const failedInvocation = ctx.goalInvocation && identity.device && installedHap
     ? findSameInvocationFailure(ctx.reportDir, record.execution_key, ctx.goalInvocation, { excludeRunDir: runDir,
       artifacts: artifacts.filter(file => !file.top.includes('expected-check')),
@@ -89,18 +127,22 @@ export async function runRequestTests(ctx: RequestCheckContext) {
         }
         return true;
       } }) : null;
-  const reuse = failedInvocation ?? (!effectiveForceDevice(ctx.forceDevice, ctx) && identity.device && installedHap ? decideReuse(ctx.reportDir, record.execution_key, { artifacts, excludeRunDir: runDir, invocation: ctx.goalInvocation }).reusable : null);
-  if (!reuse) {
-  const gate = await applyPhaseEntryDeviceGate({ projectRoot: ctx.projectRoot, phase: 'testing', startedBy: 'request-' + ctx.request.request_sha256, log: message => console.error(message) });
-  if (!gate.ok) reject(gate.reason ?? 'device not ready', 'device_blocked');
-  const selected = resolveExecutionDeviceIdentity();
-  installedHap = probeInstalledHapSha256(bundleName, selected.device);
-  Object.assign(inputs, { hap_sha256_full: installedHap, device: selected.device, display_env: selected.display_env });
-  record = { ...record, inputs, execution_key: computeExecutionKey(inputs) };
-  writeExecutionKeyRecord(runDir, record);
+  const mayReuse = !effectiveForceDevice(ctx.forceDevice, ctx) && identity.device && installedHap;
+  let reuseByCase = caseArtifacts.map(artifacts => failedInvocation ?? (mayReuse
+    ? decideReuse(ctx.reportDir, record.execution_key, { artifacts, excludeRunDir: runDir, invocation: ctx.goalInvocation }).reusable : null));
+  if (reuseByCase.some(reuse => !reuse)) {
+    const gate = await applyPhaseEntryDeviceGate({ projectRoot: ctx.projectRoot, phase: 'testing', startedBy: 'request-' + ctx.request.request_sha256, log: message => console.error(message) });
+    if (!gate.ok) reject(gate.reason ?? 'device not ready', 'device_blocked');
+    const selected = resolveExecutionDeviceIdentity();
+    installed = probeInstalledHaps(bundleName, selected.device);
+    installedHap = installedHapDigest(installed);
+    Object.assign(inputs, { hap_sha256_full: installedHap, device: selected.device, display_env: selected.display_env });
+    const executionKey = computeExecutionKey(inputs);
+    if (executionKey !== record.execution_key) reuseByCase = reuseByCase.map(() => null);
+    record = { ...record, inputs, execution_key: executionKey };
+    writeExecutionKeyRecord(runDir, record);
   }
   for (const [index] of plans.entries()) fs.mkdirSync(path.join(runDir, 'case-' + (index + 1)), { recursive: true });
-  if (reuse) restoreFrozenRunArtifacts(reuse.runDir, runDir, artifacts);
   const checks: CheckResult[] = []; const evidence_paths: string[] = [];
   const readStep = (value: unknown): StepResultV1 => {
     const issues = validateLiteSchema(value, { $ref: '#/$defs/stepResultV1', $defs: (schema.schema as { $defs?: unknown }).$defs });
@@ -108,6 +150,8 @@ export async function runRequestTests(ctx: RequestCheckContext) {
     return value as StepResultV1;
   };
   for (const [caseIndex, plan] of plans.entries()) {
+    const reuse = reuseByCase[caseIndex];
+    if (reuse) restoreFrozenRunArtifacts(reuse.runDir, runDir, caseArtifacts[caseIndex]);
     const reportDir = path.join(runDir, 'case-' + (caseIndex + 1)); fs.mkdirSync(reportDir, { recursive: true });
     const stepsFilePath = path.join(reportDir, 'request-steps.json'); fs.writeFileSync(stepsFilePath, JSON.stringify(plan.steps));
     const run = reuse ? { executed: true, exitCode: JSON.parse(fs.readFileSync(path.join(reportDir, 'device-test-run.meta.json'), 'utf8')).exit_code as number, logPath: path.join(reportDir, 'device-test-run.log') } : runHylyreDeviceTest({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, harnessRoot: ctx.harnessRoot, phase: 'testing', reportDir, pythonPath: ready.pythonPath,
@@ -164,5 +208,16 @@ export async function runRequestTests(ctx: RequestCheckContext) {
   const frozen = freezeRunArtifacts(runDir, runDir, artifacts);
   if (!failedInvocation) writeExecutionKeyRecord(runDir, { ...record, outcome: checks.every(check => check.status === 'PASS') ? 'success' : 'failed', timing_complete: frozen.length === artifacts.length, frozen_files: frozen });
   for (const item of artifacts) if (fs.existsSync(path.join(runDir, item.top))) evidence_paths.push(path.join(runDir, item.top));
-  return { executed: true, total: checks.length, failed: checks.filter(check => check.status !== 'PASS').length, checks, evidence_paths: [...new Set([...evidence_paths, ...findFilesRecursive(runDir, /^(?!frozen\.)/)])] };
+  const total = checks.length, failed = checks.filter(check => check.status !== 'PASS').length;
+  if (ctx.request.origin_request && ctx.request.blueprint) {
+    const currentInstalled = installedHapDigest(probeInstalledHaps(bundleName, record.inputs.device));
+    const evidence = installedHap && currentInstalled === installedHap ? requestSourcePackage(ctx, installed) : undefined;
+    if (evidence) ctx.executionArtifacts = [evidence];
+    else {
+      const { requestFailure } = require('../../../../harness/scripts/utils/request-phase') as typeof import('../../../../harness/scripts/utils/request-phase');
+      checks.push({ ...requestFailure('request_input_unresolved', '已保留实际装机包的设备执行结果，当前源码对应的构建包尚未核实'),
+        status: 'SKIP', failure_kind: 'verification_evidence_gap', blocking_class: 'externalBlocked' });
+    }
+  }
+  return { executed: true, total, failed, checks, evidence_paths: [...new Set([...evidence_paths, ...findFilesRecursive(runDir, /^(?!frozen\.)/)])] };
 }

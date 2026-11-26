@@ -2,7 +2,6 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
-import { execFileSync } from 'child_process';
 import {
   ComponentBlueprintResolutionError, BLUEPRINT_SCHEMA, asRecord, asRecords, type BlueprintRecord,
 } from './utils/component-blueprint-model';
@@ -13,7 +12,7 @@ import {
 } from './utils/component-blueprint-path';
 import { validateComponentBlueprint, isSmallBlueprintRequest, type ComponentBlueprintValidationContext } from './utils/component-blueprint-validator';
 import { profileHasDesignLens } from './utils/blueprint-provider-boundary';
-import { prepareDesignRequest, bindDesignRequestBlueprint, createDesignPreparationWrite, readDesignGoalOrigin, requestTestingScope, type DesignPreparationWrite } from './utils/automatic-request';
+import { prepareDesignRequest, bindDesignRequestBlueprint, createDesignPreparationWrite, readDesignGoalOrigin, requestTestingScope, RequestDesignReviewRequired, type DesignPreparationWrite } from './utils/automatic-request';
 import { enumerateCanonicalChangeUnitIds } from './utils/change-unit-path';
 import { currentScopeItems } from './utils/blueprint-requirement-traceability';
 import { loadEventsJsonlStrict } from './utils/goal-runner-phase';
@@ -174,8 +173,7 @@ function assertBlueprintSourceOwner(projectRoot: string, blueprintId: string, fi
   const request = requestFile && fs.existsSync(requestFile) ? asRecord(JSON.parse(fs.readFileSync(requestFile, 'utf8'))) : undefined;
   const binding = asRecord(asRecord(request?.blueprint)?.ref);
   const prior = asRecord(request?.intake_context);
-  const sameRequest = prior?.session_id === intake.session_id && asRecord(prior?.user)?.id === intake.user.id
-    && asRecord(request?.baseline)?.base === intake.baseline.base;
+  const sameRequest = prior?.session_id === intake.session_id && asRecord(prior?.user)?.id === intake.user.id;
   if (binding && (!sameRequest || binding.blueprint_id !== blueprintId
     || draft.component_id !== undefined && binding.component_id !== draft.component_id)) deny('原 request 绑定的请求或蓝图身份不一致。');
 
@@ -201,15 +199,9 @@ function assertBlueprintSourceOwner(projectRoot: string, blueprintId: string, fi
   }
   if (binding || managedOwner) return binding;
   const relative = path.relative(projectRoot, file).replace(/\\/g, '/');
-  const dirty = intake.baseline.initial_dirty;
-  if (Array.isArray(dirty) && !dirty.some(item => relative === item || relative.startsWith(item.replace(/\/$/, '') + '/')) && intake.baseline.base) {
-    try {
-      const original = execFileSync('git', ['ls-tree', '--full-tree', '--name-only', intake.baseline.base, '--', relative],
-        { windowsHide: true, cwd: projectRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-      if (!original) return undefined;
-    } catch { /* Missing baseline evidence cannot establish ownership of an existing design. */ }
-  }
-  return deny('缺少原 request 绑定或本请求新建/受管设计的来源依据。');
+  if (sameRequest && (request?.design_target === relative || (intake.user_messages ?? [intake.user]).some(message =>
+    message.text.replace(/\\/g, '/').includes(relative)))) return undefined;
+  return deny('缺少原 request 绑定、明确授权的设计路径或受管设计地址。');
 }
 
 /** Explicit source preparation changes only owned machine identity/source fields. */
@@ -324,17 +316,18 @@ ${renderKnowledge(knowledge)}`);
       prepared = prepareDesignRequest({ projectRoot: root, frameworkRoot: args['framework-root'] ?? resolveProbeFrameworkRoot(root, __dirname),
         blueprintId: args.blueprint, sessionRef: args['session-ref'], requestFile: args['request-file'], reportDir: args['report-dir'],
         targets: list(args.target), requirementSources: list(args['requirement-source']), readonly: readonlyDesign,
-        captureDirtyAtPrepare: !readonlyDesign, write: preparation.write });
+        write: preparation.write });
       context = { requestIntake: prepared.intake, requestSourceItems: prepared.currentScopeItems };
-      if (args['prepare-source'] && !prepared.originGap) prepareCanonicalBlueprintSource(root, args.blueprint, context,
-        { requestFile: prepared.requestFile, write: preparation.write });
-      else if (!readonlyDesign && !prepared.originGap && isSmallBlueprintRequest(context)) {
-        const file = componentBlueprintPath(root, args.blueprint);
-        if (fs.existsSync(file)) {
-          const blueprint = asRecord(YAML.parse(fs.readFileSync(file, 'utf8')));
-          if (blueprint) assertBlueprintSourceOwner(root, args.blueprint, file, blueprint, context, prepared.requestFile);
+      if (args['prepare-source'] && !prepared.originGap) {
+        if (!fs.existsSync(componentBlueprintPath(root, args.blueprint))) {
+          preparation.commit();
+          if (args.json) console.log(JSON.stringify({ status: 'PREPARED', request_file: path.relative(root, prepared.requestFile).replace(/\\/g, '/'), source_refs: prepared.sourceRefs }, null, 2));
+          else console.log(`原请求来源已准备，请在 ${componentBlueprintPath(root, args.blueprint)} 编写本请求蓝图。`);
+          return;
         }
+        prepareCanonicalBlueprintSource(root, args.blueprint, context, { requestFile: prepared.requestFile, write: preparation.write });
       }
+
     }
     const existingBinding = prepared && fs.existsSync(prepared.requestFile) ? asRecord(asRecord(JSON.parse(fs.readFileSync(prepared.requestFile, 'utf8')))?.blueprint) : undefined;
     if (readonlyDesign && existingBinding?.ref && !prepared?.originGap) resolveCliRefTarget(root, args.blueprint, existingBinding.ref, context);
@@ -348,9 +341,25 @@ ${renderKnowledge(knowledge)}`);
     const seams = checkHostSeamMaterials(args['project-root']!, result, args);
     result.issues.push(...seams.issues);
     const failed = result.issues.some(item => item.severity === 'BLOCKER');
-    const blueprintBinding = small && !failed && prepared && !readonlyDesign && !prepared.originGap
-      ? bindDesignRequestBlueprint({ projectRoot: root, frameworkRoot: args['framework-root'] ?? resolveProbeFrameworkRoot(root, __dirname),
-        requestFile: path.relative(root, prepared.requestFile).replace(/\\/g, '/'), blueprintId: args.blueprint, write: preparation.write }) : existingBinding;
+    if (small && !failed && prepared && !readonlyDesign && !prepared.originGap) {
+      assertBlueprintSourceOwner(root, args.blueprint, result.canonicalPath, result.blueprint, context, prepared.requestFile);
+    }
+    let blueprintBinding = existingBinding;
+    if (small && !failed && prepared && !readonlyDesign && !prepared.originGap) {
+      const requestFile = path.relative(root, prepared.requestFile).replace(/\\/g, '/');
+      try {
+        blueprintBinding = bindDesignRequestBlueprint({ projectRoot: root, frameworkRoot: args['framework-root'] ?? resolveProbeFrameworkRoot(root, __dirname),
+          requestFile, blueprintId: args.blueprint, write: preparation.write });
+      } catch (error) {
+        if (!args['prepare-source'] || !(error instanceof RequestDesignReviewRequired)) throw error;
+        preparation.commit();
+        if (args.json) console.log(JSON.stringify({ status: 'REVIEW_REQUIRED', request_file: requestFile, source_refs: prepared.sourceRefs,
+          current_scope_items: prepared.currentScopeItems, review_required: error.message }, null, 2));
+        else console.error(error.message);
+        process.exitCode = 1;
+        return;
+      }
+    }
     const reviewDocument = shortShaped && !small ? undefined : args['write-review']
       ? materializeBlueprintReview(root, args.blueprint, context) : inspectBlueprintReview(root, args.blueprint, context);
     const reviewFailed = args['write-review'] && reviewDocument?.status === 'failed';
@@ -374,6 +383,7 @@ ${renderKnowledge(knowledge)}`);
         design_scope: small ? 'small-request-design' : 'full-design',
         blueprint_binding: blueprintBinding,
         request_file: prepared ? path.relative(path.resolve(args['project-root']!), prepared.requestFile).replace(/\\/g, '/') : undefined, source_refs: prepared?.sourceRefs, origin_gap: prepared?.originGap,
+        ...(prepared && failed ? { current_scope_items: prepared.currentScopeItems } : {}),
         summary: small && !failed ? renderBlueprintReviewMarkdown(result.blueprint, result.artifactSha256, undefined, context) : undefined,
         content_impact: prepared?.intake ? deriveContentImpact(root, prepared.intake) : undefined,
         ...(device ? { next: device.required ? [{ phase: 'testing', acceptance_ids: device.items.map(item => item.id),

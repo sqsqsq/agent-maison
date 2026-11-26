@@ -13,7 +13,6 @@ import { generateRequestScriptReport } from './report-generator';
 import { resolveCurrentDisposition, isRequiredCheckGap } from './check-disposition';
 import { readCurrentDispositionInput } from './verify-feature-completion';
 import type { AcceptanceSpec, CheckResult, HarnessResolvedProfile, PhaseChecker, RequestCheckContext } from './types';
-import type { AcceptanceCriterion } from './p0-semantic-gates';
 import { collectUnitScopeIds } from './acceptance-layering';
 import { dispatchRequestTests, dispatchRequestTargetProbe, isCapabilitySkipped } from '../../capability-registry';
 import { isInsideProjectRoot } from './project-relative-path';
@@ -22,6 +21,7 @@ import { ensurePersonalSetup } from './personal-setup-gate';
 import { executeCheckAsync, CheckExecutionError } from './check-execution';
 import { prepareAutomaticRequest, prepareDesignVerificationRequest, materializeAutomaticFacts, automaticRequestChecks, requestTestingScope, retainRequestFailures } from './automatic-request';
 import { resolveManagedGoalInvocation } from './managed-goal-invocation';
+import { readRequestExecutionInputs } from './request-execution-inputs';
 
 export async function checkRequestTests(ctx: RequestCheckContext): Promise<CheckResult[]> {
   // R2：预期来源登记与 provider 执行**并列产出**，每条 return 路径都带上它（失败、未执行、provider 异常同样要呈现）。
@@ -37,6 +37,13 @@ export async function checkRequestTests(ctx: RequestCheckContext): Promise<Check
       const setup = ensurePersonalSetup(ctx.projectRoot, { requiredPrerequisites });
       if (!setup.ok) throw new CheckExecutionError({ ...requestFailure('request_provider_unavailable', setup.message), status: 'SKIP', failure_kind: 'capability_missing', blocking_class: 'externalBlocked' });
     }
+    const targets = ctx.request.bindings.map(binding => binding.path);
+    const boundExecution = ctx.request.origin_request || ctx.request.blueprint;
+    const phase = ctx.request.phase;
+    ctx.executionArtifacts = undefined;
+    if (boundExecution && phase !== 'review') {
+      ctx.executionInputs = readRequestExecutionInputs(ctx.projectRoot, ctx.frameworkRoot, phase, targets);
+    }
     const result = await dispatchRequestTests(ctx) as RequestProviderResult;
     if (Array.isArray(result?.checks) && result.checks.some(check => !check || !['PASS', 'FAIL', 'WARN', 'SKIP'].includes(check.status) || !['BLOCKER', 'MAJOR', 'MINOR'].includes(check.severity) || typeof check.id !== 'string' || typeof check.details !== 'string')) throw new TypeError('provider returned malformed checks');
     if (result?.executed !== true && result?.checks?.some(check => isRequiredCheckGap(check))) return withExpectation(result.checks);
@@ -51,7 +58,12 @@ export async function checkRequestTests(ctx: RequestCheckContext): Promise<Check
       evidence.push({ path: path.relative(ctx.projectRoot, real).replace(/\\/g, '/'), sha256: crypto.createHash('sha256').update(fs.readFileSync(real)).digest('hex') });
     }
     const gap = result.checks.find(check => isRequiredCheckGap(check));
-    return withExpectation([...result.checks, { id: 'request_test_execution', category: 'structure', severity: 'BLOCKER', status: result.failed === 0 ? 'PASS' : gap ? 'SKIP' : 'FAIL',
+    const currentExecution = boundExecution && phase !== 'review' ? readRequestExecutionInputs(ctx.projectRoot, ctx.frameworkRoot, phase, targets) : undefined;
+    const executionGap = boundExecution && (!ctx.executionInputs || ctx.executionInputs.sha256 !== currentExecution?.sha256)
+      ? [requestFailure('request_execution_inputs_changed', ctx.executionInputs
+        ? `实际执行期间所用模块或构建输入发生变化：${ctx.executionInputs.scope.join('、')}`
+        : '本次实际测试已记录，模块或构建输入尚未核实')] : [];
+    return withExpectation([...result.checks, ...executionGap, { id: 'request_test_execution', category: 'structure', severity: 'BLOCKER', status: result.failed === 0 ? 'PASS' : gap ? 'SKIP' : 'FAIL',
       ...(gap ? { failure_kind: gap.failure_kind, blocking_class: gap.blocking_class, actionability: gap.actionability } : {}),
       description: '专项测试实际执行结果', details: `total=${result.total}, failed=${result.failed}`, affected_files: evidence.map(item => item.path), structured: { request_evidence: evidence }, suggestion: result.failed ? gap?.suggestion ?? '修复本次失败后重新执行，不复用旧报告宣称通过。' : undefined }], result);
   }, 'request_provider_unavailable').then(checks => expectation && !checks.some(check => check.id === 'request_expectation_source') ? withExpectation(checks) : checks);
@@ -80,6 +92,7 @@ function requestDeviceAcceptanceChecks(items: ReturnType<typeof requestTestingSc
       ...requestFailure('request_device_acceptance', details), status, description: '短蓝图逐条设备验收',
       ...(blocked && !failed && !passed ? { failure_kind: blocked.failure_kind, blocking_class: blocked.blocking_class, actionability: blocked.actionability } : {}),
       structured: { acceptance_id: item.id, ut_layer: item.ut_layer, expected_result: item.expected_result,
+        verification_steps: item.verification_steps,
         cases: covered.map(({ row, check }) => ({ tc_id: row.tc_id, status: check.status, expected: row.expected, evidence_paths: check.affected_files })) },
       affected_files: [...new Set(covered.flatMap(({ check }) => check.affected_files ?? []))],
       suggestion: passed ? undefined : blocked?.suggestion ?? '按当前短蓝图的操作和可观察预期补齐关联 TC，执行正式 testing 并读取原生证据。',
@@ -282,7 +295,7 @@ export async function runExplicitRequest(options: { projectRoot: string; framewo
   try {
     const parseOptions = { projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot, phase: String(args.phase ?? ''), requestFile: args['request-file'], reportDir: args['report-dir'], allowPlannedTargets: args['prepare-request'] === true };
     let prepared = prepareExplicitRequest(parseOptions);
-    let resolvedInputs = prepared.phase === 'testing' ? resolveRequestInputs(options.projectRoot, options.frameworkRoot, prepared) : undefined;
+    let resolvedInputs = ['testing', 'review'].includes(prepared.phase) ? resolveRequestInputs(options.projectRoot, options.frameworkRoot, prepared) : undefined;
     materializeAutomaticFacts(prepared, options.projectRoot, resolvedInputs);
     if (prepared.intake_context || prepared.origin_gap) prepared = prepareExplicitRequest(parseOptions);
     if (resolvedInputs && (!('request_sha256' in resolvedInputs.context.subject) || resolvedInputs.context.subject.request_sha256 !== prepared.request_sha256)) {
@@ -296,16 +309,24 @@ export async function runExplicitRequest(options: { projectRoot: string; framewo
     // agent **写测试之前**就拿到，而不是等到执行期才抛（原先 `request_phase_disabled` 只在 :76 出现）。
     const profile = loadResolvedProfile(options.projectRoot, config, options.frameworkRoot);
     const acceptance = prepared.blueprint ? resolvedInputs?.artifacts?.['acceptance@1'] as AcceptanceSpec | undefined : undefined;
-    const device = acceptance && requestTestingScope(options.projectRoot, prepared.intake_context, acceptance, prepared.blueprint!.acceptance_ids);
+    const device = acceptance && requestTestingScope(options.projectRoot, prepared.intake_context && { ...prepared.intake_context, targets: prepared.targets.files }, acceptance, prepared.blueprint!.acceptance_ids, prepared.baseline);
     const testingExcluded = prepared.phase === 'testing' && (prepared.intake_context?.control.exempt || prepared.intake_context?.control.excluded.includes('testing'));
-    const notApplicable = testingExcluded || device && !device.required;
+    const notApplicable = testingExcluded || prepared.phase === 'testing' && device && !device.required;
     if (args['prepare-request']) {
       const { sourceContents: _contents, ...output } = prepared;
       const knowledge = assembleKnowledge({ projectRoot: options.projectRoot, frameworkRoot: options.frameworkRoot,
         phase: prepared.phase, subject: 'request', role: 'author', requirement: prepared.requested_result,
         targetFiles: [...prepared.targets.files, ...prepared.targets.tests, ...(prepared.test_registrations ?? [])], extensionBundle: profile.extensionBundle });
-      console.log(JSON.stringify({ ...output, knowledge: { ...knowledge, instructions: renderKnowledge(knowledge) },
-        ...(device ? { device_acceptance: device.items, ...(device.required ? { next: '对照 device_acceptance 的操作和预期准备 inputs.test_plan，用「关联 AC」列关联原验收，然后沿本请求正式执行 testing。' } : {}) } : {}),
+      const review = prepared.phase === 'review' && prepared.blueprint ? {
+        requested_result: prepared.requested_result,
+        user_corrections: prepared.intake_context?.user_messages?.filter(message => message.id !== prepared.intake_context?.user.id) ?? [],
+        requirement_sources: prepared.requirement_sources,
+        acceptance: resolvedInputs?.artifacts?.['acceptance@1'],
+        contracts: resolvedInputs?.artifacts?.['contracts@1'],
+        instructions: '以用户原话、已核更正及附件为依据，逐项审核当前蓝图的操作条件、预期行为、验收层级、契约与实际依赖。写入 review_report 的「原请求验收对照」表，列为「验收项 | 原用户依据 | 当前承诺 | 结论 | 差异」。按条引用真实原文，结论填保持或差异；报告描述具体丢失、弱化或新增的要求，原要求未完整保留时拒绝通过。',
+      } : undefined;
+      console.log(JSON.stringify({ ...output, ...(review ? { request_review: review } : {}), knowledge: { ...knowledge, instructions: renderKnowledge(knowledge) },
+        ...(prepared.phase === 'testing' && device ? { device_acceptance: device.items, ...(device.required ? { next: '对照 device_acceptance 的操作和预期准备 inputs.test_plan，用「关联 AC」列关联原验收，然后沿本请求正式执行 testing。' } : {}) } : {}),
         ...(notApplicable ? { applicability: 'not_applicable', reason: testingExcluded ? '原用户明确排除设备验证' : '无适用的设备验收或内容影响验证' } : {}),
         gaps: notApplicable ? [] : [...output.gaps, ...requestCapabilityGaps(profile, options.projectRoot, prepared)] }, null, 2)); return 0;
     }
@@ -351,27 +372,15 @@ export async function runExplicitRequest(options: { projectRoot: string; framewo
       try { readBoundInput({ projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, phase: ctx.phase, track: 'full', inputContext: ctx.resolvedInputs.context, request: prepared, adhocCases: prepared.inputs.cases && fs.existsSync(prepared.inputs.cases) ? fs.readFileSync(prepared.inputs.cases, 'utf8') : undefined }, input.binding); }
       catch (error) { checks.push(requestFailure('request_binding_stale', String(error))); }
     }
-    checks.push(...automaticRequestChecks(current.intake_context, ctx.projectRoot));
-    if (current.origin_gap) checks.push(requestFailure('request_input_unresolved', current.origin_gap));
-    if (current.intake_context) {
-      const intake = current.intake_context;
-      const disclosures = new Map(intake.attribution_disclosures?.map(item => [item.path, item.reason]));
-      const unresolved = new Set(intake.attribution_unknown);
-      if (disclosures.size) {
-        const design = loader.loadRequestArtifacts(ctx.resolvedInputs);
-        const boundPaths = new Set([...current.bindings.map(item => path.resolve(ctx.projectRoot, item.path)),
-          ...((design.referenceClosure?.planned_files ?? []).map(file => path.resolve(ctx.projectRoot, file))),
-          ...(design.acceptance?.criteria ?? []).flatMap((criterion: AcceptanceCriterion) => criterion.requirement_ref?.source_path
-            ? [path.resolve(ctx.projectRoot, criterion.requirement_ref.source_path)] : [])]);
-        for (const file of disclosures.keys()) if (intake.control.full_diff_attribution || boundPaths.has(path.resolve(ctx.projectRoot, file))) unresolved.add(file);
-      }
-      const gaps = [...intake.gaps, ...[...unresolved].map(file => `产品路径 ${file} ${disclosures.get(file) ?? '缺少可信写前存在性或字节依据'}`), ...(intake.policy.selected === 'unknown' ? ['档位事实尚未核齐'] : [])];
-      if (gaps.length) checks.push(requestFailure('request_input_unresolved', gaps.join('；') + '；局部能力结果保留，不能签完整diff已对账/完整review通过'));
+    checks.push(...automaticRequestChecks(current.intake_context && { ...current.intake_context, targets: current.targets.files }, ctx.projectRoot, current.baseline));
+    if (current.origin_gap && (current.origin_request || current.blueprint)) checks.push(requestFailure('request_input_unresolved', current.origin_gap));
+    if (current.intake_context?.control.full_diff_attribution && current.intake_context.gaps.length) {
+      checks.push(requestFailure('request_input_unresolved', current.intake_context.gaps.join('；')));
     }
-    retainRequestFailures(ctx.reportDir);
-    if (device) checks.push(...requestDeviceAcceptanceChecks(device.items, checks));
+    retainRequestFailures(ctx.reportDir, prepared.request_sha256);
+    if (prepared.phase === 'testing' && device) checks.push(...requestDeviceAcceptanceChecks(device.items, checks));
     const result = generateRequestScriptReport(ctx, checks);
-    console.log(JSON.stringify({ subject: 'request', request_sha256: prepared.request_sha256, verdict: result.verdict, report: result.reportPath }));
+    console.log(JSON.stringify({ subject: 'request', request_sha256: prepared.request_sha256, verdict: result.verdict, report: result.reportPath, ...(result.reviewCoverage ? { review_coverage: result.reviewCoverage } : {}) }));
     return result.verdict === 'PASS' ? 0 : 1;
   } finally { for (const [key, value] of Object.entries(saved)) process.env[key] = value; }
 }

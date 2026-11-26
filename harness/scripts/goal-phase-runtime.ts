@@ -5,9 +5,9 @@ import { adapterModelBinding, freezeModelPin, launchModelPin, parseAdapterModelB
 import { collectActionableDefects, resolveCurrentHapSha256Full, validateDeviceTestEvidenceBinding, readFreshVisualDisposition, type ActionableDefect, type UnverifiedDefect, type ActionableCollectResult, type DeviceTestCollectContext } from './utils/actionable-evidence';
 export { collectActionableDefects, resolveCurrentHapSha256Full, validateDeviceTestEvidenceBinding, readFreshVisualDisposition } from './utils/actionable-evidence';
 export type { ActionableDefect, UnverifiedDefect, ActionableCollectResult, DeviceTestCollectContext } from './utils/actionable-evidence';
-import { isDesignQuestioningWriteRecovery, pendingPublishedDesignRepair, readQuestioningBlueprintPreimage, restoreRejectedDesignQuestioning } from './utils/design-repair-unattended';
+import { isDesignQuestioningWriteRecovery, pendingPublishedDesignRepair } from './utils/design-repair-unattended';
 import { resolveValidationOnlyEligibility } from './utils/goal-runner-phase';
-import { sessionExecutionDeadlineMs, sessionExecutionTransportInstructionSuffix, issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, executionRequestForInvoke, readExecutionRequestOriginal, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, readPhaseBinding, readSessionWriteWindows, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
+import { sessionExecutionDeadlineMs, sessionExecutionTransportInstructionSuffix, issueSessionExecution, writePhaseExecutionRequestMaterial, resignSessionExecution, readSessionExecution, inspectSessionExecutionBeforeRuntime, undeliveredSessionInvocation, executionRequestForInvoke, readExecutionRequestOriginal, sessionExecutionForInvoke, sessionToolEventsLogPath, readHandoffMaterial, acceptedSessionReport, handbackInvocationCompleted, acceptSessionExecution, uncommittedSessionReport, sessionValidationOnlyEligibility, readPhaseBinding, type IssuedSessionExecution, type SessionExecutionReport } from './utils/session-execution-handoff';
 import { AttendedGoalPhaseExecutor, observeWorkUnitProviderSession, authorUnit, workUnitFeedbackDelivered, type WorkUnitInput } from './utils/goal-phase-executor';
 import { applyIndependentQuestioningOutput, independentQuestioningBlockers } from './utils/blueprint-questioning';
 import { validateComponentBlueprint } from './utils/component-blueprint-validator';
@@ -565,14 +565,13 @@ import {
   capturePhaseInvocationSnapshot,
   workUnitProtectedRecordPaths,
   classifyPhaseInvocationChanges,
-  phaseWriteWindows,
+  phaseWriteWindows, invocationWriteConflicts, affectsInvocationAuthority, hasConfirmedPhaseWriteViolation, readInvocationWritePaths,
   readPhaseRecoveryFile,
   diffPhaseInvocationSnapshots,
   renderPhaseWriteBoundaryGuidance,
   resolvePhasePathOwnership,
   resolvePhaseWriteBoundary, authorWritePreimages, unrestoredAuthorWrites, unresolvedPhaseWrites, unresolvedWriteReviewPaths,
   type PhaseWriteBoundaryResolution,
-  type PhaseInvocationChange,
 } from './utils/phase-write-boundary';
 // plan f4c8d2b7 t6：ut 阶段 prompt 注入机器产物格式契约（路径解析自 skill-assets SSOT）
 import { renderUtFormatContractLines } from './utils/ut-template-paths';
@@ -2896,18 +2895,6 @@ function beforeAuthorInvocation(events: readonly GoalRunEvent[], invokeId: strin
   return at < 0 ? events : events.slice(0, at);
 }
 
-function recordAuthorRestorations(events: readonly GoalRunEvent[], changes: readonly PhaseInvocationChange[], phase: string, invokeId: string,
-  emit: (event: Record<string, unknown>) => void, projectRoot?: string): void {
-  const originals = authorWritePreimages(beforeAuthorInvocation(events, invokeId), projectRoot);
-  const restored = changes.filter(change => originals.has(change.path) && originals.get(change.path) === change.postSha256
-    && !events.some(event => event.type === 'phase_write_observed' && event.invoke_id === invokeId
-      && [...((event as Record<string, any>).observations ?? []), ...((event as Record<string, any>).owned ?? [])].some(row => row.path === change.path && row.post_sha256 === change.postSha256)));
-  if (restored.length) emit({ type: 'phase_write_observed', phase, invoke_id: invokeId,
-    observations: restored.map(change => ({ path: change.path, how: change.how, pre_sha256: change.preSha256, post_sha256: change.postSha256,
-      disposition: 'deferred_to_checker', owner: null, owner_candidates: [], roles: [] })), observed_count: restored.length });
-}
-
-
 /**
  * 作者前置知识：原生索引、任务候选与 extension 同源装配，保留旧导出名供调用者兼容。
  * extension 非法仍警示且不注入其条目；原生知识继续可读，不新增 goal 门禁。
@@ -4183,41 +4170,46 @@ function readGateCompletionHistory(projectRoot: string, runDir: string, events: 
   });
 }
 
-/** Current product changes come from the original guarded handback, never regenerated tool bookkeeping. */
+/** Use an accepted postimage when available. Current evidence readers own individual proof gaps. */
 function readReturnedWorkProduct(context: WorkUnitExecutionContext, original: NonNullable<ReturnType<typeof executionRequestForInvoke>>,
-  history: readonly GoalRunEvent[], at: number): { current: ReturnType<typeof capturePhaseInvocationSnapshot>; productChanged: boolean } | GoalPhaseExecutorResult {
+  history: readonly GoalRunEvent[], at: number): { failureReason: string | null; productChanged: boolean } {
   const role = workUnitExecutionRole(context);
-  const actorName = role === 'author' ? '原作者' : '原独立核验';
   const start = history[at];
   const prior = original.request.pre_snapshot, boundary = original.request.write_boundary;
-  if (!prior || !boundary) return { status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', command: 'phase_execute_request', skipped: true,
-    details: `${actorName} ${start.invoke_id} 已交回，但原请求的前像/写界原件缺失，不能确认新的工作条件。恢复原件、真实输入改变或用户明确继续后接回；不因缺少原件反复派发。` };
+  if (!boundary) return { failureReason: null, productChanged: false };
   const current = capturePhaseInvocationSnapshot(boundary, original.request.snapshot_options);
   const writeObservations = history.slice(at + 1).flatMap(event => {
     const value = asRecord(event);
-    return event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id && value?.pre_snapshot === prior.sha256
+    return prior && event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id && value?.pre_snapshot === prior.sha256
       && typeof value.post_snapshot === 'string' && /^[0-9a-f]{64}$/.test(value.post_snapshot)
       && (Array.isArray(value.owned) || Array.isArray(value.observations)) ? [value] : [];
   });
   const writes = writeObservations.map(value => value.post_snapshot as string);
-  let handedBackSha = writes.at(-1) ?? prior.sha256;
+  let returnedSnapshot: ReturnType<typeof capturePhaseInvocationSnapshot> | undefined;
   try {
-    const received = acceptedSessionReport(context.runDir, original);
-    if (received?.event.handoff_report) handedBackSha = readHandoffMaterial<{ post_snapshot?: typeof prior }>(context.runDir,
-      received.event.handoff_report).post_snapshot?.sha256 ?? handedBackSha;
-    const designResult = path.resolve(context.runDir, path.dirname(original.reference.path), 'design-result.json');
-    if (!writes.length && fs.existsSync(designResult)) {
-      const outcome = JSON.parse(fs.readFileSync(designResult, 'utf8')).outcome as DesignRepairInvokeOutcome;
-      if (outcome.preSnapshot?.sha256 === prior.sha256) handedBackSha = outcome.postSnapshot?.sha256 ?? handedBackSha;
+    const received = acceptedSessionReport(context.runDir, original, history);
+    if (received?.event.handoff_report && received.report.status === 'passed'
+      && handbackInvocationCompleted(context.runDir, original, received.event, history)) {
+      returnedSnapshot = readHandoffMaterial<{ post_snapshot?: NonNullable<typeof prior> }>(context.runDir,
+        received.event.handoff_report).post_snapshot;
     }
-  } catch (error) {
-    return { status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', command: 'phase_execute_request', skipped: true,
-      details: `${actorName} ${start.invoke_id} 已交回但原后像不可核实：${(error as Error).message}。恢复该原件后继续，不重派或猜测结束。` };
-  }
-  let productChanged = current.sha256 !== handedBackSha;
+    const designResult = path.resolve(context.runDir, path.dirname(original.reference.path), 'design-result.json');
+    if (!returnedSnapshot && prior && !writes.length && fs.existsSync(designResult)) {
+      const outcome = JSON.parse(fs.readFileSync(designResult, 'utf8')).outcome as DesignRepairInvokeOutcome;
+      if (outcome.preSnapshot?.sha256 === prior.sha256) returnedSnapshot = outcome.postSnapshot;
+    }
+  } catch { /* Missing historical observation cannot decide current proof or start new work. */ }
+  const returned = returnedSnapshot && !returnedSnapshot.failureReason ? returnedSnapshot : undefined;
+  const basis = returned ?? prior;
+  if (!basis) return { failureReason: current.failureReason, productChanged: false };
+  const handedBackSha = returned?.sha256 ?? writes.at(-1) ?? prior?.sha256;
+  const observedDelta = diffPhaseInvocationSnapshots(basis, current);
+  let productChanged = current.sha256 !== handedBackSha && observedDelta.kind === 'changed'
+    && observedDelta.changes.some(change => affectsInvocationAuthority(boundary, change.path, original.request.snapshot_options)
+      || (role === 'author' && workUnitMayWritePath(boundary, change.path)));
   if (productChanged && ['initial-design-questioning', 'design-repair-questioning'].includes(context.phase) && boundary.verifierResultPath) {
     const questioning = readDesignQuestioningOriginal(context.runDir, start, history, context.projectRoot);
-    if (questioning?.completed && questioning.preSnapshot && questioning.postSnapshot?.sha256 === handedBackSha
+    if (questioning?.completed && questioning.preSnapshot && questioning.postSnapshot && questioning.postSnapshot.sha256 === handedBackSha
       && diffPhaseInvocationSnapshots(questioning.preSnapshot, questioning.postSnapshot).kind === 'clean'
       && fs.existsSync(boundary.verifierResultPath) && fs.readFileSync(boundary.verifierResultPath, 'utf8') === questioning.output) {
       const returned = diffPhaseInvocationSnapshots(questioning.postSnapshot, current);
@@ -4253,7 +4245,7 @@ function readReturnedWorkProduct(context: WorkUnitExecutionContext, original: No
       if (hash !== null && (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash))) { attributable = false; continue; }
       returned.set(row.path, { how: row.how, hash });
     }
-    const delta = diffPhaseInvocationSnapshots(prior, current);
+    const delta = observedDelta;
     if (attributable && delta.kind !== 'unverifiable') {
       const actual = new Map(current.entries.map(entry => [entry.path, entry.sha256]));
       const onlyReturned = delta.kind === 'clean' || delta.changes.every(change => runtime(change.path)
@@ -4261,7 +4253,7 @@ function readReturnedWorkProduct(context: WorkUnitExecutionContext, original: No
       if (onlyReturned && [...returned].every(([file, value]) => (actual.get(file) ?? null) === value.hash)) productChanged = false;
     }
   }
-  return { current, productChanged };
+  return { failureReason: current.failureReason, productChanged };
 }
 
 export class GoalPhaseRuntime {
@@ -4309,7 +4301,7 @@ export class GoalPhaseRuntime {
         if ((role === 'author' ? authorUnit(original.request.context, history, at)
           : previousVerifier ? canonicalRequestInput(previousVerifier) : original.request.context.phase) !== unit) continue;
         const end = history.slice(at + 1).find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
-        if (!end || !invocationCompleted({ ...end, exitCode: end.exit_code }) && end.status !== 'waiting'
+        if (!end || !handbackInvocationCompleted(context.runDir, original, end, history) && end.status !== 'waiting'
           || role === 'verifier' && ['initial-design-questioning', 'design-repair-questioning'].includes(context.phase)
             && history.some(event => isDesignQuestioningWriteRecovery(event, context.phase, start.invoke_id))) break;
         const frozen = !!context.workInput?.material && !!original.request.context.workInput?.material;
@@ -4320,15 +4312,13 @@ export class GoalPhaseRuntime {
           original.request.invoke_id, original.reference.sha256));
         const materialChanged = nextMaterial !== previousMaterial && requestedMaterial !== previousMaterial;
         if (hasNewWorkConditions({ returned: true, explicitlyContinued, materialChanged, productChanged: false, scopeChanged: false })) break;
-        const product = readReturnedWorkProduct(context, original, history, at);
-        if ('status' in product) return product;
-        const { current, productChanged } = product;
-        if (!current.failureReason && hasNewWorkConditions({ returned: true, explicitlyContinued, materialChanged,
+        const { failureReason, productChanged } = readReturnedWorkProduct(context, original, history, at);
+        if (!failureReason && hasNewWorkConditions({ returned: true, explicitlyContinued, materialChanged,
           productChanged, scopeChanged: false })) break;
         return { status: 'waiting', phase: context.phase, exitCode: 1, stdout: '', stderr: '', command: 'phase_execute_request', skipped: true,
-          details: current.failureReason
-            ? `${actorName} ${start.invoke_id} 已真实交回；当前产品观察不可核实：${current.failureReason}。恢复该原观察后接回，不盲重派。`
-            : `${actorName} ${start.invoke_id} 已真实交回；当前签名指令、反馈、研究输入、权限和产品原件均未变化，没有新的可执行工作。保留全部未完项，补齐原producer/对象证明、真实条件改变或用户明确继续后接回，不重发同一请求。` };
+          details: failureReason
+            ? `${actorName} ${start.invoke_id} 已真实交回；当前签发输入暂不可读取：${failureReason}。由对应核验处理该输入，不重发原操作。`
+            : `${actorName} ${start.invoke_id} 已真实交回；当前尚无可确认的新增作者工作。沿原交回验证当前成果，相关反馈或输入发生变化后再派对应工作。` };
       }
     }
     if (workUnitExecutionRole(context) === 'author' && context.owner.owner_id !== 'dry-run' && LEGACY_FEATURE_PHASE_ORDER.includes(context.phase as FeaturePhase)) {
@@ -4681,47 +4671,11 @@ export class GoalPhaseRuntime {
       if (transport === 'process' && process.platform === 'win32' && recoverRuntimeGuardians(history(), manifest.run_id, Boolean(argv['force-resume']), emit, conclude)) return 1;
       const inheritedWriteEvents = readInitialDesignWriteEvents(projectRoot, manifest, []);
       const writeHistory = (events = history()) => [...inheritedWriteEvents, ...events];
-      const restoreInitialQuestioning = (invokeId: string, pre: ReturnType<typeof capturePhaseInvocationSnapshot>,
-        post: ReturnType<typeof capturePhaseInvocationSnapshot>, windows: ReturnType<typeof phaseWriteWindows>, returned?: string): boolean => {
-        const phase = 'initial-design-questioning';
-        const blueprint = path.relative(projectRoot, componentBlueprintPath(projectRoot, manifest.feature)).replace(/\\/g, '/');
-        const before = readQuestioningBlueprintPreimage(runDir, phase, invokeId);
-        return restoreRejectedDesignQuestioning({ projectRoot, phase, invokeId, events: history(), pre, post, windows,
-          materials: new Map([[blueprint, { preimages: [before], returned }]]), emit });
-      };
       currentDesignWork: for (;;) {
         const state = { blueprintPath: componentBlueprintPath(projectRoot, manifest.feature) };
         const prior = history();
         const latest = [...prior].reverse().find(event => event.type === 'agent_invoke_end');
         const latestPurpose = latest && 'purpose' in latest ? latest.purpose : undefined;
-        if (latest?.handoff_report && latest.invoke_id) {
-          const issued = sessionExecutionForInvoke(runDir, latest.invoke_id);
-          const saved = readHandoffMaterial<{ post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; draft_outputs?: Record<string, string> }>(runDir, latest.handoff_report);
-          if (issued?.request.pre_snapshot && saved.post_snapshot && !String(latest.phase).startsWith('design-repair-')) {
-            const windows = readSessionWriteWindows(runDir, issued, saved.post_snapshot, prior)!;
-            const allowed = (issued.request.snapshot_options?.ownedPrefixes ?? []).map(prefix => prefix.replace(/\\/g, '/'));
-            if (windows.kind === 'unverifiable') return conclude('unauthorized_source_mutation', `设计调用原写快照不可核实：${windows.reason}。`);
-            const originalHistory = writeHistory(prior);
-            const originals = authorWritePreimages(beforeAuthorInvocation(originalHistory, latest.invoke_id), projectRoot);
-            const readonlyQuestioning = latest.phase === 'initial-design-questioning' && issued.request.write_boundary?.executionRole === 'verifier';
-            if (!readonlyQuestioning) recordAuthorRestorations(originalHistory, windows.returned, String(latest.phase), latest.invoke_id, emit, projectRoot);
-            const outside = windows.returned.filter(change => (readonlyQuestioning || !allowed.some(prefix => change.path === prefix || change.path.startsWith(prefix + '/')))
-              && (!issued.request.write_boundary || !workUnitMayWritePath(issued.request.write_boundary, change.path))
-              && (readonlyQuestioning || !originals.has(change.path) || originals.get(change.path) !== change.postSha256));
-            const violations = [...windows.beforeBinding.map(change => ({ ...change, window: 'before_binding', violation: 'signed_input_drift' })),
-              ...outside.map(change => ({ ...change, window: windows.window, violation: 'outside_authority' }))];
-            if (violations.length) {
-              if (!prior.some(event => event.type === 'phase_write_violation' && event.invoke_id === latest.invoke_id)) emit({
-                type: 'phase_write_violation', phase: latest.phase, invoke_id: latest.invoke_id,
-                pre_snapshot: issued.request.pre_snapshot.sha256, post_snapshot: saved.post_snapshot.sha256,
-                violations: violations.map(change => ({ path: change.path, violation: change.violation, window: change.window,
-                  pre_sha256: change.preSha256, post_sha256: change.postSha256 })),
-              });
-              if (readonlyQuestioning) restoreInitialQuestioning(latest.invoke_id, issued.request.pre_snapshot, saved.post_snapshot,
-                windows, saved.draft_outputs?.['initial-design-blueprint.yaml']);
-            }
-          }
-        }
         const deadlineReached = manifest.user_deadline_at && Date.parse(manifest.user_deadline_at) <= Date.now();
         if (deadlineReached || this.options.executionControls?.signal?.aborted) return conclude('executor_waiting', deadlineReached
           ? '用户明示时限已到；成果与未完项保留，时限未重置。' : '当前请求已取消；成果与未完项保留。');
@@ -4754,19 +4708,24 @@ export class GoalPhaseRuntime {
           if (continueRepair(repaired)) continue;
           return repairStop(repaired);
         }
-        if (latest?.invoke_id && !designEvents.some(event => event.type === 'phase_write_violation' && event.invoke_id === latest.invoke_id)) {
+        if (latest?.invoke_id && !hasConfirmedPhaseWriteViolation(designEvents, latest.invoke_id)) {
           const invocationDir = path.join(runDir, 'phases', String(latest.phase), latest.invoke_id);
           const beforeFile = path.join(invocationDir, 'blueprint-before.yaml');
-          const saved = latest.handoff_report ? readHandoffMaterial<{ draft_outputs?: Record<string, string> }>(runDir, latest.handoff_report) : undefined;
+          let saved: { draft_outputs?: Record<string, string> } | undefined;
+          let completed = invocationCompleted({ ...latest, exitCode: latest.exit_code });
+          try {
+            if (latest.handoff_report) saved = readHandoffMaterial(runDir, latest.handoff_report);
+            const request = executionRequestForInvoke(runDir, latest.invoke_id);
+            if (request) completed = handbackInvocationCompleted(runDir, request, latest, designEvents);
+          } catch { /* Missing historical originals cannot sign a current independent result. */ }
           const original = saved?.draft_outputs?.['initial-design-blueprint.yaml'];
           const outputFile = path.join(invocationDir, 'draft-output.yaml');
           const output = original ? Buffer.from(original, 'base64').toString('utf8') : fs.existsSync(outputFile) ? fs.readFileSync(outputFile, 'utf8') : fs.existsSync(state.blueprintPath) ? fs.readFileSync(state.blueprintPath, 'utf8') : '';
           if (String(latest.phase).startsWith('initial-design-') && fs.existsSync(beforeFile)
             && (latestPurpose === 'author' || latestPurpose === 'questioning')) {
             const readonlyQuestioning = latestPurpose === 'questioning' && executionRequestForInvoke(runDir, latest.invoke_id)?.request.write_boundary?.executionRole === 'verifier';
-            if (readonlyQuestioning && invocationCompleted({ ...latest, exitCode: latest.exit_code })) {
-              const before = fs.readFileSync(beforeFile, 'utf8');
-              if (before !== output) return conclude('unauthorized_source_mutation', '独立质询修改了只读蓝图输入；结果不回填。');
+            if (readonlyQuestioning && completed && saved?.draft_outputs?.['initial-design-blueprint.yaml'] && fs.readFileSync(beforeFile, 'utf8') === output
+              && fs.existsSync(state.blueprintPath) && fs.readFileSync(state.blueprintPath, 'utf8') === output) {
               const returned = latest.handoff_report
                 ? readHandoffMaterial<{ report: SessionExecutionReport }>(runDir, latest.handoff_report).report.details
                 : fs.existsSync(path.join(invocationDir, 'questioning-output.json'))
@@ -4776,9 +4735,9 @@ export class GoalPhaseRuntime {
               try { applyIndependentQuestioningOutput(state.blueprintPath, path.join(invocationDir, 'questioning-output.json'), returned ?? '', 'initial-design-questioning', projectRoot); }
               catch { /* The existing checker reports absent or invalid independent questioning; no PASS is synthesized. */ }
             }
-            const violation = validateInitialDesignInvocation(latestPurpose, fs.readFileSync(beforeFile, 'utf8'), output);
+            const violation = readonlyQuestioning ? undefined : validateInitialDesignInvocation(latestPurpose, fs.readFileSync(beforeFile, 'utf8'), output);
             if (violation) return conclude('unauthorized_source_mutation', violation);
-            if (latestPurpose === 'author' && latest.phase === 'initial-design-author' && !readInitialDesignRequest(projectRoot, frameworkRoot, manifest) && output && invocationCompleted({ ...latest, exitCode: latest.exit_code })
+            if (latestPurpose === 'author' && latest.phase === 'initial-design-author' && !readInitialDesignRequest(projectRoot, frameworkRoot, manifest) && output && completed
               && !authorWritePreimages(beforeAuthorInvocation(writeHistory(), latest.invoke_id), projectRoot).size
               && fs.readFileSync(state.blueprintPath, 'utf8') === output) prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
               sourceRefs: manifest.requirement_source_files?.length ? manifest.requirement_source_files
@@ -5080,8 +5039,8 @@ export class GoalPhaseRuntime {
           ...(purpose === 'questioning' ? { verifierResultPath: path.join(invocationDir, 'questioning-output.json') } : {}),
           immutableInputPaths: workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir), protectedRoots: fs.readdirSync(projectRoot).filter(name => name !== '.git') };
         const questioningSources = purpose === 'questioning'
-          ? blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(asRecord(YAML.parse(beforeBlueprint)) ?? {}), true)
-            .filter(file => isInsideProjectRoot(projectRoot, file)) : [];
+          ? [observed.blueprintPath, ...blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(asRecord(YAML.parse(beforeBlueprint)) ?? {}), true)]
+            .filter(file => isInsideProjectRoot(projectRoot, file)) : (manifest.requirement_source_files ?? []);
         const snapshotOptions = { ownedPrefixes: [path.relative(projectRoot,
           observed.scope?.candidatePath ?? (observed.kind === 'decompose' ? observed.candidatesPath : observed.kind === 'questioning' ? observed.blueprintPath : path.dirname(observed.blueprintPath))).replace(/\\/g, '/'),
           ...(observed.request ? [path.relative(projectRoot, observed.request.prepared.reportDir).replace(/\\/g, '/'), ...initialRequestWriteTargets(projectRoot, frameworkRoot, observed)] : [])], runtimeExcluded: [manifest.report_dir], includeFiles: questioningSources };
@@ -5197,17 +5156,10 @@ export class GoalPhaseRuntime {
         if (hardCli || containmentError) { recordEnd(); return conclude('adapter_cli_hard_failure', hardCli ?? containmentError!); }
         const post = capturePhaseInvocationSnapshot(resolution, snapshotOptions);
         const windows = phaseWriteWindows(pre, original ? readPhaseBinding(runDir, original, history()) : null, post);
-        if (windows.kind === 'unverifiable') {
-          const detail = `设计调用原快照不可核实：${windows.reason}。`;
-          recordEnd(detail); return conclude('unauthorized_source_mutation', detail);
-        }
-        const originalHistory = writeHistory();
-        const originals = authorWritePreimages(beforeAuthorInvocation(originalHistory, invokeId), projectRoot);
-        if (purpose === 'author') recordAuthorRestorations(originalHistory, windows.returned, label, invokeId, emit, projectRoot);
-        const outside = windows.returned.filter(change => (purpose === 'questioning' || !snapshotOptions.ownedPrefixes.some(prefix => change.path === prefix || change.path.startsWith(prefix + '/')))
-          && !workUnitMayWritePath(writeBoundary, change.path) && (purpose === 'questioning' || !originals.has(change.path) || originals.get(change.path) !== change.postSha256));
-        const violations = [...windows.beforeBinding.map(change => ({ ...change, window: 'before_binding', violation: 'signed_input_drift' })),
-          ...outside.map(change => ({ ...change, window: windows.window, violation: 'outside_authority' }))];
+        if (windows.kind === 'unverifiable') emit({ type: 'phase_write_boundary_degraded', phase: label, invoke_id: invokeId, detail: windows.reason });
+        const returnedChanges = windows.kind === 'checked' ? windows.returned : [];
+        const violations = invocationWriteConflicts(writeBoundary, windows, snapshotOptions,
+          readInvocationWritePaths(projectRoot, context.adapter, agentEventsLogPath(path.join(invocationDir, 'agent-output.log'))));
         if (violations.length) {
           if (purpose === 'questioning') recordDesignRepairInvocation(runDir, 'questioning', invokeId, {
             started: true, ok: false, status: result.status, detail: result.details ?? result.status,
@@ -5215,22 +5167,21 @@ export class GoalPhaseRuntime {
             preSnapshot: pre, postSnapshot: post,
           }, { phase: 'initial-design-questioning', blueprintPath: observed.blueprintPath, projectRoot });
           emit({ type: 'phase_write_violation', phase: label, invoke_id: invokeId, pre_snapshot: pre.sha256, post_snapshot: post.sha256,
-            violations: violations.map(change => ({ path: change.path, violation: change.violation, window: change.window,
+            violations: violations.map(change => ({ path: change.path, violation: change.violation, window: change.window, authority_confirmed: change.authority_confirmed,
               pre_sha256: change.preSha256, post_sha256: change.postSha256 })) });
           recordEnd(`原交回的写界不成立：${[...new Set(violations.map(change => change.path))].join('、')}`);
-          if (purpose === 'questioning') restoreInitialQuestioning(invokeId, pre, post, windows, returnedBlueprint?.toString('base64'));
           continue;
         }
         recordEnd();
-        if (purpose === 'author' && windows.returned.length) emit({ type: 'phase_write_observed', phase: label, invoke_id: invokeId,
+        if (purpose === 'author' && returnedChanges.length) emit({ type: 'phase_write_observed', phase: label, invoke_id: invokeId,
           pre_snapshot: pre.sha256, post_snapshot: post.sha256,
-          owned: windows.returned.map(change => ({ path: change.path, how: change.how, window: windows.window, owner: null,
+          owned: returnedChanges.map(change => ({ path: change.path, how: change.how, owner: null,
             pre_sha256: change.preSha256, post_sha256: change.postSha256, roles: [] })), observations: [], observed_count: 0 });
         if (recoverableProviderSessionFailure(context, result)) continue;
         if (purpose === 'questioning' && invocationCompleted(result)) {
-          if (fs.readFileSync(observed.blueprintPath, 'utf8') !== beforeBlueprint) return conclude('unauthorized_source_mutation', '独立质询修改了只读蓝图输入。');
+          if (fs.readFileSync(observed.blueprintPath, 'utf8') !== beforeBlueprint) return conclude('unauthorized_source_mutation', '独立质询所用蓝图输入已变化，按当前材料重核。');
           const output = result.details ?? readInvokeFinalText(result.stdout, path.join(invocationDir, 'agent-output.log'), manifest.adapter ?? 'generic') ?? '';
-          if (!windows.returned.length) recordDesignRepairInvocation(runDir, 'questioning', invokeId, {
+          recordDesignRepairInvocation(runDir, 'questioning', invokeId, {
             started: true, ok: true, status: result.status, detail: result.details ?? result.status, output,
             preSnapshot: pre, postSnapshot: post,
           }, { phase: 'initial-design-questioning', blueprintPath: observed.blueprintPath, projectRoot });
@@ -5336,8 +5287,9 @@ export class GoalPhaseRuntime {
           ? readHandoffMaterial<{ post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }>(runDir, received.event.handoff_report) : undefined;
         if (!request.pre_snapshot || !saved?.post_snapshot) return { started: false, ok: false, status: 'waiting', invokeId: request.invoke_id,
           detail: '本次原设计调用已交回但前/后像原件缺失；恢复该准确请求的归档后继续，不另派作者或猜测写入。' };
-        const status = received.event.status === 'failed' ? 'failed' : received.report.status;
-        return { started: true, ok: invocationCompleted({ ...received.event, status, exitCode: received.event.exit_code }),
+        const completed = handbackInvocationCompleted(runDir, issued!, received.event, loadAuthoritativeEvents(path.join(runDir, 'events.jsonl')));
+        const status = received.event.status === 'failed' && !completed ? 'failed' : received.report.status;
+        return { started: true, ok: completed,
           invokeId: request.invoke_id, status, detail: received.report.details ?? status,
           output: received.report.details ?? '', preSnapshot: request.pre_snapshot, postSnapshot: saved.post_snapshot,
           bindingSnapshot: readPhaseBinding(runDir, issued!, loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'))) ?? undefined };
@@ -5386,7 +5338,7 @@ export class GoalPhaseRuntime {
     fs.writeFileSync(promptFile, text);
     const boundary = guard ? { ...guard.resolution, executionRole: workUnitExecutionRole(context, purpose),
       immutableInputPaths: [...new Set([...(guard.resolution.immutableInputPaths ?? []), ...workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir)])],
-      feature: manifest.feature, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] } : null;
+      feature: manifest.feature, phaseOrder: [], domains: guard.resolution.domains ?? [], diagnostics: [], unresolvedSourcePhases: [] } : null;
     const issuedAt = new Date().toISOString();
     const original = !this.options.sessionHandoff ? writePhaseExecutionRequestMaterial({ context, invokeId, purpose, issuedAt, timeoutMs,
       gateTimeoutMs: 0, cleanupReserveMs: 0, preSnapshot: guard?.pre ?? null, writeBoundary: boundary, snapshotOptions: guard?.options }) : undefined;
@@ -7531,9 +7483,12 @@ Goal runner — original request design and construction runtime
           && ['coding', 'ut'].includes(problem.source_phase ?? problem.phase)
           && (!problem.owner || ['coding', 'ut'].includes(problem.owner))
           && nativeCompileDiagnosticRefs({ id: problem.id }, projectRoot) !== undefined);
+        const hasCurrentUtCheck = results.some(result => result.phase === 'ut');
         if (!compileRepair) {
           for (const strength of facts.acceptanceStrength ?? []) {
             if ('gap' in strength || strength.attempted || strength.passed) continue;
+            // New questions wait for the native check; an existing independent conflict is already actionable.
+            if (!hasCurrentUtCheck && !strength.conflicts?.length) continue;
           acceptanceReview.push({ issue: strength.issue, digests: [strength.digest], files: [...strength.files, ...strength.priorProduction],
             ...(strength.conflicts ? { conflicting: true as const } : {}),
             detail: { acceptance: strength.acceptance, tests: strength.tests, files: strength.files, priorConflicts: strength.conflicts } });
@@ -7584,32 +7539,6 @@ Goal runner — original request design and construction runtime
     };
     const writeHistory = (events = loadAuthoritativeEvents(eventsPath)) => [...ancestorEvents, ...events];
     const writeConflicts = () => unresolvedPhaseWrites(projectRoot, writeHistory(), { feature: manifest.feature, frameworkRoot, runId: manifest.run_id });
-    if (sessionRequest && (options.sessionHandoff || argv['adopt-session-transport'])) {
-      const invokeId = sessionRequest.request.invoke_id;
-      const received = acceptedSessionReport(runDir, sessionRequest);
-      if (received?.event.handoff_report && sessionRequest.request.pre_snapshot && sessionRequest.request.write_boundary) try {
-        const saved = readHandoffMaterial<{ post_snapshot?: ReturnType<typeof capturePhaseInvocationSnapshot> }>(runDir, received.event.handoff_report);
-        if (saved.post_snapshot) {
-          const records = loadAuthoritativeEvents(eventsPath);
-          const { context, write_boundary: boundary } = sessionRequest.request;
-          const windows = readSessionWriteWindows(runDir, sessionRequest, saved.post_snapshot, records)!;
-          if (windows.kind === 'unverifiable') wait(context.phase, `原会话写入时段不可核实：${windows.reason}；保全原件，等待核对。`);
-          else if (!context.phase.startsWith('design-repair-')) {
-            recordAuthorRestorations(writeHistory(records), windows.returned, context.phase, invokeId, goalEvents.emit, projectRoot);
-            const originals = authorWritePreimages(beforeAuthorInvocation(writeHistory(records), invokeId), projectRoot);
-            const writes = classifyPhaseInvocationChanges(boundary!, context.phase, windows.returned, { events: records, invokeId });
-            const violations = [...windows.beforeBinding.map(write => ({ ...write, ...resolvePhasePathOwnership(boundary!, write.path), violation: 'signed_input_drift', window: 'before_binding' })),
-              ...writes.violations.filter(write => !originals.has(write.path) || originals.get(write.path) !== write.postSha256)
-                .map(write => ({ ...write, window: windows.window }))];
-            if (violations.length && !records.some(event => event.type === 'phase_write_violation' && event.invoke_id === invokeId)) {
-              goalEvents.emit({ type: 'phase_write_violation', phase: context.phase, invoke_id: invokeId,
-                violations: violations.map(write => ({ path: write.path, how: write.how, violation: write.violation, window: write.window,
-                  pre_sha256: write.preSha256, post_sha256: write.postSha256, ...('roles' in write ? { owner: 'owner' in write ? write.owner : undefined, roles: write.roles } : {}) })) });
-            }
-          }
-        } else wait(sessionRequest.request.context.phase, '原session回报缺可信写入后像；恢复该归档后继续，不运行正式工具或猜测原写入。');
-      } catch (error) { wait(sessionRequest.request.context.phase, `原session写入归档不能读取：${(error as Error).message}；恢复原件后继续，不运行正式工具。`); }
-    }
     const firstWriteReview = unresolvedWriteReviewPaths(writeConflicts());
     if (!halted && firstWriteReview.length) wait('work-unit-author', `原交回不能采信，保全现场并由对应责任方核对：${firstWriteReview.join('、')}`, 'unauthorized_source_mutation');
     const consumeCompletedBoundaryHandoff = (): boolean => {
@@ -7638,6 +7567,8 @@ Goal runner — original request design and construction runtime
         const result = current.results.find(result => result.phase === family && asRecord(result.summary)?.run_id === manifest.run_id);
         const proposed = ((onlyCompatibleInputs ? [] : result?.checks ?? []) as readonly { id?: string; scope_revision_input?: ExecutionScopeInput }[])
           .filter(check => check.scope_revision_input);
+        const designProposal = proposed.some(check => check.id === 'design_scope_facts') && (family === 'spec' || family === 'plan');
+        if (designProposal && asRecord(result?.summary)?.verifier_request && !completed.has(family) && !userSessionRef) return;
         const proposals = proposed.flatMap(check => check.scope_revision_input ? [check.scope_revision_input] : []);
         const context = { projectRoot, frameworkRoot, feature: manifest.feature, requirement: manifest.requirement };
         const { refreshOwnedAcceptanceScopeInput, assertScopeAcceptanceRevision, hasStaleContractsScopeProof } = require('./utils/feature-track') as typeof import('./utils/feature-track');
@@ -7701,11 +7632,15 @@ Goal runner — original request design and construction runtime
         const recorded = loadScopeRevisions(loadAuthoritativeEvents(eventsPath), validateExecutionScope(manifest.execution_scope), { projectRoot, feature: manifest.feature, runId: manifest.run_id });
         const needsBaseline = !manifest.run_base_sha && !recorded.some(item => item.run_base_sha)
           && revision.scope.phase_chain.some(phase => phase === 'coding' || phase === 'ut');
+        let baseline: string | undefined;
+        if (needsBaseline && !manifest.successor_of && !executionCompletionPhases(birthScope!).some(phase => phase === 'coding' || phase === 'ut')) {
+          try { baseline = resolveGoalRunHeadSha(projectRoot); } catch { /* Git comparison is optional for the current scope. */ }
+        }
         goalEvents.emit({ type: 'scope_revised', revision_index: recorded.length + 1,
           previous_scope_fingerprint: executionScopeFingerprint(previous), execution_scope: revision.scope, revision_input: revision.input,
           trigger: { phase: family, check_id: userSessionRef ? 'user_control' : ownedAcceptance ? 'owned_acceptance_binding'
             : proposed[0]?.id ?? 'current_phase_evidence' }, allowed_fields: [...SCOPE_REVISION_FIELDS],
-          ...(needsBaseline ? { run_base_sha: validateExactSha(resolveGoalRunHeadSha(projectRoot), 'Git HEAD') } : {}) });
+          ...(baseline ? { run_base_sha: baseline } : {}) });
       } catch (error) {
         const detail = (error as Error).message;
         const recovery = detail.includes('request-scope revision cannot add phases')
@@ -7735,8 +7670,9 @@ Goal runner — original request design and construction runtime
         && (includeTestingOnly || !['testing-preparation', 'testing-evidence'].includes(
           String((event as Record<string, unknown>).purpose ?? ''))));
       const end = start && history.slice(history.indexOf(start) + 1).find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
-      if (!start || !end || !invocationCompleted({ ...end, exitCode: end.exit_code })) return null;
+      if (!start || !end) return null;
       const original = executionRequestForInvoke(runDir, start.invoke_id!);
+      if (!(original ? handbackInvocationCompleted(runDir, original, end, history) : invocationCompleted({ ...end, exitCode: end.exit_code }))) return null;
       if (!original && start.handoff_request) {
         // A completed, digest-bound detached request can describe history after the checkout moves.
         // Issue the current work through the normal author path instead of executing with its old context.
@@ -7789,7 +7725,7 @@ Goal runner — original request design and construction runtime
         || workUnitExecutionRole(original.request.context, original.request.purpose) !== 'verifier'
         || !original.request.context.workInput?.evaluation) return [];
       const ended = history.findIndex((event, at) => at > index && event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
-      if (ended < 0 || !invocationCompleted({ ...history[ended], exitCode: history[ended].exit_code })) return [];
+      if (ended < 0 || !handbackInvocationCompleted(runDir, original, history[ended], history)) return [];
       return [{ context: original.request.context, original, evaluation: original.request.context.workInput.evaluation, index, ended }];
     });
     const feedbackToResponsibleProducers = (work: ReturnType<typeof readWork>, disposition: CurrentDisposition,
@@ -7803,7 +7739,7 @@ Goal runner — original request design and construction runtime
         if (!context) return false;
         if (call) {
           const product = readReturnedWorkProduct(context, call.original, history, call.index);
-          if ('status' in product || product.current.failureReason || product.productChanged) return false;
+          if (product.failureReason || product.productChanged) return false;
         }
         const feedback = { ...disposition, problems: [problem] };
         return workUnitFeedbackDelivered(context, feedback) ?? context.instruction?.includes(
@@ -7870,6 +7806,29 @@ Goal runner — original request design and construction runtime
       if (conditions.observation.returned) return false;
       return work.facts.phases.some(result => result.phase === family && (result.lineage === 'stale' || result.lineage === 'missing'));
     };
+    const pendingDefinitionVerification = (work: ReturnType<typeof readWork>): string | undefined =>
+      work.results.find(result => {
+        if (result.phase !== 'spec' && result.phase !== 'plan') return false;
+        const summary = asRecord(result.summary);
+        if (summary?.run_id !== manifest.run_id || typeof summary.verifier_request !== 'string'
+          || !phaseCompletionProblems(work.disposition, [result.phase]).some(problem =>
+            problem.phase === result.phase && problem.id === 'attestation_present' && problem.action === 'verify')) return false;
+        const acceptance = result.phase === 'spec';
+        const obligations = work.input.executionScope?.obligations ?? [];
+        const hasProposal = (result.checks as readonly { id?: string; scope_revision_input?: ExecutionScopeInput }[])
+          .some(check => check.id === 'design_scope_facts' && check.scope_revision_input);
+        const definitionPending = obligations.some(fact => fact.kind === (acceptance ? 'acceptance-context' : 'design-context')
+          && fact.owner_phase === result.phase && fact.applicability === 'required' && !fact.satisfied_by?.length);
+        if (!hasProposal && !definitionPending) return false;
+        const { phaseContractIndex, loadFeatureContracts } = require('./utils/skill-contract') as typeof import('./utils/skill-contract');
+        const contracts = phaseContractIndex(loadFeatureContracts(frameworkRoot));
+        const input = acceptance ? 'acceptance' : 'contracts';
+        const consumed = obligations.some(fact => fact.owner_phase !== result.phase && fact.applicability === 'required'
+          && contracts.get(fact.owner_phase)?.phase.capabilities.some(capability =>
+            capability.on_missing === 'fail' && (!capability.tracks.length || capability.tracks.includes(goalTrack))
+            && capability.inputs.includes(input)));
+        return consumed && !!readSignedStageVerifier({ projectRoot, frameworkRoot, feature: manifest.feature, phase: result.phase });
+      })?.phase;
     const commitVisualJournal = (attemptId: string, actor: NonNullable<ReturnType<typeof lastAuthor>>): boolean => {
       const ledgerPath = visualRoundsLedgerPath(projectRoot, manifest.feature);
       try {
@@ -8032,14 +7991,13 @@ Goal runner — original request design and construction runtime
       const bound = original ? readPhaseBinding(runDir, original, records) : null;
       const windows = phaseWriteWindows(pre, bound, post);
       const writes = windows.kind === 'checked' ? classifyPhaseInvocationChanges(boundary, label, windows.returned, { events: records, invokeId }) : null;
-      const originalWrites = authorWritePreimages(writeHistory(history), projectRoot);
-      const violations = windows.kind === 'checked' && writes ? [
-        ...windows.beforeBinding.map(write => ({ ...write, ...resolvePhasePathOwnership(boundary, write.path), violation: 'signed_input_drift', window: 'before_binding' })),
-        ...writes.violations.filter(write => !originalWrites.has(write.path) || originalWrites.get(write.path) !== write.postSha256)
-          .map(write => ({ ...write, window: windows.window })),
-      ] : [];
-      const writeRejection = windows.kind === 'unverifiable' ? windows.reason : violations.length
-        ? `原交回不能采信，保全现场并由对应责任方核对：${[...new Set(violations.map(write => write.path))].join('、')}` : undefined;
+      const violations = invocationWriteConflicts(boundary, windows, snapshotOptions,
+        readInvocationWritePaths(projectRoot, context.adapter, agentEventsLogPath(path.join(dir, 'agent-output.log'))),
+        { phase: label, events: records, invokeId });
+      if (windows.kind === 'unverifiable') goalEvents.emit({ type: 'phase_write_boundary_degraded', phase: label,
+        invoke_id: invokeId, detail: windows.reason });
+      const writeRejection = violations.length
+        ? `原签发输入发生变化，请由对应责任方核对：${[...new Set(violations.map(write => write.path))].join('、')}` : undefined;
       goalEvents.emit({ ...invocationEndFacts(result), type: 'agent_invoke_end', phase: label, invoke_id: invokeId, purpose, status: result.status,
         exit_code: writeRejection ? 1 : result.exitCode, ...(writeRejection ? { status: 'failed', write_evidence_rejected: writeRejection } : {}),
         command: result.command, duration_ms: result.duration_ms ?? Date.now() - started,
@@ -8051,13 +8009,12 @@ Goal runner — original request design and construction runtime
       if (childExited) goalEvents.emit({ type: 'agent_process_settled', run_id: manifest.run_id, phase: label, invoke_id: invokeId, exit_code: result.exitCode });
       if (violations.length) goalEvents.emit({ type: 'phase_write_violation', phase: label, invoke_id: invokeId,
         pre_snapshot: pre.sha256, post_snapshot: post.sha256, violations: violations.map(write => ({
-          path: write.path, how: write.how, violation: write.violation, window: write.window,
+          path: write.path, how: write.how, violation: write.violation, window: write.window, authority_confirmed: write.authority_confirmed,
           pre_sha256: write.preSha256, post_sha256: write.postSha256, ...('roles' in write ? { owner: 'owner' in write ? write.owner : undefined, roles: write.roles } : {}) })) });
       if (writeRejection) {
-        if (!violations.length) { wait(label, writeRejection); return null; }
         return { context, result: { ...result, status: 'failed', exitCode: 1, details: writeRejection }, invokeId, rebuild: false };
       }
-      if (writes) for (const write of writes.violations) writes.allowed.push(write);
+      if (writes) for (const write of writes.violations) writes.observed.push({ ...write, disposition: 'unattributed' });
       let machineEvidenceProcessed = false;
       if (role === 'author' && invocationCompleted(result) && (cap.capability?.tool_event_provenance ?? 'none') === 'structured_events') {
         try {
@@ -8088,10 +8045,6 @@ Goal runner — original request design and construction runtime
       }
       // Attribute model writes before machine receipts, then observe the complete handback.
       const handedBack = machineEvidenceProcessed ? capturePhaseInvocationSnapshot(boundary, snapshotOptions) : post;
-      if (handedBack.failureReason) {
-        wait(label, `真实调用的交回后像不可核实：${handedBack.failureReason}；恢复原观察后继续，不猜新工作条件。`);
-        return null;
-      }
       if (original && verifierReport && (context.workInput?.material.acceptanceReview || purpose === 'verifier_format_repair')
         && invocationCompleted(result)) {
         const observedReport = handedBack.entries.find(entry => entry.kind === 'file' && path.resolve(projectRoot, entry.path) === verifierReport);
@@ -8399,6 +8352,7 @@ Goal runner — original request design and construction runtime
       const before = readWork();
       if (workCompleted(before)) break;
       const author = lastAuthor(false);
+      const pendingDefinition = pendingDefinitionVerification(before);
       let designDeclineFeedback = '';
       let designDeclineCandidates: string[] = [];
       const preparation = testingPreparation(before);
@@ -8463,7 +8417,7 @@ Goal runner — original request design and construction runtime
           }
           if (returnedFeedback) { designDeclineFeedback = returnedFeedback; designDeclineCandidates = candidates; }
           else {
-            if (repaired.outcome === 'violation' && unrestoredAuthorWrites(projectRoot, writeHistory()).size) continue;
+            if (repaired.outcome === 'violation' && (repaired.recheckCurrentInputs || unrestoredAuthorWrites(projectRoot, writeHistory()).size)) continue;
             if (repaired.outcome === 'published' && repaired.recovered || repaired.outcome === 'failed' && repaired.evaluation?.completed
               && repaired.evaluation.disposition.completionBlocking.some(problem => problem.action === 'repair')) continue;
             if (repaired.outcome === 'failed' && repaired.step !== 'declined' && latestProviderSessionCanRebuild(runDir, loadAuthoritativeEvents(eventsPath))) continue;
@@ -8483,7 +8437,9 @@ Goal runner — original request design and construction runtime
           renderWorkUnitAuthorFeedback({ projectRoot, frameworkRoot, feature: manifest.feature,
             disposition: { ...before.disposition, problems: [problem] } }))));
       const currentChecks = new Map<string, ReturnType<typeof readCurrentCheckObservation>>();
+      const repairingSources = new Set(repairs.map(problem => problem.source_phase ?? problem.phase));
       const verificationPending = !!author && before.facts.phases.some(result => {
+        if (!repairingSources.has(result.phase)) return false;
         const conditions = checkWorkConditions(result.phase, before, author);
         currentChecks.set(result.phase, conditions.observation);
         return affectedCheck(result.phase, before, conditions);
@@ -8508,7 +8464,7 @@ Goal runner — original request design and construction runtime
       if (progress.halt) { wait(repairs.length ? 'work-unit-author' : before.independent[0]?.owner ?? 'work-unit-author',
         `已向当前责任方交付反馈且真实检查仍无验收改善，保全后可续暂停。\n${renderCurrentDisposition(before.disposition)}`, 'no_progress_guard'); break; }
       if (before.evaluation.completed && !progress.reused && progress.evaluation === before.evaluation) completedEvaluations.push(before.evaluation);
-      if (!author || newDriverHypothesis || designDeclineFeedback || repairs.length && !feedbackAwaitingEvaluation && !verificationPending) {
+      if (!author || !pendingDefinition && (newDriverHypothesis || designDeclineFeedback || repairs.length && !feedbackAwaitingEvaluation && !verificationPending)) {
         const authorWork = preparation ? { ...before, disposition: { ...before.disposition,
           problems: before.disposition.problems.filter(problem => !preparation.problems.includes(problem)),
           completionBlocking: before.disposition.completionBlocking.filter(problem => !preparation.problems.includes(problem)) } } : before;
@@ -8522,7 +8478,7 @@ Goal runner — original request design and construction runtime
       let executedCheck = false;
       let rebuildTransport = false;
       const pausedIndependent = new Set<string>();
-      const selectedFamilies = familiesNow();
+      const selectedFamilies = pendingDefinition ? [pendingDefinition, ...familiesNow().filter(family => family !== pendingDefinition)] : familiesNow();
       for (const family of selectedFamilies) {
         assertGoalBoundary('current_check');
         if (options.executionControls?.signal?.aborted || deadline && Date.parse(deadline) <= Date.now()) {
@@ -8703,7 +8659,7 @@ Goal runner — original request design and construction runtime
             && event.invoke_id === observed.end?.invoke_id && event.ts === observed.end?.ts).lastIndexOf(true);
           const continued = continuationAvailable();
           const product = previous ? readReturnedWorkProduct(previous.context, previous.original, history, previous.index) : undefined;
-          const delivered = !!previous && !!product && !('status' in product) && !product.current.failureReason && !product.productChanged
+          const delivered = !!previous && !!product && !product.failureReason && !product.productChanged
             && compareRelatedInputSnapshots(previous.evaluation.inputs, evaluation.inputs) === 'unchanged'
             && workUnitFeedbackDelivered(previous.context, previous.evaluation.disposition) === true;
           const progress = completionProgressFromHistory(evaluation, calls.map(call => call.evaluation), delivered,
@@ -8943,6 +8899,7 @@ Goal runner — original request design and construction runtime
         reviseCurrentScope(family);
         if (halted) break;
         if (consumeCompletedBoundaryHandoff()) return 0;
+        if ((family === 'spec' || family === 'plan') && currentReport?.verifier_request && pendingDefinitionVerification(readWork())) continue currentWork;
       }
       if (halted) break;
       if (consumeCompletedBoundaryHandoff()) return 0;

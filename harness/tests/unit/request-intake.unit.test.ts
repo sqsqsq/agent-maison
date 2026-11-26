@@ -65,137 +65,47 @@ exports.profileCodingHost={sourceFileSuffixes:['.js'],runStructureChecks:()=>[],
 compileProject(ctx){const run=cp.spawnSync(process.execPath,['--check',path.join(ctx.projectRoot,'src/value.js')],{encoding:'utf8'});fs.writeFileSync(path.join(ctx.reportDir,'node-check.log'),run.stdout+run.stderr);return{checks:[{id:'coding_compile',category:'structure',severity:'BLOCKER',status:run.status===0?'PASS':'FAIL',description:'Node syntax',details:run.stdout+run.stderr}],execution:{executed:true,exitCode:run.status,command:'node --check src/value.js'}}}};`);
 }
 const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Promise<void> }> = [
-  { name: 'Review discloses unrelated initial dirt and keeps explicit target and full diff attribution gaps', run(f) {
-    const file = 'src/format.js', absolute = path.join(f.root, file);
-    fs.writeFileSync(absolute, 'exports.format = 0;\n');
-    const s = setup(f);
-    const status = s.rows[4] as { message: { content: Array<{ content: string }> } };
-    status.message.content[0].content = ` M ${file}\n`;
-    fs.writeFileSync(absolute, 'exports.format = 1;\n');
+  { name: 'Ordinary review accepts dirty user changes and shell writes while disclosing a concurrent request', run(f) {
+    const s = setup(f, true);
+    const shell = 'src/other.js';
+    const reportDir = 'doc/reports/review-local';
+    const generated = prepareAutomaticRequest(f.root, f.framework, { phase: 'review', 'session-ref': s.ref, target: 'src/value.js', 'report-dir': reportDir });
+    const prepare = () => prepareExplicitRequest({ projectRoot: f.root, frameworkRoot: f.framework, phase: 'review', ...generated });
+    const first = prepare();
+    review(first);
+    s.tool('Bash', { command: 'node local-fix.cjs' }, 'done');
+    fs.writeFileSync(path.join(f.root, shell), 'exports.other = true;\n');
     s.flush();
-    function runReview(name: string, targets: string[], acceptance?: string) {
-      const generated = prepareAutomaticRequest(f.root, f.framework, { phase: 'review', 'session-ref': s.ref, target: targets, 'report-dir': `doc/reports/${name}` });
-      if (acceptance) {
-        const request = path.join(f.root, generated.requestFile), raw = JSON.parse(fs.readFileSync(request, 'utf8'));
-        raw.inputs.acceptance = acceptance;
-        fs.writeFileSync(request, JSON.stringify(raw));
-      }
-      const prepared = prepareExplicitRequest({ projectRoot: f.root, frameworkRoot: f.framework, phase: 'review', ...generated });
-      review(prepared);
-      if (targets.includes(file)) {
-        const report = prepared.inputs.review_report;
-        fs.writeFileSync(report, fs.readFileSync(report, 'utf8').replace('src/value.js\n', `src/value.js\n${file}\n`));
-      }
-      const result = cli(f, ['--phase', 'review', '--request-file', generated.requestFile, '--report-dir', generated.reportDir]);
-      const report = JSON.parse(fs.readFileSync(path.join(prepared.reportDir, 'script-report.json'), 'utf8')) as { checks: Array<{ id: string; details: string; status: string }> };
-      return { result, report, inputGap: report.checks.find(check => check.id === 'request_input_unresolved') };
-    }
-    const local = runReview('review-local', ['src/value.js']);
-    assert.equal(local.result.status, 0, local.result.stderr + JSON.stringify(local.report.checks));
-    assert.equal(local.inputGap, undefined);
-    assert(local.report.checks.some(check => check.id === 'request_intake_reconciliation' && check.status === 'WARN' && check.details.includes(file)));
-    const explicit = runReview('review-target', ['src/value.js', file]);
-    assert.equal(explicit.result.status, 1);
-    assert.match(explicit.inputGap?.details ?? '', /src\/format\.js.*缺少可信写前/);
-    const acceptance = 'doc/acceptance-source.yaml';
-    fs.writeFileSync(path.join(f.root, acceptance), JSON.stringify({ feature: 'value', source: 'native user', version: '1',
-      criteria: [{ id: 'AC-1', prd_function: null, priority: 'P0', description: '保持用户可见格式', testable: true, verification_steps: ['检查格式'],
-        expected_result: '保留已核格式', ut_layer: 'device', device_focus: '显示格式', requirement_ref: { source_path: file, snippet: 'exports.format = 1;' } }], boundaries: [] }));
-    const bound = runReview('review-acceptance', ['src/value.js'], acceptance);
-    assert.equal(bound.result.status, 1, bound.result.stderr + JSON.stringify(bound.report.checks));
-    assert.match(bound.inputGap?.details ?? '', /src\/format\.js.*缺少可信写前/);
-    s.add({ type: 'user', uuid: 'review-full-user', message: { role: 'user', content: '本次要求核清完整 diff 归属。' } });
-    s.add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务，原始user消息定位 user-1，本请求仍核验 value。' } });
+    assert.equal(prepare().request_sha256, first.request_sha256);
+    const result = cli(f, ['--phase', 'review', '--request-file', generated.requestFile, '--report-dir', reportDir]);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const report = JSON.parse(fs.readFileSync(path.join(f.root, reportDir, 'script-report.json'), 'utf8'));
+    assert.match(report.review_coverage, /src\/other\.js/);
+    assert.equal(report.summary.verdict, 'PASS');
+    const raw = JSON.parse(fs.readFileSync(first.requestFile, 'utf8'));
+    assert.equal(raw.intake_context.baseline.dirty_digests, undefined);
+    assert.equal(raw.intake_context.baseline.preimages, undefined);
+    fs.appendFileSync(path.join(f.root, 'src/value.js'), '// user hand edit\n');
+    assert.notEqual(prepare().request_sha256, first.request_sha256);
+    assert.equal(fs.readFileSync(path.join(f.root, 'src/value.js'), 'utf8').endsWith('// user hand edit\n'), true);
+    s.add({ type: 'user', uuid: 'full-diff', message: { role: 'user', content: '继续 user-1。本次要求核清完整 diff 归属。' } });
     s.flush();
-    const full = runReview('review-full', ['src/value.js']);
-    assert.equal(full.result.status, 1);
-    assert.match(full.inputGap?.details ?? '', /src\/format\.js.*缺少可信写前/);
+    const full = cli(f, ['--phase', 'review', '--request-file', generated.requestFile, '--report-dir', reportDir]);
+    assert.equal(full.status, 1, full.stdout + full.stderr);
+    assert.match(fs.readFileSync(path.join(f.root, reportDir, 'script-report.json'), 'utf8'), /完整 diff 归属缺少可信/);
   } },
-  { name: 'Dirty shell attribution follows exact before bytes, exposes unbound paths, and ignores unchanged preimages', run(f) {
-    const file = 'src/format.js', absolute = path.join(f.root, file);
-    fs.writeFileSync(absolute, 'exports.format = 0;\n');
+  { name: 'Seven judgments select small without tool reads; a missing sole citation stays unknown', run(f) {
     const s = setup(f);
-    const status = s.rows[4] as { message: { content: Array<{ content: string }> } };
-    status.message.content[0].content = ` M ${file}\n`;
-    fs.writeFileSync(absolute, 'exports.format = 1;\n');
-    s.tool('Read', { file_path: absolute }, 'exports.format = 1;\n');
-    const [read, result] = s.rows.splice(-2);
-    s.rows.splice(5, 0, read, result);
-    s.tool('Bash', { command: 'node format-codemod.cjs' }, 'done');
-    const resultAfterShell = s.rows.pop();
-    const intake = () => { s.flush(); return readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref, explicitTargets: ['src/value.js'] }); };
-    const unchanged = intake();
-    assert(!unchanged.targets.includes(file)); assert(!unchanged.attribution_disclosures?.length);
-    fs.writeFileSync(absolute, 'exports.format = 2;\n');
-    assert(intake().targets.includes(file), 'working bytes show the write before the shell result');
-    s.rows.push(resultAfterShell);
-    const changed = intake();
-    assert(changed.targets.includes(file) && !changed.attribution_unknown.includes(file));
-    assert(deriveContentImpact(f.root, changed).some(item => item.files.includes(file)));
-    s.rows.splice(5, 2);
-    const unverified = intake();
-    assert.deepEqual(unverified.attribution_disclosures?.map(item => item.path), [file]);
-    assert(!unverified.attribution_unknown.length && !unverified.gaps.length, 'no overlap blocks the independent local run');
-    assert.equal(automaticRequestChecks(unverified, f.root)[0].status, 'WARN');
-    assert.match(automaticRequestChecks(unverified, f.root)[0].details, /src\/format\.js.*缺少可信写前/);
-  } },
-  { name: 'The first formal prepare tracks later dirty file changes without proving their opening attribution', run(f) {
-    const file = 'src/format.js', absolute = path.join(f.root, file);
-    fs.writeFileSync(absolute, 'exports.format = 0;\n');
-    const s = setup(f);
-    const status = s.rows[4] as { message: { content: Array<{ content: string }> } };
-    status.message.content[0].content = ` M ${file}\n`;
-    s.rows.splice(12);
-    fs.writeFileSync(path.join(f.root, 'src/value.js'), 'exports.value = 41;\n');
-    fs.writeFileSync(absolute, 'exports.format = 1;\n');
-    s.tool('pwsh', { command: 'Get-Location; git diff --stat | Out-String' }, 'done');
-    s.flush();
-    const args = ['--phase', 'ut', '--session-ref', s.ref, '--target', 'src/value.js', '--test-target', 'tests/value.test.cjs', '--prepare-request'];
-    const prep = prepareAutomaticRequest(f.root, f.framework, { phase: 'ut', 'session-ref': s.ref, target: 'src/value.js', 'test-target': 'tests/value.test.cjs' });
-    const requestFile = path.join(f.root, prep.requestFile);
-    const previous = JSON.parse(fs.readFileSync(requestFile, 'utf8')).intake_context;
-    assert.match(previous.baseline.dirty_digests[file], /^[0-9a-f]{64}$/);
-    assert.equal(previous.baseline.dirty_digests_at, 'prepare');
-    assert.equal(previous.baseline.preimages?.[file], undefined);
-    s.tool('Bash', { command: 'node format-operation.cjs' }, 'done');
-    const result = s.rows.pop();
-    const read = () => { s.flush(); return readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, previous }); };
-    assert(!read().targets.includes(file), 'only the native call is present and working bytes are unchanged');
-    s.rows.push(result);
-    assert(!read().targets.includes(file), 'a completed readonly shell is harmless');
-    s.rows.pop();
-    fs.writeFileSync(absolute, 'exports.format = 2;\n');
-    assert(read().targets.includes(file), 'changed bytes enter the affected scope before the shell result');
-    s.rows.push(result);
-    const changed = read();
-    assert.deepEqual(changed.attribution_unknown, [file]);
-    assert.match(changed.attribution_disclosures![0].reason, /首次准备后.*已变化.*核实开工状态/);
-    assert(deriveContentImpact(f.root, changed).some(impact => impact.state === 'unknown' && impact.files.includes(file)));
-    fs.unlinkSync(absolute);
-    assert(read().attribution_unknown.includes(file), 'a deletion after prepare is still a change');
-    fs.writeFileSync(absolute, 'exports.format = 2;\n');
-    const repeated = cli(f, args);
-    assert.equal(repeated.status, 0, repeated.stdout + repeated.stderr);
-    const repeatedIntake = JSON.parse(repeated.stdout).intake_context;
-    assert.equal(repeatedIntake.baseline.dirty_digests[file], previous.baseline.dirty_digests[file]);
-    assert(repeatedIntake.attribution_unknown.includes(file));
-    const legacy = JSON.parse(fs.readFileSync(requestFile, 'utf8'));
-    delete legacy.intake_context.baseline.dirty_digests_at;
-    assert.match(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, previous: legacy.intake_context }).attribution_disclosures![0].reason, /写前摘要证实/);
-    delete legacy.intake_context.baseline.dirty_digests;
-    fs.writeFileSync(requestFile, JSON.stringify(legacy));
-    const historical = cli(f, args);
-    assert.equal(historical.status, 0, historical.stdout + historical.stderr);
-    const old = JSON.parse(historical.stdout).intake_context;
-    assert.equal(old.baseline.dirty_digests?.[file], undefined);
-    assert.deepEqual(old.attribution_disclosures.map((item: { path: string }) => item.path), [file]);
-    s.rows.splice(-2);
-    s.tool('Edit', { file_path: absolute, old_string: '1', new_string: '2' }, 'updated');
-    s.flush();
-    const afterProductWrite = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref,
-      explicitTargets: ['src/value.js'], captureDirtyAtPrepare: true });
-    assert.equal(afterProductWrite.baseline.dirty_digests_at, 'prepare');
-    assert(afterProductWrite.attribution_unknown.includes(file), 'a prior product write remains in scope without opening proof');
+    s.rows.splice(1);
+    const flags = 'Q1=否；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=否。依据：src/value.js。';
+    const add = (content: string) => { s.add({ type: 'assistant', message: { role: 'assistant', content } }); s.flush(); };
+    const read = () => readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
+    add(flags); assert.equal(read().policy.selected, 'small'); assert.deepEqual(read().gaps, []);
+    s.rows.pop(); add(flags.replace('做法唯一=否', '做法唯一=是')); assert.equal(read().policy.selected, 'trivial');
+    s.rows.pop(); add(flags.replace('Q2=否', 'Q2=否，依据 src/missing.js'));
+    const missing = read();
+    assert.equal(missing.facts.unclosed_impact.value, 'unknown');
+    assert.equal(missing.policy.selected, 'unknown');
   } },
   { name: 'Claude and CodeAgent distinguish an independent pending call from a mismatched native edit result', run(f) {
     const s = setup(f);
@@ -216,11 +126,12 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>): void | Pr
     s.add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'wrong-edit-id', content: 'updated' }] } });
     s.flush();
     for (const intake of both()) {
-      assert(intake.gaps.some(gap => gap.includes('wrong-edit-id')));
+      assert.deepEqual(intake.gaps, []);
+      assert(intake.source_results?.some(item => item.detail.includes('wrong-edit-id')));
       assert(intake.source_results?.some(item => item.detail.includes('pending-edit') && item.paths.includes('src/value.js')));
     }
   } },
-  { name: 'The request terminal check consumes a late required native result alongside one real 11/11 test execution', run(f) {
+  { name: 'An unpaired native Read does not block one real 11/11 test execution', run(f) {
     const s = setup(f);
     (s.rows[0] as { message: { content: string } }).message.content += ' 按小型处理。';
     s.rows.splice(5, 6);
@@ -236,7 +147,8 @@ appendFileSync(${JSON.stringify(s.file)}, ${JSON.stringify(terminalResult + '\n'
 for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/value.js').value,42));\n`);
     const prepared = prepareAutomaticRequest(f.root, f.framework, { phase: 'ut', 'session-ref': s.ref, target: 'src/value.js', 'test-target': 'tests/value.test.cjs' });
     const before = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
-    assert(before.gaps.some(gap => gap.includes(id) && gap.includes('src/value.js')));
+    assert.deepEqual(before.gaps, []);
+    assert(before.source_results?.some(item => item.detail.includes(id)));
     const run = cli(f, ['--phase', 'ut', '--request-file', prepared.requestFile, '--report-dir', prepared.reportDir]);
     assert.equal(run.status, 0, run.stdout + run.stderr);
     const report = JSON.parse(fs.readFileSync(path.join(f.root, prepared.reportDir, 'script-report.json'), 'utf8'));
@@ -327,57 +239,14 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     assert(!native.toolSucceeded({ ...tool, error: true }));
     assert.deepEqual(native.editedPaths([{ name: 'apply_patch', input: '*** Begin Patch\n*** Update File: src/old.js\n*** Move to: src/new.js\n*** End Patch', output: 'ok', line: 1, resultLine: 2 }]), ['src/old.js', 'src/new.js']);
   } },
-  { name: 'entry guard requires complete native Read evidence or returned rule body instead of successful path text', async run(f) {
-    const s = setup(f), session = native.readNativeSession(s.ref, f.root);
-    const entry = path.join(f.framework, 'docs/operations/project-entry.md'), body = fs.readFileSync(entry, 'utf8');
+  { name: 'Without a front-door Read, editors proceed while the framework guard still protects published files', async run(f) {
+    const s = setup(f); s.rows.splice(1); s.flush();
     const core = await new Function('specifier', 'return import(specifier)')(require('url').pathToFileURL(path.join(repo, 'agents/shared/guard-framework-write-core.mjs')).href);
-    const decide = () => core.evaluateNativeProjectEntry({ session, projectRoot: f.root, frameworkRoot: f.framework, filePath: 'src/value.js', env: {} }).decision;
-    for (const [name, command, output] of [['Bash', 'ls framework/docs/operations/project-entry.md', 'framework/docs/operations/project-entry.md'], ['pwsh', 'Test-Path framework/docs/operations/project-entry.md', 'True'], ['exec_command', 'echo framework/docs/operations/project-entry.md', 'exists']]) {
-      session.tools = [{ name, input: { command }, output, line: 2, resultLine: 3 }];
-      assert(!native.frontDoorLoaded(session, f.root, f.framework)); assert.equal(decide(), 'deny');
-    }
-    const read = { name: 'Read', input: { file_path: entry }, output: body, line: 2, resultLine: 3, read: { path: entry, content: body, complete: false } };
-    session.tools = [read]; assert(!native.frontDoorLoaded(session, f.root, f.framework)); assert.equal(decide(), 'deny', 'explicit partial native Read cannot fall through to plain output');
-    read.read.complete = true; assert(native.frontDoorLoaded(session, f.root, f.framework)); assert.equal(decide(), 'allow');
-    read.read.path = path.join(f.root, 'src/value.js'); assert(!native.frontDoorLoaded(session, f.root, f.framework));
-    for (const name of ['Bash', 'pwsh', 'exec_command', 'functions.exec']) {
-      session.tools = [{ name, input: { command: 'Get-Content -Raw framework/docs/operations/project-entry.md' }, output: 'Chunk ID: fixture\nWall time: 0.01 seconds\nProcess exited with code 0\nOutput:\n' + body.replace(/\n/g, '\r\n').trimEnd(), line: 2, resultLine: 3 }];
-      assert(native.frontDoorLoaded(session, f.root, f.framework), name + ' complete returned body'); assert.equal(decide(), 'allow');
-    }
-    const lines = body.trimEnd().split('\n'), middle = Math.ceil(lines.length / 2);
-    session.tools = [{ name: 'Bash', input: { command: 'head framework/docs/operations/project-entry.md' }, output: 'Native output:\n' + lines.slice(0, middle).join('\n'), line: 2, resultLine: 3 }];
-    assert(!native.frontDoorLoaded(session, f.root, f.framework), 'first segment alone is incomplete');
-    session.tools.push({ name: 'pwsh', input: { command: 'Get-Content framework/docs/operations/project-entry.md | Select-Object -Skip ' + middle }, output: 'Output:\n' + lines.slice(middle).map((line, index) => `${middle + index + 1}\t${line}`).join('\n'), line: 4, resultLine: 5 });
-    assert(native.frontDoorLoaded(session, f.root, f.framework), 'split body and native line prefixes do not require another read'); assert.equal(decide(), 'allow');
-    session.messages.push({ id: 'compact', role: 'summary', text: 'Only business progress remains', line: 10 });
-    assert(!native.frontDoorLoaded(session, f.root, f.framework));
-    session.messages.at(-1).text = 'project-entry.md 已加载并保留统一前门规则';
-    assert(native.frontDoorLoaded(session, f.root, f.framework), 'valid retained compaction stays effective');
-  } },
-  { name: 'exact native snapshots load only for matching initial dirty preimages and DB baseline retains its native part', run(f) {
-    const s = setup(f), originalRead = native.readNativeSession, session = originalRead(s.ref, f.root);
-    let exactReads = 0;
-    const capture = session.tools.find((tool: any) => native.toolInput(tool) === 'git rev-parse HEAD');
-    delete capture.resultLine; Object.assign(capture, { completed: true, completionTime: 1000, origin: { partId: 'part-head', callId: 'call-head' } });
-    session.tools.find(native.isEditingTool).startedTime = 2000;
-    const read = session.tools.find((tool: any) => tool.name === 'Read' && tool.input.file_path.endsWith('src' + path.sep + 'value.js'));
-    const exact = read.output;
-    read.read = { path: read.input.file_path, content: exact.trimEnd(), complete: true, exact: false };
-    read.readExact = () => { exactReads += 1; return { ...read.read, content: exact, exact: true }; };
-    const unrelated = session.tools.find((tool: any) => tool.name === 'Read' && tool.input.file_path.endsWith('project-entry.md'));
-    unrelated.readExact = () => { throw new Error('unrelated snapshot must not load'); };
-    native.readNativeSession = () => session;
-    try {
-      const clean = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
-      assert.equal(exactReads, 0); assert.equal(clean.baseline.source, 'captured');
-      assert(clean.baseline.detail.includes('native part=part-head')); assert(!clean.baseline.detail.includes('undefined'));
-      session.tools.find((tool: any) => native.toolInput(tool) === 'git status --porcelain').output = ' M src/value.js\n';
-      const dirty = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
-      assert.equal(exactReads, 1); assert.equal(dirty.baseline.preimages?.['src/value.js'].content, exact);
-      read.readExact = () => undefined;
-      const display = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
-      assert.equal(display.baseline.preimages?.['src/value.js'], undefined, 'display lacking LF never becomes original bytes');
-    } finally { native.readNativeSession = originalRead; }
+    fs.writeFileSync(path.join(f.framework, 'RELEASE-MANIFEST.json'), '{}');
+    const result = core.locateHookRequest({ projectRoot: f.root, payload: { transcript_path: s.file, session_id: 'intake-test' } });
+    assert.equal(result, s.ref);
+    assert.equal(core.evaluateFrameworkWrite({ projectRoot: f.root, filePath: 'src/value.js' }).decision, 'allow');
+    assert.equal(core.evaluateFrameworkWrite({ projectRoot: f.root, filePath: 'framework/docs/operations/project-entry.md' }).decision, 'deny');
   } },
   { name: 'OpenCode parentID keeps A results after newer B and never applies A boundary or B evidence to the other request', run(f) {
     const s = setup(f), originalRead = native.readNativeSession, session = originalRead(s.ref, f.root);
@@ -399,9 +268,9 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     try {
       const intake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
       assert.equal(intake.user.id, 'user-1'); assert.deepEqual(intake.user_messages?.map(user => user.id), ['user-1']);
-      assert(intake.source_reads.includes('src/value.js')); assert(!intake.source_reads.includes('tests/other.test.cjs'));
+      assert(intake.facts.design_tradeoff.sources.includes('src/value.js')); assert(!intake.facts.design_tradeoff.sources.includes('tests/other.test.cjs'));
       assert.equal(intake.facts.design_tradeoff.value, false); assert.equal(intake.control.fixed, 'small');
-      assert.equal(intake.baseline.source, 'captured'); assert(!intake.gaps.some(gap => gap.startsWith('本请求边界解释未核')));
+      assert.equal(intake.baseline.base, undefined); assert(!intake.gaps.some(gap => gap.startsWith('本请求边界解释未核')));
       const stable = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, previous: intake });
       assert.equal(stable.session_ref, intake.session_ref); assert.equal(stable.control.fixed, 'small');
     } finally { native.readNativeSession = originalRead; }
@@ -434,7 +303,7 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
         fs.writeFileSync(file, rows.slice(0, -1).map(row => JSON.stringify(row)).join('\n') + '\n');
         assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' }).policy.selected, 'unknown', '已读来源但无公开七事实仍unknown');
         fs.writeFileSync(file, [...rows.slice(0, 2), rows.at(-1), ...rows.slice(2, -1)].map(row => JSON.stringify(row)).join('\n') + '\n');
-        assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' }).policy.selected, 'unknown', '先自述、后读来源不能追认事实');
+        assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' }).policy.selected, 'small', '路径当前可读即可核实公开判断');
         fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
         assert.equal(native.nativeStore(file), 'codeagent');
         const session = native.readNativeSession(file, f.root);
@@ -445,17 +314,17 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
         assert.equal(intake.control.exempt, false, 'assistant模拟用户原话不授豁免');
         assert.equal(intake.facts.design_tradeoff.value, false, '仅公开assistant事实，不读thinking');
         rows.push({ type: 'user', uuid: 'codeagent-override', sessionId: 'codeagent-test', cwd: f.root,
-          message: { role: 'user', content: '按复杂处理。' } } as any,
+          message: { role: 'user', content: '继续 codeagent-user。按复杂处理。' } } as any,
         { type: 'assistant', message: { role: 'assistant', content: '本请求继续原任务 codeagent-user，采纳真实用户的档位指定。' } } as any);
         fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
         assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' }).policy.selected, 'complex');
         rows.push({ type: 'user', uuid: 'codeagent-downgrade', sessionId: 'codeagent-test', cwd: f.root,
-          message: { role: 'user', content: '按特别简单处理。' } } as any,
+          message: { role: 'user', content: '继续 codeagent-user。按特别简单处理。' } } as any,
         { type: 'assistant', message: { role: 'assistant', content: '本请求继续原任务 codeagent-user，按真实用户指定降档。' } } as any);
         fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
         assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' }).policy.selected, 'trivial');
         rows.push({ type: 'user', uuid: 'codeagent-exempt', sessionId: 'codeagent-test', cwd: f.root,
-          message: { role: 'user', content: '本请求不走Maison。' } } as any,
+          message: { role: 'user', content: '继续 codeagent-user。本请求不走Maison。' } } as any,
         { type: 'assistant', message: { role: 'assistant', content: '本请求继续原任务 codeagent-user，保留真实用户的本请求豁免。' } } as any);
         fs.writeFileSync(file, rows.map(row => JSON.stringify(row)).join('\n') + '\n');
         assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: file + '#codeagent-user' }).control.exempt, true);
@@ -511,12 +380,12 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     assert.equal(bytes.toString('utf8'), first.message.content); assert(!prepared.sourceRefs[0].endsWith('request.json'));
     const read = prepareDesignRequest({ ...options, requestFile: path.relative(f.root, prepared.requestFile), readonly: true }); assert(!read.originGap, read.originGap);
     assert(fs.readFileSync(original).equals(bytes));
-    s.add({ type: 'user', uuid: 'user-2', message: { role: 'user', content: '继续这项value修复，将预期更正为43。' } });
+    s.add({ type: 'user', uuid: 'user-2', message: { role: 'user', content: '继续 src/value.js 修复，将预期更正为43。' } });
     s.add({ type: 'assistant', message: { role: 'assistant', content: '本请求继续原任务 user-1，采纳user-2的预期更正，依据 src/value.js。' } }); s.flush();
     const unavailable = prepareDesignRequest({ ...options, requestFile: path.relative(f.root, prepared.requestFile), readonly: true }); assert(unavailable.originGap?.includes('稳定原文尚未准备'));
     const updated = prepareDesignRequest({ ...options, requestFile: path.relative(f.root, prepared.requestFile) }); assert(!updated.originGap, updated.originGap);
-    assert.equal(updated.sourceRefs.length, 2); assert.equal(updated.intake?.baseline.base, s.head); assert(fs.readFileSync(original).equals(bytes));
-    assert(updated.sourceRefs.some(file => fs.readFileSync(path.join(f.root, file), 'utf8') === '继续这项value修复，将预期更正为43。'));
+    assert.equal(updated.sourceRefs.length, 2); assert.equal(updated.intake?.baseline.base, undefined); assert(fs.readFileSync(original).equals(bytes));
+    assert(updated.sourceRefs.some(file => fs.readFileSync(path.join(f.root, file), 'utf8') === '继续 src/value.js 修复，将预期更正为43。'));
   } },
   { name: 'A1 four frames follow sourced risks, complex priority, unknown and user selection', run() {
     assert.equal(resolveDeliveryPolicy(judgments()).selected, 'trivial');
@@ -555,27 +424,21 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     s.add({ type: 'user', isMeta: true, message: { role: 'user', content: '<local-command-stdout>按复杂</local-command-stdout>' } }); s.flush();
     const result = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
     assert.equal(result.user.id, 'user-1'); assert(!result.control.exempt); assert(!result.control.fixed);
-    assert.equal(result.policy.selected, 'trivial'); assert.equal(result.baseline.base, s.head);
+    assert.equal(result.policy.selected, 'trivial'); assert.equal(result.baseline.base, undefined);
     assert(!result.attribution_unknown.length); assert(result.targets.includes('src/value.js'));
     assert.throws(() => native.readNativeSession(`${s.file}#non-user-tool-result`, f.root));
     assert.throws(() => native.readNativeSession(s.ref, repo), /session|项目/);
   } },
-  { name: 'A7 original baseline survives intermediate commits and dirty overlap remains explicit', run(f) {
+  { name: 'Content comparison uses live HEAD by default and the declared historical base when selected', run(f) {
     const s = setup(f, true);
-    const first = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
-    assert.deepEqual(first.attribution_unknown, []);
-    assert.equal(first.baseline.preimages?.['src/value.js'].content, 'exports.value = 40;\n');
-    git(f.root, ['add', 'src/value.js']); git(f.root, ['commit', '-qm', 'author commit']);
+    const read = () => readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
+    assert(deriveContentImpact(f.root, read()).some(impact => impact.files.includes('src/value.js')));
+    git(f.root, ['add', 'src/value.js']); git(f.root, ['commit', '-qm', 'working tree is the new HEAD']);
     fs.writeFileSync(path.join(f.root, 'src/later.js'), 'exports.later=1;\n');
-    const next = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref, previous: first });
-    assert.equal(next.baseline.base, s.head); assert(next.targets.includes('src/value.js')); assert(next.targets.includes('src/later.js'));
-    assert.deepEqual(next.attribution_unknown, []);
-    const readTool = s.rows.find(row => (row as { message?: { content?: Array<{ type?: string; name?: string; input?: { file_path?: string } }> } }).message?.content?.some?.(item => item.type === 'tool_use' && item.name === 'Read' && item.input?.file_path === path.join(f.root, 'src/value.js'))) as { message: { content: Array<{ name: string }> } };
-    readTool.message.content[0].name = 'UnsupportedReader'; s.flush();
-    assert.deepEqual(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref }).attribution_unknown, ['src/value.js']);
-    const altered = { ...first, baseline: { ...first.baseline, base: git(f.root, ['rev-parse', 'HEAD']) } };
-    assert.throws(() => readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref, previous: altered }), /不能换当前HEAD/);
-    fs.unlinkSync(path.join(f.root, '.git/logs/HEAD')); assert.equal(requestStartFromReflog(f.root, new Date().toISOString()), undefined);
+    const next = read();
+    assert.deepEqual(next.targets, ['src/value.js']);
+    assert.deepEqual(deriveContentImpact(f.root, next), []);
+    assert(deriveContentImpact(f.root, next, { base: s.head }).some(impact => impact.files.includes('src/value.js')));
   } },
   { name: 'A2 request exemption follows sourced continuation and does not spill into a new request', run(f) {
     const s = setup(f);
@@ -587,8 +450,32 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     assert(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref }).control.exempt);
     s.add({ type: 'user', uuid: 'user-3', message: { role: 'user', content: '新需求Y，修改另外功能' } }); s.flush();
     s.add({ type: 'assistant', message: { role: 'assistant', content: '本请求是新独立请求，user-1只是历史参考。' } }); s.flush();
-    const next = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
-    assert(!next.control.exempt); assert(next.gaps.some(gap => gap.includes('新需求不能复用旧豁免')));
+    const next = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.file });
+    assert.equal(next.user.id, 'user-3'); assert(!next.control.exempt); assert.deepEqual(next.gaps, []);
+  } },
+  { name: 'A factual user correction follows the named behavior while another product request stays separate', run(f) {
+    const s = setup(f);
+    (s.rows[0] as { message: { content: string } }).message.content = '请完成银行搜索，保留输入即时筛选。';
+    s.add({ type: 'user', uuid: 'user-b', message: { role: 'user', content: '另外改卡片样式，按复杂处理。' } });
+    s.add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务 user-1，不跑真机。' } });
+    s.add({ type: 'user', uuid: 'correction-a', message: { role: 'user', content: '刚才银行搜索仍区分大小写。跳过真机。' } });
+    s.flush();
+    const input = { projectRoot: f.root, frameworkRoot: f.framework };
+    const original = readRequestIntake({ ...input, sessionRef: s.ref });
+    assert.deepEqual(original.user_messages?.map(user => user.id), ['user-1', 'correction-a']);
+    assert.deepEqual(original.control.excluded, ['testing']); assert.equal(original.control.fixed, undefined);
+    assert.equal(readRequestIntake({ ...input, sessionRef: s.file }).user.id, 'user-1');
+    assert.deepEqual(readRequestIntake({ ...input, sessionRef: s.file + '#user-b' }).control.excluded, []);
+  } },
+  { name: 'Explicit full diff attribution credits an exact completed write with matching final bytes', run(f) {
+    const s = setup(f);
+    (s.rows[0] as { message: { content: string } }).message.content += ' 本请求要求核清完整 diff 归属。';
+    s.tool('Write', { file_path: path.join(f.root, 'src/value.js'), content: 'exports.value = 43;\n' }, 'updated');
+    fs.writeFileSync(path.join(f.root, 'src/value.js'), 'exports.value = 43;\n');
+    s.flush();
+    const result = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
+    assert.equal(result.control.full_diff_attribution, true);
+    assert.deepEqual(result.gaps, []); assert.deepEqual(result.attribution_unknown, []);
   } },
   { name: 'A3 unchanged inputs cannot reclassify by rephrasing, sourced correction can, user choice wins', run(f) {
     const s = setup(f);
@@ -603,30 +490,6 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref }).policy.selected, 'trivial', '读无关新文件不能解锁未引用它的事实改判');
     s.add({ type: 'assistant', message: { role: 'assistant', content: '本请求纠正原判断：Q2=是，src/value.js确有仓外消费者，不能在本仓闭合。' } }); s.flush();
     assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref, previous: unchanged }).policy.selected, 'medium');
-  } },
-  { name: 'R1/N2/N3/N6 baseline follows successful editing, not filenames or failed calls; complete native bytes provide dirty preimage', run(f) {
-    fs.writeFileSync(path.join(f.root, 'src/EditPage.js'), 'exports.page=true;\n');
-    const s = setup(f, true);
-    s.tool('Read', { file_path: path.join(f.root, 'src/EditPage.js') }, 'exports.page=true;\n');
-    s.tool('Grep', { pattern: 'onDelete', path: 'src' }, 'src/EditPage.js:1:onDelete');
-    s.tool('Bash', { command: 'Write-Output readonly' }, 'readonly');
-    s.tool('TodoWrite', { todos: [] }, 'done');
-    s.tool('Read', { file_path: path.join(f.root, 'src/not-read.js') }, 'permission denied', true);
-    s.tool('Edit', { file_path: path.join(f.root, 'src/not-edited.js') }, 'hook denied', true);
-    const before = s.rows.splice(-12);
-    s.rows.splice(1, 0, ...before);
-    const statusCall = s.rows.find(row => JSON.stringify(row).includes('git status --porcelain')) as { message: { content: Array<{ input: { command: string } }> } };
-    statusCall.message.content[0].input.command = 'git status -s';
-    const readResult = s.rows.find(row => JSON.stringify(row).includes('exports.value = 40;')) as { toolUseResult?: object; message: { content: Array<{ content: string }> } };
-    readResult.toolUseResult = { type: 'text', file: { filePath: path.join(f.root, 'src/value.js'), content: 'exports.value = 40;\n', startLine: 1, numLines: 2, totalLines: 2 } };
-    readResult.message.content[0].content = '1→exports.value = 40;\n2→';
-    s.flush();
-    const intake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
-    assert.equal(intake.baseline.source, 'captured'); assert.deepEqual(intake.baseline.initial_dirty, ['src/value.js']);
-    assert.equal(intake.baseline.preimages?.['src/value.js'].content, 'exports.value = 40;\n');
-    assert(!intake.source_reads.includes('src/not-read.js')); assert(!intake.targets.includes('src/not-edited.js'));
-    (readResult.toolUseResult as { file: { numLines: number } }).file.numLines = 1; s.flush();
-    assert.deepEqual(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref }).attribution_unknown, ['src/value.js']);
   } },
   { name: 'D2 arbitrary project JSONL cannot grant native user authority', run(f) {
     const s = setup(f);
@@ -668,7 +531,7 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     db.prepare('INSERT INTO threads VALUES(?,?,?)').run('other-session', 'must-not-be-read', f.root); db.close();
     const located = native.currentNativeSession(); assert.equal(located.file, file); assert.equal(located.sessionId, 'codex-thread');
     const intake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework });
-    assert.equal(intake.user.id, 'native-user'); assert(!intake.control.exempt); assert(!intake.control.fixed); assert.equal(intake.baseline.base, s.head); assert.deepEqual(intake.baseline.initial_dirty, []);
+    assert.equal(intake.user.id, 'native-user'); assert(!intake.control.exempt); assert(!intake.control.fixed); assert.equal(intake.baseline.base, undefined); assert.equal(intake.baseline.initial_dirty, 'unknown');
     assert.equal(intake.policy.selected, 'trivial');
     assert(!intake.gaps.length);
     records.push({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', call_id: 'pending-codex', arguments: JSON.stringify({ cmd: 'run foreground check' }) } });
@@ -677,7 +540,8 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     records.push({ type: 'response_item', payload: { type: 'function_call_output', call_id: 'wrong-codex', output: 'unused' } });
     flush();
     const mismatch = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework });
-    assert(mismatch.gaps.some(gap => gap.includes('wrong-codex')));
+    assert.deepEqual(mismatch.gaps, []);
+    assert(mismatch.source_results?.some(item => item.detail.includes('wrong-codex')));
     assert(mismatch.source_results?.some(item => item.detail.includes('pending-codex')));
     records.splice(-2); flush();
     const source = native.readNativeSession(file, f.root);
@@ -697,7 +561,9 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     records[0].payload.parent_thread_id = 'other-session'; flush();
     assert.throws(() => readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework }), /子代理/);
     delete records[0].payload.parent_thread_id; records[0].payload.history_base = 'prior-page.jsonl'; flush();
-    assert.throws(() => readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework }), /history_base/);
+    const paged = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework });
+    assert.equal(paged.user.id, 'native-user'); assert.deepEqual(paged.gaps, []);
+    assert(paged.source_results?.some(item => item.detail.includes('history_base')));
   } },
   { name: 'R2 design entry consumes the same historical decision and cannot steal an existing managed run', run(f) {
     const s = setup(f);
@@ -733,15 +599,15 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     assert(noDevice.some(item => item.kind === 'behavior' && !item.excluded_by_user));
     installNodeCompiler(f);
     const compileCli = () => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts/compile.ts'), '--project-root', f.root, '--session-ref', s.ref, '--target', 'src/routes.json', '--json'], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000 });
-    s.add({ type: 'user', uuid: 'no-ut', message: { role: 'user', content: '本请求不跑UT' } });
+    s.add({ type: 'user', uuid: 'no-ut', message: { role: 'user', content: '继续 user-1。本请求不跑UT' } });
     s.add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务，原始user消息 user-1，保留其余验证。' } }); s.flush();
     const routed = compileCli(); assert.equal(routed.status, 0, routed.stdout + routed.stderr);
     const first = JSON.parse(routed.stdout); assert(first.executed); assert(first.next.some((command: string) => command.includes('check:testing'))); assert(!first.next.some((command: string) => command.includes('check:ut')));
-    s.add({ type: 'user', uuid: 'no-device', message: { role: 'user', content: '本请求不跑真机' } });
+    s.add({ type: 'user', uuid: 'no-device', message: { role: 'user', content: '继续 user-1。本请求不跑真机' } });
     s.add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务，原始user消息 user-1，按当前验证范围。' } }); s.flush();
     const limited = compileCli(); assert.equal(limited.status, 0, limited.stdout + limited.stderr);
     assert(!JSON.parse(limited.stdout).next.some((command: string) => command.includes('check:testing')));
-    s.add({ type: 'user', uuid: 'restore-ut', message: { role: 'user', content: '现在运行UT' } });
+    s.add({ type: 'user', uuid: 'restore-ut', message: { role: 'user', content: '继续 user-1。现在运行UT' } });
     s.add({ type: 'assistant', message: { role: 'assistant', content: '继续原任务，原始user消息 user-1，仅恢复明确指定的UT。' } }); s.flush();
     const restored = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
     assert(!restored.control.excluded.includes('ut')); assert(restored.control.excluded.includes('testing'));
@@ -758,22 +624,6 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     assert.equal(requestStartFromReflog(root, '2000-01-01T00:00:01Z'), head, '身份、时间、连续性可核的无说明旧行不丢整段');
     fs.appendFileSync(reflog, `${'f'.repeat(40)} ${head} Reflog Test <reflog@example.invalid> 946684802 +0000\n`);
     assert.equal(requestStartFromReflog(root, '2000-01-01T00:00:01Z'), undefined, '无说明不放宽HEAD连续性');
-  } },
-  { name: 'git -C current worktree captures initial status while dirty without exact preimage stays unknown', run(f) {
-    const s = setup(f, true), originalRead = native.readNativeSession, session = originalRead(s.ref, f.root);
-    const head = session.tools.find((tool: any) => native.toolInput(tool) === 'git rev-parse HEAD');
-    const status = session.tools.find((tool: any) => native.toolInput(tool) === 'git status --porcelain');
-    head.input = { command: `git -C "${f.root}" rev-parse HEAD` };
-    status.input = { command: `git -C '${f.root}' status --porcelain` };
-    session.tools = session.tools.filter((tool: any) => tool.name !== 'Read' || !tool.input.file_path.endsWith(path.join('src', 'value.js')));
-    native.readNativeSession = () => session;
-    try {
-      const intake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref });
-      assert.equal(intake.baseline.source, 'captured'); assert.deepEqual(intake.baseline.initial_dirty, ['src/value.js']);
-      assert(intake.attribution_unknown.includes('src/value.js')); assert(!intake.baseline.preimages?.['src/value.js']);
-      status.input.command = `git -C "${repo}" status --porcelain`;
-      assert.equal(readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework, sessionRef: s.ref }).baseline.initial_dirty, 'unknown', '另一个worktree状态不作起始基线');
-    } finally { native.readNativeSession = originalRead; }
   } },
   { name: 'A5 content comparison ignores comment/order changes and detects signatures, config and unknown data semantics', run(f) {
     const s = setup(f);
@@ -833,7 +683,7 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     const p = prepareExplicitRequest({ projectRoot: f.root, frameworkRoot: f.framework, phase: 'review', ...generated }); facts(p, f.root);
     const raw = JSON.parse(fs.readFileSync(p.requestFile, 'utf8'));
     raw.intake_context.user.text = 'forged'; fs.writeFileSync(p.requestFile, JSON.stringify(raw));
-    assert.throws(() => prepareExplicitRequest({ projectRoot: f.root, frameworkRoot: f.framework, phase: 'review', ...generated }), /原文/);
+    assert.throws(() => prepareExplicitRequest({ projectRoot: f.root, frameworkRoot: f.framework, phase: 'review', ...generated }), /真实用户请求/);
   } },
   { name: 'A6 compile really executes Node syntax checking and direct architecture uses original layer predicate', run(f) {
     const s = setup(f);
@@ -852,14 +702,14 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     const empty = spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), path.join(repo, 'harness/scripts/compile.ts'), '--project-root', f.root, '--architecture-only', '--target', 'src/probe.txt', '--json'], { cwd: path.join(repo, 'harness'), encoding: 'utf8', timeout: 60000 });
     assert.equal(empty.status, 1, empty.stdout + empty.stderr); assert.equal(JSON.parse(empty.stdout).executed, false);
   } },
-  { name: 'A8 missing native source still executes explicit local tests without claiming a complete request PASS', run(f) {
+  { name: 'A8 missing native source reports the actual explicit local test conclusion only', run(f) {
     const args = ['--phase', 'ut', '--target', 'src/value.js', '--test-target', 'tests/value.test.cjs', '--report-dir', 'doc/reports/local-source-gap'];
     const result = cli(f, args);
-    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
     const report = JSON.parse(fs.readFileSync(path.join(f.root, 'doc/reports/local-source-gap/script-report.json'), 'utf8'));
     assert(report.checks.some((check: { id: string; status: string }) => check.id === 'request_test_execution' && check.status === 'PASS'), JSON.stringify(report.checks));
-    assert(report.checks.some((check: { id: string; status: string }) => check.id === 'request_input_unresolved' && check.status === 'FAIL'));
-    assert.equal(report.summary.verdict, 'FAIL');
+    assert.match(report.origin_gap, /显式局部目标/);
+    assert.equal(report.summary.verdict, 'PASS');
   } },
 ];
 export async function runAll(): Promise<UnitCaseResult[]> {

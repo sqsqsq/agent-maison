@@ -651,7 +651,7 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
             external.criteria[0].requirement_ref = { source_path: 'requirements/ledger.md', snippet: REQUIREMENT, locator: 'external write' };
             try {
               writeYaml(host.root, path.relative(host.root, file), external);
-              assert(!actions.refreshOwnedAcceptanceScopeInput(input, scope, events), 'a foreground write after the first signed handback cannot complete the chain');
+              assert(actions.refreshOwnedAcceptanceScopeInput(input, scope, events), 'a hand-edited clarification can be checked against the original canonical acceptance');
             } finally { fs.writeFileSync(file, acceptanceIntermediate); }
           }
           const next = YAML.parse(acceptanceBefore);
@@ -660,7 +660,8 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
           writeYaml(host.root, path.relative(host.root, file), next);
           if (constructionAuthors === 1) acceptanceIntermediate = fs.readFileSync(file, 'utf8');
           else acceptanceAfter = fs.readFileSync(file, 'utf8');
-          assert(!actions.refreshOwnedAcceptanceScopeInput(input, scope, events), 'pending execution and a foreground overwrite cannot sign a new scope');
+          assert.equal(!!actions.refreshOwnedAcceptanceScopeInput(input, scope, events), constructionAuthors === 2,
+            'current candidate retains the original expected behavior before the scope writer can rebind it');
           assert(!actions.refreshScopeBindingInput(input, scope)?.facts.flatMap((fact: any) => fact.basis).some((binding: any) =>
             binding.input_id === 'acceptance' && binding.content_fingerprint !== scope.obligations.flatMap((fact: any) => fact.basis)
               .find((prior: any) => prior.input_id === 'acceptance').content_fingerprint), 'semantic edits must not enter through the equivalent-dependency path');
@@ -773,6 +774,9 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
       assert(!design.satisfied_by?.length, 'spec must carry forward plan responsibility with the obsolete contracts proof withdrawn');
       const planVerifier = events.findIndex((event: any) => event.type === 'agent_invoke_start' && event.phase === 'plan-verifier-format-repair');
       assert(planVerifier > specRevision, 'the returned Plan check must reach its independent verifier');
+      const planRevision = events.findIndex((event: any, at: number) => at > planVerifier && event.type === 'scope_revised' && event.trigger?.phase === 'plan');
+      const codingStart = events.findIndex((event: any) => event.type === 'harness_start' && event.phase === 'coding');
+      assert(planRevision > planVerifier && codingStart > planRevision, 'dependent coding must consume the independently re-signed Plan proof');
       assert.equal(events.slice(specRevision + 1, planVerifier).filter((event: any) => event.type === 'harness_end' && event.phase === 'plan').length,
         1, 'a changed downstream facts baseline must not repeat the same Plan check');
       const runId = path.basename(revisedRunDir);
@@ -781,11 +785,11 @@ async function completeDelivery(medium = false, moduleRevision = false, acceptan
       const creation = host.load('scripts/utils/goal-run-creation');
       const previous = creation.loadFrozenExecutionScope(host.root, revisedFeature, runId);
       const { refreshOwnedAcceptanceScopeInput } = host.load('scripts/utils/feature-track');
-      assert(refreshOwnedAcceptanceScopeInput(input, previous, events), 'the unchanged postimages retain their signed provenance');
+      assert(refreshOwnedAcceptanceScopeInput(input, previous, events), 'current acceptance retains the original canonical commitments');
       const indexPath = path.join(host.root, index), indexBytes = fs.readFileSync(indexPath);
       try {
         fs.appendFileSync(indexPath, '\n# Foreground overwrite after the framework producer\n');
-        assert(!refreshOwnedAcceptanceScopeInput(input, previous, events), 'a later foreground index write cannot use the earlier producer proof');
+        assert(refreshOwnedAcceptanceScopeInput(input, previous, events), 'an unrelated component inventory edit neither changes the original CU commitment nor proves its writer');
       } finally { fs.writeFileSync(indexPath, indexBytes); }
       const planEvidence = host.load('scripts/utils/phase-evidence-manifest').loadPhaseEvidenceManifest(host.root, revisedFeature, 'plan');
       const effective = creation.resolveEffectiveScopeSource(host.root, revisedFeature, runId).scope;
@@ -1056,7 +1060,7 @@ const cases = [{
         assert.equal(step.type, 'goal_session_result', JSON.stringify(step));
         assert.equal(step.result.status, 'waiting');
         assert(['no_progress_guard', 'executor_waiting'].includes(step.result.halt_reason), JSON.stringify(step));
-        if (step.result.halt_reason === 'executor_waiting') assert.match(step.result.recovery.halt_guidance, /没有新的可执行工作/);
+        if (step.result.halt_reason === 'executor_waiting') assert.match(step.result.recovery.halt_guidance, /沿原交回验证当前成果/);
         assert.equal(published.length, 0, 'unchanged weak authority cannot be mechanically republished');
         const calls = events.filter((event: any) => event.type === 'agent_invoke_start').length;
         await withRuntimeTest({ root: host.root }, () => control.entry.runGoalModeSessionStep(control.options));

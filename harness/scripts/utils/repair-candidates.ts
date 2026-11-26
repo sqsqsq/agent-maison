@@ -326,7 +326,7 @@ export interface PhaseRepairIssues {
 
 function* independentReviewInvocations(projectRoot: string, feature: string, runId: string, reportPath: string) {
   const { featureFilePath } = require('../../config') as typeof import('../../config');
-  const { readExecutionRequestOriginal, acceptedSessionReport, readHandoffMaterial, sessionRunMaterialPath } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+  const { readExecutionRequestOriginal, acceptedSessionReport, handbackInvocationCompleted, readHandoffMaterial, sessionRunMaterialPath } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
   const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
   const { workUnitExecutionRole } = require('./goal-phase-executor') as typeof import('./goal-phase-executor');
   const reportAbs = path.resolve(projectRoot, reportPath);
@@ -374,8 +374,8 @@ function* independentReviewInvocations(projectRoot: string, feature: string, run
       }
       const segment = run.events.slice(run.events.indexOf(start) + 1);
       const end = segment.find(event => event.type === 'agent_invoke_end' && event.phase === start.phase && event.invoke_id === start.invoke_id);
-      if (!end || !invocationCompleted({ ...end, exitCode: end.exit_code })
-        || segment.some(event => event.type === 'phase_write_violation' && event.invoke_id === start.invoke_id)) continue;
+      try { if (!end || !handbackInvocationCompleted(runDir, original, end, run.events)) continue; }
+      catch { continue; }
       const writes = segment.filter(event => event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id
         && (!relocated || (event as Record<string, unknown>).pre_snapshot === request.pre_snapshot!.sha256))
         .flatMap(event => {
@@ -397,7 +397,7 @@ function* independentReviewInvocations(projectRoot: string, feature: string, run
       const latestHash = output?.post_sha256 ?? (accepted
         ? accepted.post_snapshot?.entries.find(item => target(item.path))?.sha256
         : undefined);
-      if (!latestHash) continue;
+      if (!latestHash || request.pre_snapshot.entries.some(item => target(item.path) && item.sha256 === latestHash)) continue;
       const entries = new Map(request.pre_snapshot.entries.filter(item => item.kind === 'file')
         .map(item => [inCurrentRoot(item.path), item.sha256]));
       const freshness = new Map<string, boolean>();

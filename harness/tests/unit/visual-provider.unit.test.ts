@@ -2488,7 +2488,7 @@ test('t3 真统一invoke接收剩余timeout与绝对deadline；预处理耗尽�
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
-test('t3 脏检查：invoke 弄脏工作区 → 丢弃本轮结果且**不**自动 revert', async () => {
+test('provider 读取指定图片时，另一任务的工作区写入不影响视觉结论', async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'vp-dirty-'));
   try {
     execFileSync('git', ['init', '-q'], { cwd: tmp, windowsHide: true });
@@ -2502,20 +2502,20 @@ test('t3 脏检查：invoke 弄脏工作区 → 丢弃本轮结果且**不**自�
     execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'img'],
       { cwd: tmp, windowsHide: true });
 
-    const sneaked = path.join(tmp, 'provider-wrote-this.txt');
+    const sneaked = path.join(tmp, 'parallel-request.txt');
     const good = JSON.stringify({ type: 'result', subtype: 'success', result: '{"ok":1}' });
     const inv = await invokeVisualProvider({
       projectRoot: tmp, frameworkRoot: FRAMEWORK_ROOT,
       provider: { adapter: 'claude', model: 'm' }, purpose: 'review',
       prompt: 'p', imagePaths: [img], invokeId: 'i',
       invokeAgent: (async () => {
-        fs.writeFileSync(sneaked, 'provider should not have written this');
+        fs.writeFileSync(sneaked, 'another request completed');
         return { exitCode: 0, stdout: good, stderr: '', command: 'x' };
       }) as never,
     });
-    assert.strictEqual(inv.outcome, 'invalid', '弄脏工作区 → 本轮结果一律不采信');
-    assert.strictEqual(inv.workspace_dirtied, true);
-    assert.strictEqual(inv.body, null);
+    assert.strictEqual(inv.outcome, 'success');
+    assert.strictEqual(inv.workspace_dirtied, false);
+    assert.strictEqual(inv.body, '{"ok":1}');
     assert.ok(fs.existsSync(sneaked), '**不得**自动 revert——现场留给人看');
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
@@ -2813,7 +2813,7 @@ test('4e92 DSH consumes paired successful per-image reads, original stdout, and 
     const pair = (id: string, file: string, status = 'completed') => [{ type: 'tool_call', callId: id, tool: 'read_image', input: { file_path: file } }, { type: 'tool_result', callId: id, status }];
     const all = [...pair('a', 'a.png'), ...pair('b', process.platform === 'win32' ? images[1].toUpperCase() : images[1])];
     const final = { type: 'final', text: '{"current":true}' };
-    for (const scenario of ['success', 'missing', 'error', 'recovered', 'unrelated-error', 'nonzero', 'no-final', 'truncated-final', 'empty-images', 'full-stdout', 'dirty']) {
+    for (const scenario of ['success', 'missing', 'error', 'recovered', 'unrelated-error', 'nonzero', 'no-final', 'truncated-final', 'empty-images', 'full-stdout', 'dirty', 'image-changed']) {
       let events: unknown[] = all;
       if (scenario === 'missing') events = pair('a', images[0]);
       if (scenario === 'error') events = [...pair('a', images[0]), ...pair('b', images[1], 'error')];
@@ -2830,13 +2830,14 @@ test('4e92 DSH consumes paired successful per-image reads, original stdout, and 
           assert.ok(plan.argv[plan.argv.lastIndexOf('--patch') + 1].endsWith('visual-readonly-patch.yaml'));
           if (evidence) fs.writeFileSync(path.join(evidence, 'agent-events.jsonl'), raw);
           if (scenario === 'dirty') fs.appendFileSync(path.join(root, 'sentinel.txt'), 'changed\n');
+          if (scenario === 'image-changed') fs.appendFileSync(images[0], 'changed image bytes');
           return { exitCode: scenario === 'nonzero' ? 1 : 0, stdout: evidence ? '{"type":"final","text":"wrong tail"}' : raw,
             stderr: '', command: 'controlled DSH protocol fixture', ...(scenario === 'nonzero' ? { completion_observed: true } : {}) };
         } });
-      const expected = ['missing', 'error', 'no-final', 'truncated-final', 'dirty'].includes(scenario) ? 'invalid' : scenario === 'nonzero' ? 'unavailable' : 'success';
+      const expected = ['missing', 'error', 'no-final', 'truncated-final', 'image-changed'].includes(scenario) ? 'invalid' : scenario === 'nonzero' ? 'unavailable' : 'success';
       assert.strictEqual(result.outcome, expected, scenario + ': ' + result.reason);
       if (expected === 'success') { assert.strictEqual(result.body, final.text); assert.strictEqual(result.input_provenance, 'unverified', 'DSH does not add a generic critic parser registration'); }
-      if (scenario === 'dirty') assert.strictEqual(result.workspace_dirtied, true);
+      if (scenario === 'dirty') assert.strictEqual(result.workspace_dirtied, false);
     }
   } finally { fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(root + '-evidence', { recursive: true, force: true }); }
 });

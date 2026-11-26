@@ -1761,7 +1761,7 @@ for (const scenario of ['derived', 'precheck', 'source-gap', 'repair', 'no-progr
         assert.equal(result.type, 'goal_session_result');
         const stopped = [...events].reverse().find(event => event.type === 'run_end') as Record<string, unknown> | undefined;
         assert(stopped && (stopped.halt_reason === 'no_progress_guard'
-          || stopped.halt_reason === 'executor_waiting' && String(stopped.halt_guidance).includes('没有新的可执行工作')), JSON.stringify({ result, events: events.slice(-3) }));
+          || stopped.halt_reason === 'executor_waiting' && String(stopped.halt_guidance).includes('沿原交回验证当前成果')), JSON.stringify({ result, events: events.slice(-3) }));
         assert.equal(stopped.status, 'HALTED'); assert.notEqual(stopped.run_wait_kind, 'human');
         assert.equal(identity.enumerateCanonicalChangeUnits(host.root, blueprint).length, 0);
         assert.deepEqual(fs.readFileSync(candidatesPath), pendingBytes, '无改善保留未接受候选');

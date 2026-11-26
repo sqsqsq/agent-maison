@@ -380,7 +380,8 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
         + [...original, researched].map(file => `| ${file} | 已读原文件 | 定义输入 |`).join('\n'));
       const entry = () => resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase: 'spec', featuresDir: 'doc/features' });
       const bridge = entry();
-      assert(bridge.codeTargets?.includes(researched) && !bridge.codeTargets.includes(original[1]), JSON.stringify(bridge.codeTargets));
+      assert.deepEqual(bridge.codeTargets, [original[0]]);
+      assert(bridge.factsContext?.source_paths.includes(researched), JSON.stringify(bridge.factsContext));
       const inputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'spec', track: 'full', ...bridge }).inputs!;
       assert.equal(inputs.values.codebase.state, 'resolved', JSON.stringify(inputs.values.codebase));
       assert(fs.readFileSync(featureFrozenScopePath(root, feature)).equals(bytes), '投影不得改冻结范围');
@@ -527,6 +528,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
 async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-gap' | 'direct' | 'revision' | 'revision-cut' | 'revision-precut' | 'revision-revoke' | 'impact-first' | 'impact-reuse' | 'impact-null' | 'design-gap' | 'design-gap-revert' | 'spec-gap-revert' | 'detached' | 'detached-harness' | 'detached-explicit' | 'request-ut' | 'request-spec' | 'request-plan' | 'request-coding' | 'request-spec-invalid' | 'request-plan-invalid' | 'request-spec-cut' | 'request-plan-cut' | 'testing-fail' | 'testing-offline' | 'testing-manual' | 'unresolved', useDefault = false, missingMapping = false, continuousCoding: boolean | 'request' = false, introducesUi = false): Promise<void> {
   const repo = path.resolve(__dirname, '../../..');
   const { root } = setupGoalRuntimeHost('codex');
+  const originalCwd = process.cwd();
   const frameworkRoot = path.join(root, 'framework');
   const tsFramework = continuousCoding ? frameworkDeclaringTsSources() : undefined;
   let preserveFailure: ((reason: string) => string) | undefined;
@@ -546,6 +548,9 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
     fs.writeFileSync(configPath, JSON.stringify(config)); clearFrameworkConfigCache();
     const fixture = path.join(repo, 'harness/tests/fixtures/component-blueprint/valid');
     fs.cpSync(fixture, root, { recursive: true });
+    // This bundled framework is a set of test junctions into the development repo.
+    // Git's untracked walk must stay inside the disposable consumer working tree.
+    fs.appendFileSync(path.join(root, '.git', 'info', 'exclude'), '\n/framework/\n');
     const feature = deriveChangeUnitFeatureId('ledger-app-blueprint', 'ledger-refresh');
     configureFeature(root, loadCanonicalChangeUnit(root, 'ledger-app-blueprint', 'ledger-refresh'));
     if (missingMapping) {
@@ -929,6 +934,21 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
             evidence: `\`${refreshTest}:4\` 的 ${refreshCase} 实际调用 \`${codeRel}:1\`，断言新增账目被读出且后续修改不影响快照。` }]) + '```\n');
       },
       onHarnessSummary: ({ phase }) => {
+        if (requestOnly && phase === requestPhase && preparedCandidate && requestPhase !== 'coding') {
+          const runId = process.env.MAISON_GOAL_RUN_ID ?? 'p2-attended';
+          const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase,
+            featuresDir: relFeaturesDir(root), goalRunId: runId });
+          const resolvedInputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase, track: 'full', ...bridge }).inputs!;
+          const checks = designScopeRevisionChecks({
+            projectRoot: root, frameworkRoot, feature, phase,
+            featureSpec: new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, resolvedInputs),
+            resolvedInputs, factsContext: bridge.factsContext,
+          } as never, []);
+          const revision = checks.find(check => (check as { scope_revision_input?: unknown }).scope_revision_input);
+          if (invalidOutput) assert(!revision, '不合法产出仍被生产设计检查发成修订：' + JSON.stringify(checks));
+          else assert(revision, '生产设计检查未发布 scope_revision_input：' + JSON.stringify(checks));
+          return { checks };
+        }
         if (directUt && phase === 'ut') {
           const profile = loadResolvedProfile(root, loadFrameworkConfig(root), frameworkRoot);
           const host = tryLoadUtHostImpl(profile.profileDir);
@@ -1167,30 +1187,6 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
             return copy;
           }) as typeof revision.facts;
           fs.writeFileSync(featureFilePath(root, feature, 'spec/reports/script-report.json'), JSON.stringify({ checks: [{ id: 'spec_scope_facts', status: 'PASS', scope_revision_input: revision }] }));
-          return;
-        }
-        // R5：单职责 spec/plan 的成功终局——把本阶段真实产出经**生产的 `designScopeRevisionChecks`**
-        // 发布成 `scope_revision_input`（与生产上 check-spec / check-plan 调用的是同一个函数），
-        // 由既有修订链关闭出生时的定义缺口。修订内容不是这里手拼的。
-        if (requestOnly && phase === requestPhase && preparedCandidate && requestPhase !== 'coding') {
-          // 入参走**生产的统一入口** `resolveCapabilityResolutionEntryInput`（与 check-spec / check-plan 同源），
-          // 不手拼 inputContext/factsContext——手拼的身份绑定过不了 capability-resolution 的 schema 与 subject 校验。
-          const bridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase, featuresDir: relFeaturesDir(root), goalRunId: runId });
-          const resolvedInputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase, track: 'full', ...bridge }).inputs!;
-          const produced = designScopeRevisionChecks({
-            projectRoot: root, frameworkRoot, feature, phase,
-            featureSpec: new SpecLoader(root, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, resolvedInputs),
-            resolvedInputs, factsContext: bridge.factsContext,
-          } as never, []);
-          const revisionCheck = produced.find(check => (check as { scope_revision_input?: unknown }).scope_revision_input);
-          // 反向变体：产出不合法时**这同一个生产检查**必须发不出修订（第二轮建议 1：原先直接 return，
-          // 只证明了「没有修订就保持 HALTED」，没证明生产检查会拒绝不合法产出）。不发布任何报告。
-          if (invalidOutput) {
-            assert(!revisionCheck, '不合法产出仍被生产设计检查发成修订：' + JSON.stringify(produced));
-            return;
-          }
-          assert(revisionCheck, '生产设计检查未发布 scope_revision_input：' + JSON.stringify(produced));
-          fs.writeFileSync(featureFilePath(root, feature, `${phase}/reports/script-report.json`), JSON.stringify({ checks: [revisionCheck] }));
           return;
         }
         if (phase !== 'spec' || ['direct', 'unresolved'].includes(mode) || requestOnly || codingFirst || testingOnly) return;
@@ -1537,7 +1533,19 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
     detachedStarted = true;
     if (mode === 'direct') {
       assert.deepStrictEqual(probe.invokedPhases.filter(phase => phase === 'work-unit-author'), ['work-unit-author']);
-      assert.deepStrictEqual(probe.harnessPhases, ['coding', 'review', 'ut']);
+      assert.deepStrictEqual(probe.harnessPhases, ['coding', 'review', 'ut', 'review']);
+      const independentReviews = probe.events.filter(event => event.type === 'agent_invoke_start' && event.phase === 'review');
+      assert.equal(independentReviews.length, 1, 'the first script review must not buy another independent invocation for unchanged material');
+      const review = independentReviews[0];
+      assert(typeof review.invoke_id === 'string');
+      const issued = executionRequestForInvoke(featureFilePath(root, feature, 'goal-runs/p2-attended'), review.invoke_id);
+      assert(issued?.request.purpose === 'review' && issued.request.context.instruction?.includes(`| ${refreshIssue} |`)
+        && issued.request.context.instruction.includes(refreshCase), 'the signed review must answer the actual assertion-strength question');
+      const toolPassedAt = probe.events.findIndex(event => event.type === 'phase_verdict' && event.phase === 'ut' && event.verdict === 'PASS');
+      const handbackAt = probe.events.findIndex(event => event.type === 'agent_invoke_end' && event.invoke_id === review.invoke_id && event.status === 'passed');
+      const recheckedAt = probe.events.map(event => event.type === 'phase_verdict' && event.phase === 'review' && event.verdict === 'PASS').lastIndexOf(true);
+      assert(toolPassedAt >= 0 && toolPassedAt < probe.events.indexOf(review) && handbackAt > probe.events.indexOf(review) && recheckedAt > handbackAt,
+        'a real UT result leads to an independent assertion verdict and its script recheck');
       const strength = readTaggedAcceptanceStrength({ projectRoot: root, frameworkRoot, feature, runId: 'p2-attended',
         executionScope: loadEffectiveExecutionScope(root, feature, 'p2-attended') }).find(row => row.issue === refreshIssue);
       assert(strength?.passed && strength.verdict?.verdict === 'refuted', '当前具名执行与正式独立交回必须一起通过');
@@ -1844,7 +1852,16 @@ async function runScopeScenario(mode: 'ut-l3-code' | 'ut-l3-spec' | 'ut-design-g
   } catch (error) {
     const saved = preserveFailure?.(String(error));
     throw new Error(`${(error as Error).stack ?? String(error)}${saved ? `\noriginals: ${saved}` : ''}`);
-  } finally { restoreAppend?.(); clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); if (tsFramework) removeShimFramework(tsFramework); }
+  } finally {
+    restoreAppend?.();
+    clearFrameworkConfigCache();
+    if (process.cwd() !== originalCwd) process.chdir(originalCwd);
+    const target = fs.realpathSync(root);
+    const relative = path.relative(fs.realpathSync(os.tmpdir()), target);
+    assert(/^gr-v23-[^\\/]+$/.test(relative), 'fixture cleanup escaped its temporary root');
+    try { fs.rmSync(target, { recursive: true, force: true, maxRetries: 6, retryDelay: 100 }); }
+    finally { if (tsFramework) removeShimFramework(tsFramework); }
+  }
 }
 function rejectImpactRevision(mode: 'impact-reuse' | 'impact-null'): void {
   const { root, frameworkRoot, feature } = setupRunlessProject();
@@ -2986,7 +3003,7 @@ cases.push({ name: 'D1 runless ui scope gate passes for a declared ui file', run
     // 有 feature 冻结记录 → **不得**再走历史 SKIP
     assert.notEqual(gate.status, 'SKIP', JSON.stringify(gate));
     assert.equal(gate.status, 'PASS', JSON.stringify(gate));
-    assert(gate.details.includes('预测文件表不作许可'), gate.details);
+    assert(gate.details.includes('本次 UI 变化 1 个') && gate.details.includes('原请求明确范围外 0 个'), gate.details);
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -3004,7 +3021,7 @@ cases.push({ name: 'D1 runless ui scope gate permits a new unpredicted UI file i
       inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } });
     const gate = runUiDiffWithinDeclaredFiles({ projectRoot: root, feature, runId: null, frameworkRoot, resolvedInputs: resolved.inputs });
     assert.equal(gate.status, 'PASS', JSON.stringify(gate));
-    assert(gate.details.includes('实际 UI 变更 1 个'), gate.details);
+    assert(gate.details.includes('本次 UI 变化 0 个') && gate.details.includes('待核实际关联的工作区候选 1 个'), gate.details);
   } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
 } });
 
@@ -4210,14 +4227,15 @@ cases.push({ name: '9e46 standalone Spec restores its signed file requirement an
     assert.equal(frozen.status, 'frozen', JSON.stringify(frozen.checks));
     const facts = featureFilePath(root, feature, 'context/facts.md');
     fs.mkdirSync(path.dirname(facts), { recursive: true });
-    fs.writeFileSync(facts, '---\n' + YAML.stringify({ schema_version: '1.0', feature, established_by: 'spec',
-      source_code_paths: ['src/demo/value.ts'], ready_to_produce: true }) + '---\n# Original legacy facts\n');
+    fs.writeFileSync(facts, '---\n' + YAML.stringify({ schema_version: '1.1', feature, established_by: 'spec',
+      frozen_scope_fingerprint: executionScopeFingerprint(featureEffectiveScope(frozen.record!)),
+      source_code_paths: ['src/demo/value.ts'], ready_to_produce: true }) + '---\n# Original request facts\n');
     const workflow = resolveWorkflowSpec(root, { frameworkRoot });
     const { resolveFeaturePhaseCapabilityInput } = await import('../../scripts/utils/capability-resolution-entry-input');
     const signer = resolveFeaturePhaseCapabilityInput({ ...stage, featuresDir: relFeaturesDir(root) }, workflow, { requirementFile });
     const resolution = resolveCapabilityInputs({ ...stage, track: 'full', ...signer });
     const { inputs: resolvedInputs } = resolution;
-    assert(!signer.codeTargets?.includes('src/demo/value.ts'), 'the first check has not admitted its own legacy facts yet');
+    assert(!signer.factsRebuildReason && signer.factsContext?.source_paths.includes('src/demo/value.ts'), JSON.stringify(signer.factsRebuildReason));
     assert.equal(resolvedInputs?.values.requirement?.state, 'resolved');
     const { prepareFixtureVerifierMaterial } = await import('../helpers/goal-run-driver');
     const report = generateScriptReport(path.join(frameworkRoot, 'harness'), 'spec', feature, root, [
@@ -4238,8 +4256,8 @@ cases.push({ name: '9e46 standalone Spec restores its signed file requirement an
     const requirementSha = currentRequirementEvidenceSha({ ...stage, resolvedInputs });
     writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ ...stage, resolvedInputs, factsContext: signer.factsContext, requirementSha }));
     const afterOwnManifest = resolveFeaturePhaseCapabilityInput({ ...stage, featuresDir: relFeaturesDir(root) }, workflow);
-    assert(afterOwnManifest.codeTargets?.includes('src/demo/value.ts'),
-      'a new ordinary check would admit the now-published legacy facts: ' + JSON.stringify(afterOwnManifest.factsRebuildReason));
+    assert(!afterOwnManifest.factsRebuildReason && afterOwnManifest.factsContext?.source_paths.includes('src/demo/value.ts'),
+      'the signed request facts still resolve after publication: ' + JSON.stringify(afterOwnManifest.factsRebuildReason));
     const invoke = () => spawnSync(process.execPath, ['-r', require.resolve('ts-node/register/transpile-only'), runner,
       '--execute-verifier', '--phase', 'spec', '--feature', feature, '--project-root', root, '--framework-root', frameworkRoot], {
         cwd: root, timeout: 120000, encoding: 'utf8', windowsHide: true, env: {

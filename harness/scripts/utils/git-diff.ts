@@ -338,6 +338,7 @@ export function diffChangedFilesWithStatus(opts: {
    * 两处归一共用同一个函数，不各写一份。
    */
   baseRef: string;
+  headRef?: string;
 }): StatusDiffResult {
   const cwd = opts.projectRoot;
   const baseRef = normalizeDiffBaseRef(opts.baseRef).baseRef;
@@ -348,7 +349,7 @@ export function diffChangedFilesWithStatus(opts: {
   if (probe.status !== 0) {
     return { executed: false, baseRef, entries: [], error: `非 git 仓库或 git 不可用：${probe.stderr?.trim() ?? ''}` };
   }
-  const verify = spawnSync('git', ['rev-parse', '--verify', `${baseRef}^{commit}`], {
+  const verify = spawnSync('git', ['rev-parse', '--verify', '--end-of-options', `${baseRef}^{commit}`], {
     windowsHide: true,
     cwd, encoding: 'utf-8', shell: false,
   });
@@ -357,10 +358,13 @@ export function diffChangedFilesWithStatus(opts: {
   }
 
   const baseSha = verify.stdout.trim();
-  // base ↔ worktree：一次覆盖 committed + staged + unstaged
+  const head = opts.headRef && opts.headRef !== 'WORKTREE'
+    ? spawnSync('git', ['rev-parse', '--verify', '--end-of-options', `${opts.headRef}^{commit}`], { windowsHide: true, cwd, encoding: 'utf-8', shell: false })
+    : undefined;
+  if (head && head.status !== 0) return { executed: false, baseRef, baseSha, entries: [], error: `headRef 不可达：${opts.headRef}` };
   const diff = spawnSync(
     'git',
-    ['diff', '--name-status', '-M', '-z', baseSha],
+    ['diff', '--name-status', '-M', '-z', baseSha, ...(head ? [head.stdout.trim()] : [])],
     { windowsHide: true, cwd, shell: false, maxBuffer: 64 * 1024 * 1024 },
   );
   if (diff.status !== 0) {
@@ -371,6 +375,8 @@ export function diffChangedFilesWithStatus(opts: {
   }
   const entries = parseNameStatusZ(diff.stdout as Buffer);
   const seen = new Set(entries.map(e => e.path));
+
+  if (head) return { executed: true, baseRef, baseSha, entries };
 
   // untracked → 'A'
   const untracked = spawnSync(

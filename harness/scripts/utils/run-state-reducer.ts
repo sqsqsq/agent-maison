@@ -18,7 +18,7 @@
 // 尚未发生任何事故——都必须给出确定的四态之一，绝不 undefined。
 // ============================================================================
 
-import type { Disposition, WaitKind } from './adjudication';
+import { isHistoricalWriteWindowStop, type Disposition, type WaitKind } from './adjudication';
 
 /**
  * 真·终局 status —— 与 runner 的**封卷守卫同源**（goal-runner 只对
@@ -95,6 +95,7 @@ const DISPOSITIONS: ReadonlySet<string> = new Set([
  */
 export function reduceRunState(events: readonly unknown[]): RunStateProjection {
   let recovery: RecoveryDiagnostic | undefined;
+  let windowOnlyWrite: { invokeId: string; phase: unknown; ignoredHaltAt?: number } | undefined;
   let current: RunStateProjection = {
     run_disposition: 'RESUME_READY',
     source_event_type: null,
@@ -108,13 +109,33 @@ export function reduceRunState(events: readonly unknown[]): RunStateProjection {
     const type = typeof ev.type === 'string' ? ev.type : '';
     if (type === 'run_start') {
       recovery = undefined;
+      windowOnlyWrite = undefined;
       current = {
         run_disposition: 'RESUME_READY', source_event_type: type, source_event_index: eventIndex, sealed: false,
       };
       continue;
     }
+    if (windowOnlyWrite && type !== 'phase_write_violation') {
+      const sameCall = ev.invoke_id === windowOnlyWrite.invokeId;
+      const samePhase = ev.phase === undefined || ev.phase === windowOnlyWrite.phase;
+      const halt = type === 'phase_halt' || type === 'run_end' && ev.status === 'HALTED';
+      const closingIgnoredHalt = type === 'run_end' && ev.invoke_id === undefined
+        && windowOnlyWrite.ignoredHaltAt === eventIndex - 1;
+      if (halt && samePhase && isHistoricalWriteWindowStop(ev)
+        && (sameCall && (type === 'run_end' || windowOnlyWrite.ignoredHaltAt === undefined) || closingIgnoredHalt)) {
+        if (type === 'phase_halt') windowOnlyWrite.ignoredHaltAt = eventIndex;
+        else windowOnlyWrite = undefined;
+        continue;
+      }
+      const ownBoundaryRecord = sameCall && samePhase && (type === 'agent_invoke_end' || type === 'agent_process_settled'
+        || type === 'phase_backtrack_requested' && ev.reason === 'phase_write_violation');
+      if (!ownBoundaryRecord || windowOnlyWrite.ignoredHaltAt !== undefined) windowOnlyWrite = undefined;
+    }
     if (type === 'phase_write_violation') {
-      const violations = Array.isArray(ev.violations) ? ev.violations : [];
+      const violations = Array.isArray(ev.violations) ? ev.violations.filter(row => row?.authority_confirmed === true) : [];
+      windowOnlyWrite = !violations.length && typeof ev.invoke_id === 'string' && ev.invoke_id
+        ? { invokeId: ev.invoke_id, phase: ev.phase } : undefined;
+      if (!violations.length) continue;
       recovery = {
         reason: 'phase_write_violation',
         ...(typeof ev.phase === 'string' ? { current_phase: ev.phase } : {}),
@@ -134,6 +155,7 @@ export function reduceRunState(events: readonly unknown[]): RunStateProjection {
       };
     } else if (type === 'phase_backtrack_requested') {
       const reason = typeof ev.reason === 'string' ? ev.reason : 'backtrack_requested';
+      if (reason === 'phase_write_violation' && recovery?.reason !== reason) continue;
       const files = Array.isArray(ev.files) ? ev.files.filter((f): f is string => typeof f === 'string').slice(0, 20) : [];
       const previousByPath = new Map((recovery?.changed_paths ?? []).map((item) => [item.path, item]));
       recovery = {

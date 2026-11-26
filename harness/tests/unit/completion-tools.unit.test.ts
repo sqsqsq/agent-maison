@@ -48,7 +48,7 @@ import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecution
 const FRAMEWORK_ROOT = path.resolve(__dirname, '../../..');
 
 async function withCurrentStrength(mode: 'strengthened' | 'weakened' | 'preserved', run: (current: ReturnType<typeof prepare>) => void | Promise<void>, publicCli = false) {
-  const f = fixture(false, true, [], 'make value 42', publicCli ? 'generic' : undefined), previous = process.env.MAISON_GOAL_RUN_ID;
+  const f = fixture(false, true, [UT_BASELINE_TEST], 'make value 42', publicCli ? 'generic' : undefined), previous = process.env.MAISON_GOAL_RUN_ID;
   process.env.MAISON_GOAL_RUN_ID = f.manifest.run_id;
   try {
     const original = fs.readFileSync(path.join(f.root, UT_BASELINE_TEST), 'utf8');
@@ -482,11 +482,15 @@ process.stderr.write('diagnostic tail\\n'+'x'.repeat(9000));};emit();
           return view;
         } finally { predicates.resolveCompletionDisposition = resolve; }
       };
+      assert(current.report.checks.some(check => check.id === current.check.id && check.status === 'FAIL'),
+        'the original actual checker contains the FAIL this fixture refutes');
       assert(scopeView().phase_chain.includes('coding'), 'an unrefuted actual FAIL cannot establish proof');
       current.publish('refuted');
       finalizePhaseClosure({ projectRoot: f.root, frameworkRoot: FRAMEWORK_ROOT, feature: 'demo', phase: 'coding',
         goalRunId: f.manifest.run_id, resolvedInputs: current.ctx.resolvedInputs, factsContext: current.ctx.factsContext, persistPhaseState: () => undefined });
       assert(!scopeView().phase_chain.includes('coding'), 'a legitimately disclosed raw FAIL can establish current proof without a fake PASS');
+      assert.equal(fs.readFileSync(path.join(current.dir, 'script-report.json'), 'utf8'), current.raw,
+        'the first independent proof preserves the actual raw FAIL');
       assert(readReusableCheckResult({ ...current.options, phase: 'coding' }), 'unchanged actual inputs keep the same reusable result');
       const completion = () => shouldGenerateFeatureCompletion(scope, { ...current.options, endpoint: 'feature-completion',
         workflow, chain: applicableCheckFamilies(scope) });
@@ -561,8 +565,7 @@ process.stderr.write('diagnostic tail\\n'+'x'.repeat(9000));};emit();
       for (const definition of basisOnly.obligations.filter(item => definitions.some(original => original.id === item.id))) delete definition.satisfied_by;
       assert(!shouldGenerateFeatureCompletion(basisOnly, { ...current.options, endpoint: 'feature-completion', workflow,
         chain: applicableCheckFamilies(basisOnly) }).eligible, 'definition provenance without accepted satisfaction is still a real unmet duty');
-      assert.equal(fs.readFileSync(path.join(checked.dir, 'script-report.json'), 'utf8'), checked.raw, 'the actual raw FAIL remains byte-for-byte unchanged');
-      assert(checked.report.checks.some(check => check.id === checked.check.id && check.status === 'FAIL'), 'the positive proof never fabricates raw PASS');
+      assert.equal(fs.readFileSync(path.join(checked.dir, 'script-report.json'), 'utf8'), checked.raw, 'the fresh actual result remains byte-for-byte unchanged');
     });
   } },
   { name: 'P3 definition input: basis alone keeps plan executable; accepted input proof avoids an empty check', async run() {

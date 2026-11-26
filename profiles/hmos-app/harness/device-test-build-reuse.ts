@@ -8,6 +8,7 @@ import { loadFrameworkConfig } from '../../../harness/config';
 import { buildChildEnv, describeHvigorEnvironment, discoverAppHapArtifacts, detectStaleSignedSuspect,
   listBuildProfileModules, parseProductJson5, resolveDevEcoInstallRoot, type HapDiscoveryCandidate } from './hvigor-runner';
 import { resolveDeviceTestBuildMode } from './testing-build-conventions';
+import { isInsideProjectRoot } from '../../../harness/scripts/utils/project-relative-path';
 import { computeHapSha256Full } from './build-fingerprint';
 import { isRebuildableHarBuildProfile, isRebuildableOhosTestIntermediate } from './generated-source-classifier';
 
@@ -74,7 +75,7 @@ function outerLayerRoots(projectRoot: string): string[] {
     .map(layer => layer.id?.trim()).filter(Boolean).map(id => path.join(projectRoot, id));
 }
 
-const ROOT_BUILD_INPUTS = ['AppScope', 'build-profile.json5', 'hvigorfile.ts', 'hvigorfile.js', 'hvigor',
+export const ROOT_BUILD_INPUTS = ['AppScope', 'build-profile.json5', 'hvigorfile.ts', 'hvigorfile.js', 'hvigor',
   'hvigorw', 'hvigorw.bat', 'local.properties', 'oh-package.json5', 'oh-package-lock.json5', '.ohpmrc',
   'code-linter.json5', 'framework.config.json'];
 
@@ -106,7 +107,7 @@ function opaqueFileState(file: string): string {
 }
 
 /** Byte identity of the selected application's inputs, independent of generated HAR rewrites. */
-export function snapshotDeviceTestBuildInputs(projectRoot: string, product: string, buildMode: 'debug' | 'release'):
+export function snapshotDeviceTestBuildInputs(projectRoot: string, product: string, buildMode: 'debug' | 'release' | 'test', selectedModules?: readonly string[]):
   { sha256: string; maxMtimeMs: number } | null {
   try {
     const root = path.resolve(projectRoot);
@@ -115,6 +116,9 @@ export function snapshotDeviceTestBuildInputs(projectRoot: string, product: stri
     const devecoRoot = resolveDevEcoInstallRoot(root);
     const modules = listBuildProfileModules(root);
     const moduleRoots = new Map(modules.map(({ srcPath }) => [path.resolve(root, srcPath), srcPath.replace(/\\/g, '/')]));
+    const selectedRoots = selectedModules?.map(module => path.resolve(root, module));
+    if (selectedRoots?.some(dir => dir === root || !isInsideProjectRoot(root, dir)
+      || !fs.existsSync(dir) || !isInsideProjectRoot(root, fs.realpathSync(dir)))) return null;
     const entryPoints = new Set([root, ...moduleRoots.keys()]);
     const files = new Map<string, string>();
     const visited = new Set<string>();
@@ -157,7 +161,7 @@ export function snapshotDeviceTestBuildInputs(projectRoot: string, product: stri
     }
 
     // Register declared store paths before traversing module directories, including extensionless stores.
-    for (const file of [profileFile, ...[...moduleRoots.keys()].map(dir => path.join(dir, 'build-profile.json5'))]) {
+    for (const file of [profileFile, ...(selectedRoots ?? [...moduleRoots.keys()]).map(dir => path.join(dir, 'build-profile.json5'))]) {
       if (fs.existsSync(file)) profiles.set(file, readProfile(file));
     }
 
@@ -203,13 +207,21 @@ export function snapshotDeviceTestBuildInputs(projectRoot: string, product: stri
           const dependency = version.startsWith('file:')
             ? path.resolve(packageRoot, version.slice('file:'.length))
             : [packageRoot, root].map(base => path.join(base, 'oh_modules', name)).find(abs => fs.existsSync(abs));
-          if (!dependency) continue;
+          if (!dependency) {
+            if (selectedRoots) throw new Error('A declared request build package could not be located');
+            continue;
+          }
           const actual = fs.realpathSync(dependency);
+          if (selectedModules && !isInsideProjectRoot(root, actual)) throw new Error('Request build dependency is outside the project');
           if (actual === root || fs.statSync(actual).isDirectory() && !fs.existsSync(path.join(actual, 'oh-package.json5'))) {
             throw new Error('Build dependency is not a declared package');
           }
           files.set(`dependency:${rel}:${name}`, path.relative(root, actual).replace(/\\/g, '/'));
           entryPoints.add(actual);
+          const dependencyProfile = path.join(actual, 'build-profile.json5');
+          if (selectedRoots && !profiles.has(dependencyProfile) && fs.existsSync(dependencyProfile)) {
+            profiles.set(dependencyProfile, readProfile(dependencyProfile));
+          }
           walk(actual);
         }
       }
@@ -235,7 +247,8 @@ export function snapshotDeviceTestBuildInputs(projectRoot: string, product: stri
         files.set(`signing:${property}`, createHash('sha256').update(fs.readFileSync(real)).digest('hex'));
       }
     }
-    for (const entry of new Set([...ROOT_BUILD_INPUTS.map(p => path.join(root, p)), ...moduleRoots.keys(), ...outerLayerRoots(root)])) {
+    const roots = selectedRoots ?? [...moduleRoots.keys(), ...outerLayerRoots(root)];
+    for (const entry of new Set([...ROOT_BUILD_INPUTS.map(p => path.join(root, p)), ...roots])) {
       if (entry === root || !entry.startsWith(root + path.sep)) return null;
       walk(entry, true);
     }

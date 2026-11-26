@@ -1,30 +1,19 @@
-import { resolveImplementationScope, classifyChangedFiles, layerDirPrefixes } from './diff-scope';
+import { resolveImplementationScope, classifyChangedFiles, implementationPathSelector, readCurrentImplementationDiff } from './diff-scope';
 // UI 变更沿原 diff/契约身份读取；权限来自原需求边界，不按预测文件名封顶。
 // 删除和重命名保留旧内容识别，正常与 runless 冻结入口共用判定。
-import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { resolveEffectiveDiffBaseline } from './git-diff';
-import { resolveEffectiveScopeSource } from './goal-run-creation';
+import { loadLineageRunEvents, resolveEffectiveScopeSource } from './goal-run-creation';
+import { resolveProbeFrameworkRoot } from '../../repo-layout';
+import { unresolvedPhaseWrites } from './phase-write-boundary';
 import { readRunBoundContracts, type ResolvedPhaseInputs } from './capability-resolution';
-import {
-  evidenceEntryMatchesCurrentFile,
-  loadPhaseEvidenceManifest,
-} from './phase-evidence-manifest';
-import { diffChangedFilesWithStatus, readFileAtRef, StatusDiffEntry } from './git-diff';
+import { evidenceEntryMatchesCurrentFile, loadPhaseEvidenceManifest } from './phase-evidence-manifest';
+import { readFileAtRef, resolveEffectiveDiffBaseline, StatusDiffEntry } from './git-diff';
 
 // --------------------------------------------------------------------------
 // UI 敏感文件三类判据（plan v14 G1）
 // --------------------------------------------------------------------------
-
-function sha256FileOrNull(abs: string): string | null {
-  try {
-    return crypto.createHash('sha256').update(fs.readFileSync(abs)).digest('hex');
-  } catch {
-    return null;
-  }
-}
 
 /** 路径判据：pages/components/presentation 目录下的 .ets */
 export function isUiSensitivePath(rel: string): boolean {
@@ -115,88 +104,64 @@ export function runUiDiffWithinDeclaredFiles(input: UiScopeGateInput): UiScopeGa
     };
   }
 
-  // ① diff 基线：runner 锚定的 coding_base_sha（缺失/损坏同罚，不回退 trace.start_commit）。
-  // 注意顺序（round 19 P1）：**不做任何 live 文件前置探测**（曾按 live ui-spec 存在性
-  // 决定适用面——agent 删掉 ui-spec 即可让门禁 SKIP，绕过成本为零）。适用面只由
-  // 「diff 里有没有 UI 文件变更」决定：没有 → PASS；有 → 核实契约与原需求范围。
-  const base = resolveEffectiveDiffBaseline(projectRoot, feature, runId);
-  if (!base.available) {
-    return {
-      status: 'FAIL',
-      failureKind: 'ui_scope_base_missing',
-      details: runId
-        ? `本 run（${runId}）无可信 run_base_sha：${base.reason}。`
-        : `无 run 路径的 diff 基线不可用：${base.reason}。`,
-      suggestion: runId
-        ? '请从 goal-runner 创建带出生基线的新 run；现代 run 不回退 env、trace 或 legacy coding-base。'
-        : '修正 HARNESS_DIFF_BASE_REF（指向真实存在的 commit），或不设它按工作区比较。',
-    };
-  }
-
-  const diff = diffChangedFilesWithStatus({ projectRoot, baseRef: base.baseSha });
-  if (!diff.executed) {
-    return {
-      status: 'FAIL',
-      failureKind: 'ui_scope_diff_unavailable',
-      details: `基线 diff 不可用：${diff.error}（base=${base.baseSha.slice(0, 12)}）`,
-      suggestion: '核查项目 git 状态（基线 commit 是否被 rebase/gc 掉）；必要时从 plan 重新起跑。',
-    };
-  }
-
-  // ③ 逐条 UI 分类（删除/rename 旧路径从 base 侧读内容）
-  const uiChanged = new Set<string>();
-  for (const entry of diff.entries) {
-    for (const t of uiClassificationTargets(entry)) {
-      const rel = normalizeRel(t.rel);
-      if (uiChanged.has(rel)) continue;
-      let content: string | null = null;
-      if (rel.endsWith('.ets') && !isUiSensitivePath(rel)) {
-        // 只有需要内容判据时才读内容
-        if (t.side === 'disk') {
-          const abs = path.join(projectRoot, rel);
-          try {
-            content = fs.existsSync(abs) ? fs.readFileSync(abs, 'utf-8') : null;
-          } catch {
-            content = null;
-          }
-        } else {
-          const buf = readFileAtRef(projectRoot, base.baseSha, rel);
-          content = buf ? buf.toString('utf-8') : null;
+  const diff = readCurrentImplementationDiff(projectRoot, runId);
+  const frameworkRoot = input.frameworkRoot ?? resolveProbeFrameworkRoot(projectRoot);
+  const candidates = new Set<string>();
+  const related = new Set<string>();
+  const isUi = (relative: string, baseSha?: string): boolean => {
+    let content: string | null = null;
+    if (relative.endsWith('.ets') && !isUiSensitivePath(relative)) {
+      try {
+        content = baseSha ? readFileAtRef(projectRoot, baseSha, relative)?.toString('utf8') ?? null
+          : fs.readFileSync(path.join(projectRoot, relative), 'utf8');
+      } catch { /* File kind can also be proven by its path. */ }
+    }
+    return isUiSensitiveFile(relative, content);
+  };
+  try {
+    if (runId) {
+      const events = loadLineageRunEvents(projectRoot, feature, runId);
+      const confirmed = unresolvedPhaseWrites(projectRoot, events, { feature, frameworkRoot, runId });
+      const baseline = confirmed.size ? resolveEffectiveDiffBaseline(projectRoot, feature, runId) : undefined;
+      for (const file of confirmed.keys()) {
+        if (isUi(file) || baseline?.available && isUi(file, baseline.baseSha)) {
+          candidates.add(file);
+          related.add(file);
         }
       }
-      if (isUiSensitiveFile(rel, content)) uiChanged.add(rel);
     }
-  }
+    for (const entry of diff.entries) {
+      for (const target of uiClassificationTargets(entry)) {
+        const relative = normalizeRel(target.rel);
+        if (isUi(relative, target.side === 'base' ? diff.baseSha : undefined)) candidates.add(relative);
+      }
+    }
+    if (!candidates.size) return { status: 'PASS', details: diff.executed
+      ? '本次未发现 UI 文件变化，无需咨询范围证据。' : '比较路径未取得，继续按当前目标核对实际 UI。' };
 
-  const baseShort = base.baseSha.slice(0, 12);
-
-  // ③ 无 UI 变更时不咨询契约，避免误伤非 UI 改动
-  if (uiChanged.size === 0) {
-    return {
-      status: 'PASS',
-      details:
-        `本次 diff 无 UI 文件变更（base=${baseShort}，diff 条目 ${diff.entries.length} 个）` +
-        '——UI scope 门按定义 PASS（未咨询契约）。',
-    };
-  }
-
-  try {
-    let hints: Array<{ name?: string; package_path?: string }> = [];
-    if (input.resolvedInputs) hints = readRunBoundContracts(projectRoot, input.frameworkRoot!, feature, runId).modules;
-    else if (runId) {
+    let contracts: Pick<import('./types').ContractsSpec, 'files' | 'modules'> | undefined;
+    if (input.resolvedInputs || authority?.source === 'feature') {
+      contracts = readRunBoundContracts(projectRoot, frameworkRoot, feature, runId);
+    } else if (runId) {
       const evidence = loadPhaseEvidenceManifest(projectRoot, feature, 'plan');
-      if (!evidence?.integrityOk) throw new Error('plan closure 缺失或完整性失配');
-      const entry = [...evidence.manifest.inputs, ...evidence.manifest.outputs].find(row => path.posix.basename(row.path) === 'contracts.yaml');
-      if (!entry?.sha256) throw new Error('plan closure 未绑定 contracts.yaml');
-      const file = path.join(projectRoot, entry.path);
-      if (sha256FileOrNull(file) !== entry.sha256) throw new Error('contracts.yaml 与原绑定失配；回责任方重签，不能改写绑定');
-      hints = (YAML.parse(fs.readFileSync(file, 'utf8')) as { modules?: typeof hints })?.modules ?? [];
+      const entry = evidence?.integrityOk ? [...evidence.manifest.inputs, ...evidence.manifest.outputs]
+        .find(row => path.posix.basename(row.path) === 'contracts.yaml') : undefined;
+      if (!entry?.exists || !evidenceEntryMatchesCurrentFile(projectRoot, entry, feature)) {
+        throw new Error('plan 的 contracts.yaml 原绑定缺失或失配；由原责任方核对。');
+      }
+      contracts = YAML.parse(fs.readFileSync(path.join(projectRoot, entry.path), 'utf8')) as typeof contracts;
     }
-    const scope = resolveImplementationScope(projectRoot, feature, hints, runId);
-    const violations = classifyChangedFiles([...uiChanged], scope.allowedPrefixes, scope.sourcePrefixes).violations;
+
+    const select = implementationPathSelector(projectRoot, contracts, input.resolvedInputs);
+    for (const entry of diff.entries) {
+      if (!select(entry.path) && !(entry.oldPath && select(entry.oldPath))) continue;
+      for (const target of uiClassificationTargets(entry)) if (candidates.has(normalizeRel(target.rel))) related.add(normalizeRel(target.rel));
+    }
+    const scope = resolveImplementationScope(projectRoot, feature, contracts?.modules, runId);
+    const violations = scope.explicit ? classifyChangedFiles([...related], scope.allowedPrefixes, scope.sourcePrefixes).violations : [];
     return { status: violations.length ? 'FAIL' : 'PASS',
-      details: `实际 UI 变更 ${uiChanged.size} 个；原请求明确范围外 ${violations.length} 个。预测文件表不作许可，实际行为仍由 review/真机验证。`,
+      details: `本次 UI 变化 ${related.size} 个；待核实际关联的工作区候选 ${candidates.size - related.size} 个；原请求明确范围外 ${violations.length} 个。`,
       affectedFiles: violations,
-      ...(violations.length ? { failureKind: 'scope_violation' as const, suggestion: '恢复不符合原请求边界的改动；确需改变真实约束时交责任方。' } : {}) };
+      ...(violations.length ? { failureKind: 'scope_violation', suggestion: '交原责任方核对实际 UI 范围和相关验收。' } : {}) };
   } catch (error) { return { status: 'FAIL', failureKind: 'ui_scope_frozen_contract_missing', details: String(error), suggestion: '恢复有效绑定和工程输入后复验。' }; }
 }

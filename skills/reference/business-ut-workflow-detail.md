@@ -186,7 +186,7 @@ harness 全绿后评估改动是否触及模块 Code Graph 的 `core: true` 节�
 
 资深宿主侧业务级 UT 工程师：作为**既有代码的消费者**，读懂业务编排源码（coding 自选形态）与 data 层源码，产出可通过 harness 出口检查的 UT + DAG。UT 运行框架/编译/执行链路以当前 `project_profile` addendum 与 `ut.compile`/`ut.run` capabilities 为准。流水线**第五环**，上游 plan（`use-cases.yaml`，条件式）/coding/code-review，输出流入 device-testing（消费 `acceptance.yaml > device_focus`）。
 
-**Goal/headless 写边界（BLOCKER）**：只写 profile resolver 给出的 UT 根与本阶段 contract `produces`；不得改需求契约、产品实现源码、review 或 testing 产物。发现可测性缺口须报告并由 runner 回责任阶段。runner 按 invoke 前后哈希归因：改写**已登记的上游 artifact**（需求 / 验收 / 契约等）时本轮证据作废并自动回 owner 全量重验；其余变化记录为观测事实，由本就负责它的 check 裁决（范围、漂移、闭环门）。无法唯一定位 owner 不再终止 run，也不因此豁免上述 check。 本阶段若改了生产代码，`ut_no_src_mutation` 会按 coding change 归类并给出所需的一次复核。
+**Goal/headless 写边界（BLOCKER）**：只写 profile resolver 给出的 UT 根与本阶段 contract `produces`；不得改需求契约、产品实现源码、review 或 testing 产物。发现可测性缺口须报告并由 runner 回责任阶段。签发材料有变化时交原责任方按原请求重核。UT 继续核实际用例和执行原件，受影响的产品审查由 `ut_no_src_mutation` 提示。
 
 ## 触发条件
 
@@ -208,10 +208,7 @@ harness 全绿后评估改动是否触及模块 Code Graph 的 `core: true` 节�
 **模式与目标的机器化通道**：跑 harness 时设环境变量 `MAISON_UT_MODE`（`repair_existing_ut` /
 `cover_existing_code`，缺省 cover_feature_change）声明工作模式；`MAISON_UT_TARGETS`（分号/逗号
 分隔的相对路径）点名目标文件（可指向未被触碰的存量文件）。`[REG-*]` 标签仅前两种模式合法。
-cover_existing_code / repair 模式下须同时给显式基线锚 `HARNESS_DIFF_BASE_REF`（本地已有的
-非需求源码改动以显式锚区分，direct 场景框架不自动推断入口状态）。该锚只作用于 **git diff
-生效域**；`ut_no_src_mutation` 在 review 已正式闭环时用 review closure attestation 的内容哈希
-基线，设它不影响该门禁结论。
+用户指定历史比较区间时给 `HARNESS_DIFF_BASE_REF`。普通复验按本次已审材料、选择的测试、执行原件和实际依赖判断。
 
 ### cover_feature_change 内部路由（同触发词「生成 UT」）
 
@@ -342,7 +339,7 @@ verifier 格式缺口须保留原回复和精确诊断；Goal 内返回 runtime�
 8. ut_import_whitelist 强约束。
 9. P0 优先，再扩展 P1/P2。
 10. DAG/UT description 用中文。
-11. Harness 验证闭环：agent 必须自跑 Step 8 + 主动触发 verifier；`ut_no_src_mutation` 在 review 已正式闭环时基线=review closure attestation（逐文件内容哈希，**与 git 提交状态无关**）——报告大量非 UT 文件漂移时先核对 review 闭环是否最新（漂移属合法改动就回 coding 纳入并重走 review 闭环刷新基线；误改则从编辑器本地历史/备份取回 review 时的内容，再用 attestation 里该文件的 sha256 **核对**——attestation 只存 `{path, sha256}` 不存内容，能验证不能还原，取不回就回 coding 重建），**禁止要求用户提交 coding 产物来过门禁**，也禁止要求用户"批量授权历史变更"。`stale_diff_base` / `HARNESS_DIFF_BASE_REF=working` 这剂药只对 **盘上观察不到 review 闭环痕迹的 git fallback 域**有效，attestation 基线下不存在"历史变更多"这种形态；**更不得靠删除 review 闭环产物来"换个基线重跑"**——闭环证据残缺（attestation 还在、summary 没了/未闭环）一律 fail-closed；即便把闭环产物删光能落回 fallback 域，那也是把裁决降级、不是出路。
+11. 运行实际 UT 与独立 verifier。\`ut_no_src_mutation\` 用本次已审材料核实现和依赖的变化；只复验受影响范围。缺旧对照时，报告仍可引用可核的测试输入和原生执行。
 12. **写入责任**：同unit作者可在真实scope内修实现及测试；仅UT专项请求不自扩产品写权，工具/独核不改产品或自签结果。需要契约/范围变化交原设计责任方；原署名/receipt不洗白失败，详见约束#12。
 
 ## 关联文件

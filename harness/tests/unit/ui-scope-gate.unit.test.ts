@@ -13,6 +13,7 @@
 // ============================================================================
 
 import * as fs from 'fs';
+import { createHash } from 'crypto';
 import { writeReceiptManifestPointer } from '../utils/completion-chain-seed';
 import * as os from 'os';
 import * as path from 'path';
@@ -136,7 +137,7 @@ function closePlan(root: string): void {
 /** plan closure + run 出生基线（现代 createGoalRun 形态） */
 function anchor(root: string, opts: { closure?: boolean; base?: boolean; restricted?: boolean } = {}): void {
   if (opts.closure !== false) closePlan(root);
-  if (opts.base !== false) {
+  {
     const manifestPath = path.join(root, `doc/features/${FEATURE}/goal-runs/${RUN_ID}/manifest.json`);
     if (!fs.existsSync(manifestPath)) {
       const manifest = buildGoalManifestFromInput({
@@ -144,13 +145,13 @@ function anchor(root: string, opts: { closure?: boolean; base?: boolean; restric
         run_id: RUN_ID,
         requirement: opts.restricted ? '# Scope\n```yaml\nin_scope_modules: [FinancialCard]\nout_of_scope_modules: [WalletMain]\nrationale: explicit user boundary\n```' : 'Implement the requested feature; file locations are forecasts.',
         start_phase: 'plan',
-        end_phase: 'coding',
+        end_phase: opts.base === false ? 'plan' : 'coding',
         unattended: { write_mode: 'full-access', approval_mode: 'never' },
       }, { projectRoot: root });
       createGoalRun({
         projectRoot: root,
         manifest,
-        chain: ['plan', 'coding'],
+        chain: opts.base === false ? ['plan'] : ['plan', 'coding'],
         resolveHead: () => git(root, ['rev-parse', 'HEAD']),
       });
     }
@@ -158,7 +159,18 @@ function anchor(root: string, opts: { closure?: boolean; base?: boolean; restric
 }
 
 function gate(root: string, runId: string | null = RUN_ID): ReturnType<typeof runUiDiffWithinDeclaredFiles> {
-  return runUiDiffWithinDeclaredFiles({ projectRoot: root, feature: FEATURE, runId });
+  return runUiDiffWithinDeclaredFiles({ projectRoot: root, feature: FEATURE, runId, frameworkRoot: FRAMEWORK_ROOT });
+}
+
+function confirmed(root: string, file: string, before: Buffer | null): void {
+  const digest = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+  const absolute = path.join(root, file);
+  const after = fs.existsSync(absolute) ? digest(fs.readFileSync(absolute)) : null;
+  fs.appendFileSync(path.join(root, `doc/features/${FEATURE}/goal-runs/${RUN_ID}/events.jsonl`), JSON.stringify({
+    ts: new Date().toISOString(), type: 'phase_write_violation', phase: 'coding', invoke_id: 'coding-confirmed',
+    violations: [{ path: file, violation: 'outside_authority', authority_confirmed: true,
+      pre_sha256: before ? digest(before) : null, post_sha256: after }],
+  }) + '\n');
 }
 
 export function runAll(): UnitCaseResult[] {
@@ -175,11 +187,14 @@ export function runAll(): UnitCaseResult[] {
     assert(!hasUiContentMarkers('export const a = 1;'), '普通代码不命中');
   });
 
-  run(results, '① 原请求明确排除 WalletMain，HomeTab 修改仍 FAIL', () => {
+  run(results, '① 同一禁区的并行变化只列候选，确证本次写入仍 FAIL', () => {
     const { root } = setupHost();
     withTrust(root, () => {
       anchor(root, { restricted: true });
+      const before = fs.readFileSync(path.join(root, UNDECLARED));
       w(root, UNDECLARED, '@Entry\n@Component\nstruct HomeTabPage { build() { Text("BANK CARDS INJECTED") } }');
+      assert(gate(root).status === 'PASS', 'exact same diff is parallel until the operation is confirmed');
+      confirmed(root, UNDECLARED, before);
       const r = gate(root);
       assert(r.status === 'FAIL', `未声明 UI 修改须 FAIL，got ${r.status}: ${r.details}`);
       assert(r.failureKind === 'scope_violation', `failureKind=${r.failureKind}`);
@@ -225,11 +240,13 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  run(results, '⑥ agent 改码并自行 commit → 仍检出越界（基线=coding_base_sha 覆盖 committed）', () => {
+  run(results, '⑥ 已证实的禁区写入提交后仍会被报告', () => {
     const { root } = setupHost();
     withTrust(root, () => {
       anchor(root, { restricted: true });
+      const before = fs.readFileSync(path.join(root, UNDECLARED));
       w(root, UNDECLARED, '@Entry\n@Component\nstruct HomeTabPage { build() { Text("committed sneak") } }');
+      confirmed(root, UNDECLARED, before);
       git(root, ['add', '-A']);
       git(root, ['commit', '-qm', 'agent self-commit']);
       const r = gate(root);
@@ -238,8 +255,8 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  run(results, '删除未声明 UI 文件 → base 侧内容分类仍检出（改后内容已不在盘上）', () => {
-    const { root } = setupHost();
+  run(results, '删除已采用的禁区 UI 文件 → 从基线原件识别类型', () => {
+    const { root } = setupHost({ declaredFiles: [DECLARED, UNDECLARED_BY_CONTENT] });
     withTrust(root, () => {
       anchor(root, { restricted: true });
       // UNDECLARED_BY_CONTENT 路径不含 pages/——只能从 base 侧读内容才能判 UI
@@ -254,8 +271,9 @@ export function runAll(): UnitCaseResult[] {
     const { root } = setupHost();
     withTrust(root, () => {
       anchor(root, { restricted: true });
-      w(root, '01-Product/WalletMain/src/main/ets/pages/NewSneakPage.ets',
-        '@Entry\n@Component\nstruct NewSneakPage { build() {} }');
+      const file = '01-Product/WalletMain/src/main/ets/pages/NewSneakPage.ets';
+      w(root, file, '@Entry\n@Component\nstruct NewSneakPage { build() {} }');
+      confirmed(root, file, null);
       const r = gate(root);
       assert(r.status === 'FAIL', `untracked 新 UI 文件须 FAIL，got ${r.status}: ${r.details}`);
       assert((r.affectedFiles ?? []).some(f => f.endsWith('NewSneakPage.ets')), 'affected 须含新文件');
@@ -289,14 +307,13 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  run(results, '缺 coding_base_sha → FAIL ui_scope_base_missing（不回退 trace.start_commit）', () => {
+  run(results, '普通 UI 范围验证不要求出生比较基线', () => {
     const { root } = setupHost();
     withTrust(root, () => {
       anchor(root, { base: false });
       w(root, DECLARED, 'struct CardPackPage { build() { Text("v2") } }');
       const r = gate(root);
-      assert(r.status === 'FAIL', `缺基线须 FAIL，got ${r.status}`);
-      assert(r.failureKind === 'ui_scope_base_missing', `failureKind=${r.failureKind}`);
+      assert(r.status === 'PASS' && r.details.includes('本次 UI 变化 1'), r.details);
     });
   });
 
@@ -310,8 +327,8 @@ export function runAll(): UnitCaseResult[] {
     });
   });
 
-  run(results, 'round19 P1：删除 live ui-spec 不能绕过——改未声明 UI 仍 FAIL（适用面只看 diff）', () => {
-    const { root } = setupHost();
+  run(results, '实际采用的禁区 UI 文件不因 ui-spec 缺失而豁免', () => {
+    const { root } = setupHost({ declaredFiles: [DECLARED, UNDECLARED] });
     withTrust(root, () => {
       anchor(root, { restricted: true });
       // 绕过尝试：agent 删掉 ui-spec 让"UI 面判定"落空，再改未声明 UI
@@ -322,7 +339,7 @@ export function runAll(): UnitCaseResult[] {
       assert(r.failureKind === 'scope_violation', `failureKind=${r.failureKind}`);
     });
     // 无 ui-spec 的 feature（从建库起就没有）：改未声明 UI 同样拦——UI 保护面不依赖 ui-spec 在场
-    const { root: root2 } = setupHost({ uiSpec: false });
+    const { root: root2 } = setupHost({ uiSpec: false, declaredFiles: [DECLARED, UNDECLARED] });
     withTrust(root2, () => {
       anchor(root2, { restricted: true });
       w(root2, UNDECLARED, '@Component struct X { build() {} }');
@@ -338,7 +355,7 @@ export function runAll(): UnitCaseResult[] {
       w(root, '02-Feature/FinancialCard/src/main/ets/model/CardData.ets', 'export const cards = [];');
       const r = gate(root);
       assert(r.status === 'PASS', `非 UI 改动须 PASS，got ${r.status}: ${r.details}`);
-      assert(r.details.includes('未咨询'), `PASS 详情须声明白名单未咨询：${r.details}`);
+      assert(r.details.includes('未发现 UI 文件变化'), r.details);
     });
   });
 

@@ -2,7 +2,7 @@
 
 本入口用于直接修改的 compile/架构能力，以及实际写/跑测试或经 checker 校验的 review/UT/testing 请求。先消费 [统一前门](project-entry.md) 的本请求与用户覆盖；只完成实际请求终点，不强造 Feature、CU、Goal 或 `_adhoc` 身份。只审查、解释或设计用例时直接用对应 Skill 共享方法，无需 request/facts/六章报告。已有在途 Feature/CU 仍走原范围，不能拆 request 绕开其义务。
 
-纯编译可独立执行 `cd framework/harness` 后的 `npm run compile -- --project-root <宿主根> --json`。直接修改的本请求来源及内容核对并入同次能力调用：客户端可自动提供准确来源时省略 `--session-ref`，先设计/先 CLI 无需先触发编辑 hook；已有原 request/Goal 或跨入口交接则原样复用返回的 `session_ref`，不重新选择最新 user。JSONL 引用是绝对原件加真实 user ID（相应格式可用 `line:n`）；DSH 引用是绝对压缩原件加真实 `user/message.data.id`；OpenCode 引用是 `opencode:<原生SQLite绝对路径>?session=<SID>#<userID>`，当次 shell 的 call 引用由桥自动提供，不要求手拼。命令核原件 session/cwd/真实用户来源，从正常调研读取带来源事实，不能只给档位文本。缺原件/可靠基线仍可报告实际 compile/显式局部检查；没有可用原生原件时，自动 request 可仅用 `--target` / `--test-target` 实际执行显式局部能力，无需手写 JSON，仍消费同一 request schema/parser/provider。原 request 的 `origin_gap` 保留真实来源与完整对账缺口，工具实际执行结果独立显示，不签完整 review 或请求 PASS，也不能据此授予豁免或固定档位。facts 区分原生作者带来源的调研与原 parser 对当前字节的实际读取，不把机械读取说成语义已获证明。编译日志在宿主 `doc/reports/compile/`；编译绿只证明实际执行的检查，首个失败原因、后续恢复和仍未知项分别保留原件。
+纯编译可独立执行 `cd framework/harness` 后的 `npm run compile -- --project-root <宿主根> --json`。直接修改的本请求来源及内容核对并入同次能力调用：客户端可自动提供准确来源时省略 `--session-ref`，先设计/先 CLI 无需先触发编辑 hook；已有原 request/Goal 或跨入口交接则原样复用返回的 `session_ref`，不重新选择最新 user。JSONL 引用是绝对原件加真实 user ID（相应格式可用 `line:n`）；DSH 引用是绝对压缩原件加真实 `user/message.data.id`；OpenCode 引用是 `opencode:<原生SQLite绝对路径>?session=<SID>#<userID>`，当次 shell 的 call 引用由桥自动提供，不要求手拼。命令核原件 session/cwd/真实用户来源，从正常调研读取带来源事实，不能只给档位文本。原件或比较区间不可读时，仍可报告实际 compile 和有依据的显式局部检查；没有可用原生原件时，自动 request 可仅用 `--target` / `--test-target` 实际执行显式局部能力，无需手写 JSON，仍消费同一 request schema/parser/provider。报告保留 `origin_gap` 并把结论限定在已执行的显式目标。豁免与固定档位须由真实用户原件或已受理范围支持。facts 记录原 parser 对当前输入的读取及作者给出的判断。纯工程编译日志默认写宿主 `doc/reports/compile/`，带原设计 request 时默认写其 `compile/` 子目录。
 
 有架构配置时 compile 默认对相关实际文件执行原依赖方向/跨模块出口检查；`--architecture-only` 只执行同一架构判据，不构建，也不要求 Feature 专用蓝图/CU 文档。`--target <项目相对路径>` 可重复限定显式目标，不能据此隐藏本请求其它实际影响。
 
@@ -16,10 +16,10 @@ npm run compile -- --project-root <host> --session-ref '<绝对transcript>#<原�
 
 ## Agent / adapter 执行顺序
 
-1. 首轮正常调研取得原请求、实际读取路径、Q1/Q2/Q3、独立结果依赖、跨部件、预期明确/做法唯一及起始调查；不要求用户表单或手写 JSON。首次能力命令从真实原生 payload/环境自动定位，已有引用则沿同一 `session_ref` 传递。边界解释、真实用户原文/定位、覆盖、精确 base/head、初始 dirty 归属及派生外框保存在同一 schema 的原 request；只复制本请求所需内容，不导出整段会话。
+1. 首轮核对原请求、验收与实际代码。在正常助手文本给出 Q1/Q2/Q3、依赖结果、跨部件、预期明确、做法唯一的值、理由与当前可读路径。首次能力命令由真实原生 payload 或环境定位用户，已有引用沿同一 `session_ref`。原 request 保留真实用户原话、引用、已核控制与所需的业务输入。
 2. **无 `--request-file` 时自动准备**：现有 writer 在本次 `reportDir/request.json` 写执行派生件，使用同一 parser/provider/报告。显式 `--report-dir` 须位于项目内、framework/.git/features_dir 外；省略默认落 `doc/reports/request/<原生请求身份短哈希>/<phase>`，同请求恢复复用。按实际目标可传重复的 `--target`、`--test-target`、`--allow-test-write`。独立 testing 用 `--cases`，可用 `--test-plan` 绑定现有可执行计划路径。这些参数是本次目标/许可，不是可执行命令字符串。
 3. 首次 UT 写入前完成载体准备，自动路径并入首次能力调用；需要先查看 `gaps` 时带原 `--prepare-request`。直接使用返回的 request 路径、哈希、基线、bindings、reportDir/factsPath 与 allowed writes，不自算身份。模块/载体缺口在既有授权内继续补齐，未覆盖才指出具体缺失授权；不得先写到不可执行目录再探载体。自动 prepare 会落上述派生 request/上下文；**显式 request-file 的旧 prepare 仍只读**。
-4. 阅读真实目标/具体 base 到 head 差异。按返回上下文建立本 phase 的 P1 facts（`schema_version: "1.1"`、subject 仅 request_sha256，不写 feature/run_id），review 写真实报告，UT/testing 在 allowed_test_writes 内准备并执行。必要输入改变重新准备，不沿旧绑定宣称当前输入通过。同一请求途中 commit/恢复不重置初始基线；重叠初始 dirty 无前像须披露 unknown，不能吞入用户旧修改。
+4. 按真实目标和实际依赖审查当前字节。普通内容比较用 HEAD，显式选择的历史区间按原值。沿返回上下文准备本阶段 facts（`schema_version: "1.1"`、subject 仅 request_sha256），review 写真实报告，UT/testing 按 allowed_test_writes 准备。保留用户修正和并行工作，独立路径只在终报披露。
 5. 实际执行沿同一命令去掉 `--prepare-request`，读取 summary/checks 和真实证据；失败/缺口持续交回原作者，完成本请求全部适用义务才收口。自动/显式请求共用专业检查、隔离、载体和预期来源合同。特别简单以原始用户预期为来源，小型读取同一路径短蓝图的当前身份与具体验收；不建假 CU，不以旧 revision、路径存在或 characterization 冒充本次验收。
 
 ```powershell
@@ -38,7 +38,7 @@ npm run check -- --project-root <host> --phase review --session-ref '<绝对tran
 
 小型先完成同协议短蓝图的四样业务内容，再沿原请求实现与调用本能力。第一次设计调用在已有 `check:component-blueprint` 中自动核原生来源（已有引用则原样传 `--session-ref`），并返回真实 `phase: component-design` 的 `request_file/source_refs`，默认只准备 request/稳定原文，不借本页 review/UT/testing 身份。只有获准补 canonical 机器来源时才加 `--prepare-source`；后续 `--request-file <返回路径>` 默认只读重验，不修改 canonical/request/source。已有权威项目内来源优先复用；纯 inline 必需项目内源时，原 writer 保存稳定原文输入底稿，出处绑定保留在同 request，不 hash 可变 request 整文件或建立第二需求真源。具体设计准备见 [蓝图设计输入](../concepts/blueprint-design-inputs.md#小型请求的首次准备与消费)。
 
-后续能力复用原用户目标、覆盖、基线和同一蓝图当前身份及具体验收 ID，自动准备使用原 parser/typed 合并，不新建 CU、假 Feature 或并列设计文件。review 消费目标、短设计、最终 diff 和有效验证；UT 每条预期实际指向当前验收，不以路径存在、旧 revision、只有标签或 characterization 冒充已验。相关蓝图修订后仅重验受影响绑定/断言，其它有效结果复用；仅编译/仅 review 请求仍止于自身终点，小型请求完成不代 CU/Component completion。
+后续能力复用原用户目标、覆盖和同一蓝图当前身份及具体验收 ID，自动准备使用原 parser/typed 合并，不新建 CU、假 Feature 或并列设计文件。review 消费目标、短设计、最终 diff 和有效验证；UT 每条预期实际指向当前验收，不以路径存在、旧 revision、只有标签或 characterization 冒充已验。相关蓝图修订后仅重验受影响绑定/断言，其它有效结果复用；仅编译/仅 review 请求仍止于自身终点，小型请求完成不代 CU/Component completion。
 
 设计检查返回的原 `phase: component-design` request 可直接交同一 check 入口续接，不能把原 JSON 手工改成 review/ut：
 
@@ -48,13 +48,15 @@ npm run check -- --project-root <host> --phase ut --request-file <原component-d
 npm run check -- --project-root <host> --phase testing --request-file <原component-design的request_file> --prepare-request
 ```
 
-writer 自动在原设计 request 目录的 `<phase>/request.json` 派生本阶段请求；可选 `--report-dir <独立目录>` 覆盖落点。去掉 `--prepare-request` 执行同一命令，review 先在返回目录写真实报告，UT 仍先完成载体及 allowed writes 准备。各阶段保留 `origin_request` 指向原设计 request，以及工具发布的 `blueprint: {ref, acceptance_ids}`；`ref` 为经 canonical/同一 intake 重验的当前 ComponentBlueprintRef，`acceptance_ids` 是真实验收 ID，作者不手填摘要或换身份。派生读取原 user、起始 base 和当前来源，复用原 parser/provider，不重置基线或新建任务。
+writer 自动在原设计 request 目录的 `<phase>/request.json` 派生本阶段请求；可选 `--report-dir <独立目录>` 覆盖落点。去掉 `--prepare-request` 执行同一命令，review 先在返回目录写真实报告，UT 仍先完成载体及 allowed writes 准备。各阶段保留 `origin_request` 指向原设计 request，以及工具发布的 `blueprint: {ref, acceptance_ids}`；`ref` 为经 canonical/同一 intake 重验的当前 ComponentBlueprintRef，`acceptance_ids` 是真实验收 ID，作者不手填摘要或换身份。派生读取原用户及当前来源，沿原 parser 和 provider。普通内容影响按当前 HEAD，用户指定的比较区间照用。
+
+小型 review 的准备结果返回 `request_review`，含原用户 `requested_result`、已核更正、附件、当前验收和契约。审查者在原 `review_report` 的「原请求验收对照」中填写「验收项 | 原用户依据 | 当前承诺 | 结论 | 差异」。逐条引真实原文，核对条件、预期、验收层级和契约，结论填「保持」或「差异」。丢失原承诺时指出缺失内容及 ID，拒绝通过。对已签短蓝图的调整，先沿同一原 request review 当前候选，通过后再运行原蓝图检查重签。终检报告同时列出未纳入本次 review 的工作区改动。
 
 小型 UT 的每条预期仍在紧邻用例上方登记 `// expectation: <canonical蓝图项目相对路径>#AC-1`；路径和 AC ID 都取本次真实绑定，不写虚构标签。原 `request_expectation_source` 会核当前蓝图 revision/身份、ID 是否存在及绑定验收是否被实际预期断言覆盖；旧 revision、不存在的 AC 或只有 characterization 不能满足绑定 AC。蓝图相关内容修订后回同一设计/请求链更新真实绑定，再核受影响断言，不靠改注释或删 FAIL 清账。
 
 编译也可用 `npm run compile -- --project-root <host> --request-file <原component-design的request_file> --json`。返回的 `next` 消费短蓝图验收分层与实际代码影响，把适用验证接续到同一原 request。
 
-小型 testing 从短蓝图取得 `cases`。准备结果的 `device_acceptance` 提供适用 ID、操作和预期。在返回的 `inputs.test_plan` 路径准备 Hylyre 可执行计划，已有合格材料可通过 `--test-plan <项目相对路径>` 复用。对照原操作、设备关注点与预期，在「关联 AC」列登记每条 TC 实际验证的 ID。同一 TC 可关联多个 ID，须确实覆盖每项可观察预期。去掉 `--prepare-request` 正式执行后，脚本报告按 AC 列出 TC、结果及原生证据路径。对 `both` 另需保留对应的 UT 结果。纯 unit 且无设备类影响时不执行 testing。用户明确排除的验证保留未执行。
+小型 testing 从短蓝图取得 `cases`。准备结果的 `device_acceptance` 提供适用 ID、操作和预期。在返回的 `inputs.test_plan` 路径准备 Hylyre 可执行计划，已有合格材料可通过 `--test-plan <项目相对路径>` 复用。对照原操作、设备关注点与预期，在「关联 AC」列登记每条 TC 实际验证的 ID。同一 TC 可关联多个 ID，须确实覆盖每项可观察预期。去掉 `--prepare-request` 正式执行后，脚本报告按 AC 列出 TC、结果及原生证据路径。对 `both` 另需保留对应的 UT 结果。 同一执行键下，专项 testing 在原目录用最近实际 attempt 的每个 TC 的冻结件核现有证明。某项唯一原件缺失时，只将该项保留欠验并补其用例。共享设备、包或执行键变化、较新真实失败和显式 fresh 仍按既有执行链处理。纯 unit 且无设备类影响时不执行 testing。用户明确排除的验证保留未执行。
 
 新依据需完整设计时沿同一蓝图原位扩充，完成适用质询/准入后才接受 CU；不重置起点、不推倒合法实现。用户固定外框只披露影响，不暗中加重；已有受管 run 的真实用户调整须沿原范围修订核原文及请求关联，保留历史成果/失败，不拆成新 request 清账。用户仅固定小型不排除 UT/testing，真实产品 FAIL 不因排除后续验证变 PASS。
 
@@ -105,7 +107,7 @@ prepare 不运行 checker；显式 request-file 路径不创建目录或控制�
 
 本目录保存 context/facts.md、专业报告、script-report.json、summary.json；summary 明确 subject=request、completion_target=request，并记录请求、基线、目标、输入绑定与真实 evidence 引用。它不是 Feature receipt、attestation 或 completion，不能据此推进 CU/Feature。
 
-report-dir 已有其他请求/基线的机器输出时拒绝复用。目标或来源变化后，Agent 选择另一个明确目录重新准备；不静默覆盖旧结果。路径检查解析真实路径，禁止通过链接写入 Feature 或 framework。Feature 配置解析出的 receipt/report/run 目录即使尚未生成报告也受保护，共享报告根下的独立兄弟目录仍可使用。
+沿原 request 的报告目录继续。writer 校验报告所有者和当前业务输入，保留旧报告及真实失败。阶段指纹或实际绑定变化时重验相应项目；旧摘要只有经原 writer 口径验真才能作为旧结论使用。路径检查继续保护 Feature、框架及其配置出的 receipt、report 和 run 目录。
 
 ## P4/P5 接线合同
 

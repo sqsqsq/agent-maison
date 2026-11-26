@@ -320,6 +320,7 @@ export function appendFeatureScopeRevision(input: {
   nextScope: ExecutionScope;
   trigger?: { phase?: string; check_id?: string };
   revisionInput?: ExecutionScopeInput | null;
+  expectedPreviousFingerprint?: string;
   featuresDirAbs?: string;
 }): { record: FeatureFrozenScope; revision: FeatureScopeRevision | null } {
   const opts = input.featuresDirAbs ? { featuresDirAbs: input.featuresDirAbs } : undefined;
@@ -329,6 +330,9 @@ export function appendFeatureScopeRevision(input: {
   const transferred = currentFeatureScopeTransfer(record);
   if (transferred) throw new Error(`[execution-scope] feature 范围已转交给 run ${transferred.run_id}——修订应在该 run 内进行`);
   const previous = featureEffectiveScope(record);
+  if (input.expectedPreviousFingerprint && executionScopeFingerprint(previous) !== input.expectedPreviousFingerprint) {
+    throw new Error('[execution-scope] 同一 Feature 的已签范围已更新，请以当前版本重新核对该修订');
+  }
   // 幂等：目标范围与当前有效范围**完全相同** = 没有可修订的东西（与 run 路径的 no-op 同义），
   // 重试同一条修订因此不会追加第二条。
   if (executionScopeFingerprint(input.nextScope) === executionScopeFingerprint(previous)) {
@@ -560,7 +564,7 @@ export function ensureFeatureExecutionScopeFrozen(input: {
   }
 }
 
-/** Compatibility exit for independent checks; only GoalPhaseRuntime advances full delivery. */
+/** Apply a closed definition revision through the existing Feature writer; runtime owns full delivery. */
 export function applyFeatureScopeRevisionsThenMaybeComplete(input: {
   projectRoot: string;
   frameworkRoot: string;
@@ -574,7 +578,29 @@ export function applyFeatureScopeRevisionsThenMaybeComplete(input: {
   const record = readFeatureFrozenScope(input.projectRoot, input.feature);
   if (!record) return { revisionApplied: false, skippedReason: 'no-frozen-record' };
   if (currentFeatureScopeTransfer(record)) return { revisionApplied: false, skippedReason: 'transferred' };
-  return { revisionApplied: false, skippedReason: featureEffectiveScope(record).completion_target === 'feature'
+  const previous = featureEffectiveScope(record);
+  if (input.phase === 'spec' || input.phase === 'plan') {
+    const { readReusableCheckResult } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
+    const original = readReusableCheckResult({ ...input, phase: input.phase });
+    const summary = original?.summary as { verdict?: unknown; closure_status?: unknown } | undefined;
+    const proposals = (original?.checks as readonly CheckResult[] | undefined)?.filter(check => check.id === 'design_scope_facts' && check.status === 'PASS')
+      .flatMap(check => check.scope_revision_input ? [check.scope_revision_input] : []) ?? [];
+    if (summary?.verdict === 'PASS' && summary.closure_status === 'closed' && proposals.length) {
+      const { resolveScopeRevisionProposal } = require('./feature-track') as typeof import('./feature-track');
+      const { authorizedScopePhases } = require('./execution-scope') as typeof import('./execution-scope');
+      const workflow = resolveWorkflowSpec(input.projectRoot, { frameworkRoot: input.frameworkRoot });
+      const revision = resolveScopeRevisionProposal({ ...input, workflow, previous, proposals,
+        authorizedPhases: authorizedScopePhases(record.execution_scope, workflow), currentPhase: input.phase,
+        completedPhases: new Set([...(input.completedPhases ?? []), input.phase]) });
+      if (revision) {
+        appendFeatureScopeRevision({ ...input, nextScope: revision.scope, revisionInput: revision.input,
+          expectedPreviousFingerprint: executionScopeFingerprint(previous),
+          trigger: { phase: input.phase, check_id: 'design_scope_facts' } });
+        return { revisionApplied: true };
+      }
+    }
+  }
+  return { revisionApplied: false, skippedReason: previous.completion_target === 'feature'
     ? 'goal-runtime-required' : 'request-terminal' };
 }
 

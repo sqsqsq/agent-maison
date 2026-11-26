@@ -6,9 +6,10 @@ import { createIdentityNeutralDigestReaders, identityNeutralDigest } from '../..
 import { loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { resolveComponentBlueprintRef } from '../../scripts/utils/component-blueprint-path';
 import { publishArchitectureRevision } from '../../scripts/utils/init-task-executor';
-import { resolvePhaseEvidenceManifest, recomputeManifestAggregate, recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest, recomputePhaseEvidenceStaleness } from '../../scripts/utils/phase-evidence-manifest';
 import { resolvePhaseWriteBoundary } from '../../scripts/utils/phase-write-boundary';
 import { resolveCapabilityResolutionEntryInput } from '../../scripts/utils/capability-resolution-entry-input';
+import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
 import { buildPhasePrompt } from '../../scripts/goal-phase-runtime';
 import { observeFeatureState, assessObservation } from '../../scripts/utils/assess';
 import type { UnitCaseResult } from '../run-unit';
@@ -124,13 +125,15 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
     for (const phase of ['spec', 'plan'] as const) {
       const file = path.join(root, rel, phase, 'reports/phase-evidence-manifest.json');
       const old = JSON.parse(fs.readFileSync(file, 'utf8'));
-      old.environment = resolvePhaseEvidenceManifest({ projectRoot: root, feature, phase, frameworkRoot,
-        requirementSha: old.environment.requirement_sha256 }).environment;
-      old.aggregate_sha256 = recomputeManifestAggregate(old);
-      fs.writeFileSync(file, JSON.stringify(old));
+      const options = { projectRoot: root, feature, phase, frameworkRoot };
+      const bridge = resolveCapabilityResolutionEntryInput({ ...options, featuresDir: 'doc/features', goalRunId: runId });
+      const resolvedInputs = resolveCapabilityInputs({ ...options, track: 'full', ...bridge }).inputs;
+      assert(resolvedInputs, `${phase}: the fixture must admit current stage inputs`);
+      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ ...options, resolvedInputs,
+        factsContext: bridge.factsContext, requirementSha: old.environment.requirement_sha256 }));
     }
-    assert(recomputePhaseEvidenceStaleness(root, feature, ['spec', 'plan'], { frameworkRoot, runId })
-      .every(item => item.verdict === 'fresh'));
+    const upstream = recomputePhaseEvidenceStaleness(root, feature, ['spec', 'plan'], { frameworkRoot, runId });
+    assert(upstream.every(item => item.verdict === 'fresh'), JSON.stringify(upstream));
     const manifest = JSON.parse(fs.readFileSync(path.join(root, rel, 'goal-runs', runId, 'manifest.json'), 'utf8'));
     const coding = counted(() => {
       const authorityReaders = createIdentityNeutralDigestReaders();

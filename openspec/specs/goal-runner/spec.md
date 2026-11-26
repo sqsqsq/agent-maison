@@ -1894,7 +1894,7 @@ Enforcement: `harness/scripts/check-coding.ts`, `harness/scripts/utils/phase-sta
 
 ### Requirement: Current integrity blockers halt without reviving framework Git adjudication
 
-Current, machine-produced integrity blockers such as process preload injection SHALL continue to classify through the existing `framework_integrity_block` / framework-fault safety path and halt without asking an agent to tamper with framework or gate artifacts. `phase_write_violation` owner invalidation/backtrack semantics SHALL remain unchanged.
+Current, machine-produced integrity blockers such as process preload injection SHALL continue to classify through the existing `framework_integrity_block` / framework-fault safety path and halt without asking an agent to tamper with framework or gate artifacts. Only a confirmed authorization violation or an actual authorized backtrack SHALL affect recovery. An observation of changed bytes alone SHALL NOT create a backtrack, and relevant input drift SHALL return the affected conclusion to its original owner for revalidation.
 
 Framework Git state SHALL NOT produce an integrity blocker in a new run. New runs SHALL NOT produce `framework_integrity`, `framework_control_plane_dirty`, or any retired manifest/hash subtype. Historical summaries containing old `framework_integrity`, `framework_drift`, `framework_foreign_file`, manifest subtypes, or `integrity_subtypes` SHALL remain readable provenance and SHALL NOT be rewritten or used as current classification, halt, retry, continuation-prompt, or recovery input.
 
@@ -2178,7 +2178,7 @@ Stage gates, assess, resume and completion SHALL consume the same existing sourc
 
 ### Requirement: Session handoff preserves original invocation lifecycle
 
-会话 next/report SHALL 调用同一 GoalPhaseRuntime，交出请求 SHALL 为非终态控制结果，不写 executor_waiting/phase_halt/run_end。签发前 SHALL 保全原作者 instruction、写前快照、写界和身份，session phase_start SHALL 引用不可变原件；请求/报告只由共同 handoff writer 保存，不另建 pending 状态库。重领/重报/补 gate SHALL 不重计 attempt/预算，不重拍前态；同一 attempt 重签只换合法 fence，不移动原 invoke 时间。签发后的作者窗口 SHALL 计时至报告到达与原截止时间中的较早者；截止后返回 CLI 前的离开时间 SHALL 不计，真实返回 CLI、gate 与收尾仍按原口径计时。
+会话 next/report SHALL 调用同一 GoalPhaseRuntime，交出请求 SHALL 为非终态控制结果，不写 executor_waiting/phase_halt/run_end。签发前 SHALL 保全原作者 instruction、适用写界和身份，并在可读取时记录字节观察，session phase_start SHALL 引用不可变原件；请求/报告只由共同 handoff writer 保存，不另建 pending 状态库。重领/重报/补 gate SHALL 不重计 attempt/预算，不重拍前态；同一 attempt 重签只换合法 fence，不移动原 invoke 时间。签发后的作者窗口 SHALL 计时至报告到达与原截止时间中的较早者；截止后返回 CLI 前的离开时间 SHALL 不计，真实返回 CLI、gate 与收尾仍按原口径计时。
 
 #### Scenario: Last authorized invocation uses the remaining turn
 - **WHEN** the last legal invocation has consumed the turn budget and reports a genuine result within the remaining verification reserve

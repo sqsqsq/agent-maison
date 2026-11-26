@@ -5,7 +5,7 @@ TBD - created by archiving change autonomous-recovery-without-human-gates. Updat
 ## Requirements
 ### Requirement: Phase write ownership is derived from existing workflow contracts and scope resolvers
 
-For every controlled phase invocation, the harness SHALL derive the writable artifact and source domains from the resolved workflow chain, `loadFeatureContracts`/`phaseContractIndex`, contract `produces`, the artifact registry and phase-evidence resolver, coding plan/module scope, the active profile's UT test-root resolver, and the existing testing protected-source resolver. The workflow SHALL provide phase membership/order only and MUST NOT be treated as a path-owner table. A path that uniquely matches the current phase's existing producer/resolver SHALL be writable. A path with no match or multiple owners SHALL be recorded as an observed fact with its candidate owners and matched roles, and the invocation SHALL continue; it SHALL NOT produce a write violation, halt the run, or yield a terminal incident. The resolver MUST NOT be extended with a file-name exclusion list, a parallel permission table, or a persisted owner manifest to compensate for paths the artifact registry deliberately does not describe.
+For every controlled phase invocation, the harness SHALL derive the writable artifact and source domains from the resolved workflow chain, `loadFeatureContracts`/`phaseContractIndex`, contract `produces`, the artifact registry and phase-evidence resolver, coding plan/module scope, the active profile's UT test-root resolver, and the existing testing protected-source resolver. The workflow SHALL provide phase membership/order only and MUST NOT be treated as a path-owner table. The assigned author SHALL have the original unit's authorized write domains. An independent verifier SHALL be read-only except for its designated output. A path with no match or multiple owners SHALL be recorded as an observed fact with its candidate owners and matched roles, and the invocation SHALL continue; it SHALL NOT produce a write violation, halt the run, or yield a terminal incident. The resolver MUST NOT be extended with a file-name exclusion list, a parallel permission table, or a persisted owner manifest to compensate for paths the artifact registry deliberately does not describe.
 
 Enforcement: `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/utils/runtime-policy.ts`, `harness/scripts/utils/skill-contract.ts`, `harness/scripts/utils/phase-evidence-manifest.ts`, `harness/scripts/check-coding.ts`, `profiles/*/harness/*ut-host*.ts`, `harness/scripts/utils/testing-write-boundary.ts`
 
@@ -26,7 +26,7 @@ Enforcement: `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/u
 
 ### Requirement: Invocation attribution excludes pre-existing and runner-owned writes
 
-The runner SHALL snapshot normalized paths and content hashes immediately before and after the agent process boundary and attribute only the delta introduced by that invocation. Pre-existing dirty files SHALL not be blamed on the phase. Runner-authored events, summaries, manifests, pointers, phase state, and evidence refreshes SHALL be tagged/handled as runner-owned facts; where a phase skill runs the harness inside the agent process, harness-derived writes that fall inside the window SHALL be handled as unattributed observations rather than agent violations. Paths with multiple roles SHALL be deduplicated by normalized path while preserving the role set in diagnostics. When the boundary cannot be resolved, or either snapshot cannot be taken, the runner SHALL record the failure, skip attribution for that invocation, and continue to the phase verdict; missing attribution SHALL NOT be treated as evidence of a violation and SHALL NOT terminate the run. No persistent pass snapshot or off-repository attribution state SHALL be introduced. This prohibition covers persisted PASS snapshots and attribution state kept outside the run; it does not cover facts recorded per invocation inside the run's own events. The observed event SHALL persist every observation (`observed_count` equals the persisted rows; truncation is for display only), and for a UT invocation it SHALL also carry the UT-owned source writes with their pre/post hashes. That record grants no write permission: freshness consumers SHALL use the same phase ownership and before/after byte chain for actual source outputs, including unpredicted resources. UT source and testing evidence retain their owners; unknown external changes cannot be reclassified as coding. Predicted files/modules SHALL NOT filter otherwise valid observed writes.
+The runner SHALL retain signed input identity and available content observations for the original invocation. A time window establishes when bytes differ. A known write requires a bound native operation and result or another authoritative observation of that specific action. Missing snapshots or unrelated workspace changes SHALL NOT reject an otherwise valid handback. Completion consumers SHALL check freshness against the inputs and execution evidence of the specific obligation. Runtime-generated output retains its existing producer and binding.
 
 Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/utils/diff-scope.ts`, `harness/scripts/utils/testing-write-boundary.ts`, `harness/scripts/check-coding.ts`
 
@@ -45,28 +45,21 @@ Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/pha
 - **WHEN** the pre-invocation or post-invocation snapshot fails on storage or permission grounds
 - **THEN** the runner SHALL record the failure as a diagnostic, mark this invocation as unattributed, and let the phase produce its ordinary verdict
 
-#### Scenario: a test file UT created is handed back to coding only while untouched
+### Requirement: Confirmed actions and changed inputs have distinct recovery
 
-- **WHEN** a UT invocation creates a test file under its profile UT root that is absent from the run baseline, and the run later backtracks to coding without listing that file in `contracts.files`
-- **THEN** the coding scope gate SHALL NOT report the file while its bytes equal the recorded UT output, and SHALL report it once coding or any other phase rewrites it in a later invocation, even if the UT bytes are restored afterwards, until a UT invocation records it again
+The runner SHALL enforce explicit write authorization, the independent verifier role, the published framework boundary and signed control artifacts. A confirmed unauthorized action SHALL enter existing recovery. A change to a signed input SHALL invalidate the affected conclusion and return it to the original responsibility. For acceptance, contracts or blueprints the original responsible party SHALL compare the current material against the original request, accepted corrections and frozen obligations before the original writer signs a revision. Removed or weakened obligations without user authorization SHALL remain due. The runner SHALL retain unrelated findings that still have valid original evidence. A legacy window-only violation SHALL NOT require restoring a file to its historical hash or drive a backtrack.
 
-### Requirement: A downstream write invalidates trust and backtracks to the owner
+#### Scenario: parallel edit during independent verification
 
-When an invocation changes a path whose ownership resolves uniquely to an earlier phase **and** whose matched roles include an artifact domain registered in the artifact inventory, the runner SHALL record `phase_write_violation` with current phase, normalized path, pre/post hashes, and resolved owner; invalidate the current invocation evidence plus the owner closure and all downstream closures; preserve the workspace bytes as untrusted; and execute the existing `backtrack_to_phase` transaction to the owner for complete machine re-verification and any necessary rewrite. A cross-phase write whose matched roles are only product source or phase workspace SHALL NOT trigger this recovery; it SHALL be recorded as an observed fact deferred to the checkers that already judge it, so that a single graded disposition is reached instead of two. Unresolvable ownership SHALL NOT be a trigger. The first stable violation MUST NOT permanently halt, accept/rebind the bytes, request a human waiver, or destructively restore them. Repeated identical violations, continuing content changes, unreadable bytes, absent owner targets, or exhausted existing budgets SHALL use the existing integrity/external/fuse terminal semantics.
+- **WHEN** an unrelated request edits or commits a file while the current independent verifier checks an unchanged signed input
+- **THEN** the original invocation and its unaffected report findings SHALL remain eligible
 
-Enforcement: `harness/scripts/goal-phase-runtime.ts`, `harness/scripts/utils/phase-write-boundary.ts`, `harness/scripts/utils/adjudication.ts`, `harness/scripts/utils/goal-assess-driver.ts`
+#### Scenario: signed acceptance weakens the original behavior
 
-#### Scenario: plan writes spec acceptance
+- **WHEN** a changed acceptance allows an arbitrary result in place of the original requested behavior or drops a required verification layer
+- **THEN** the original responsible party SHALL refuse the revision and identify the original obligation and its missing condition
 
-- **WHEN** a plan invocation changes the spec-owned `acceptance.yaml`, a registered artifact
-- **THEN** the runner SHALL invalidate the plan invocation and prior spec/downstream closure trust, retain the bytes, and automatically backtrack to spec for full revalidation without a first-touch HALT
+#### Scenario: signed input changes during verification
 
-#### Scenario: testing edits product source
-
-- **WHEN** a testing invocation changes a file under the coding source scope
-- **THEN** the runner SHALL record the change as deferred to the checkers and continue, so that `review_closure_attestation` produces the graded review disposition instead of a pre-emptive backtrack
-
-#### Scenario: repeated unstable writes trip the existing fuse
-
-- **WHEN** the same owner/path violation recurs with the same recovery fingerprint or the bytes continue changing during recovery
-- **THEN** the existing convergence/integrity budget SHALL terminate the loop with a precise reason instead of retrying forever
+- **WHEN** an actual signed verifier input changes
+- **THEN** the dependent conclusions SHALL be checked on the current input by the original independent role, preserving the current bytes and other valid findings

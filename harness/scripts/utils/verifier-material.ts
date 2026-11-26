@@ -22,7 +22,7 @@ import * as path from 'path';
 import { createRuntimeArtifactPredicate, resolvePhaseEvidenceManifest, loadPhaseEvidenceManifest, evidenceEntryMatchesCurrentFile, identityNeutralEvidenceDigest,
   PHASE_OUTPUT_FILES_BY_PHASE, PHASE_OPTIONAL_OUTPUT_FILES_BY_PHASE, PHASE_OPTIONAL_OUTPUT_RELPATHS_BY_PHASE } from './phase-evidence-manifest';
 import { GLOBAL_FEATURE_SENTINEL, type ContextFileEntry, type Phase } from './types';
-import { readImplementationReviewChanges, type ImplementationReviewChanges } from './diff-scope';
+import { readImplementationReviewChanges, implementationReviewReferences, type ImplementationReviewChanges } from './diff-scope';
 import type { StatusDiffEntry } from './git-diff';
 import type { ResolvedPhaseInputs } from './capability-resolution';
 import type { FactsInvocationContext } from './context-facts';
@@ -80,8 +80,9 @@ export function collectTestStrengthContext(input: CurrentAcceptanceEvidenceInput
     const profile = loadResolvedProfile(input.projectRoot, loadFrameworkConfig(input.projectRoot), input.frameworkRoot);
     const spec = new SpecLoader(input.projectRoot, undefined, undefined, input.frameworkRoot).loadFeatureSpec(input.feature, input.resolvedInputs);
     const contracts = spec.contracts ?? { files: [], modules: [] };
-    const planned = implementationFiles(input.projectRoot, input.feature, contracts, runId,
-      verifierUsesImplementationChanges(input.phase) ? input.implementationChanges : null);
+    const changes = verifierUsesImplementationChanges(input.phase) ? input.implementationChanges : null;
+    const references = changes === undefined ? implementationReviewReferences(input.projectRoot, input.feature, { featureSpec: spec }) : [];
+    const planned = implementationFiles(input.projectRoot, input.feature, contracts, runId, changes, references);
     const coverage = loadCoverageEvidence(input.projectRoot, input.feature);
     const manifest = loadPhaseEvidenceManifest(input.projectRoot, input.feature, 'ut');
     const explicitTests = Object.values(input.resolvedInputs?.values ?? {}).flatMap(value => value.state === 'resolved'
@@ -112,22 +113,10 @@ export function collectTestStrengthContext(input: CurrentAcceptanceEvidenceInput
         out.push({ label: toPosixRel(input.projectRoot, abs), kind: 'path', content: 'Read当前完整源码及实际调用链；不能只凭coverage标签判充分。' });
       } catch { out.push({ label: '(test source unavailable)', content: file }); }
     }
-    if (runId && tests.length) {
-      const { loadLineageRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-      const targets = new Set(tests);
-      const writes = loadLineageRunEvents(input.projectRoot, input.feature, runId).flatMap(event => {
-        if (event.type !== 'phase_write_observed' && event.type !== 'phase_write_violation') return [];
-        const rows = event as unknown as { phase?: string; invoke_id?: string; owned?: Array<{ path: string }>; observations?: Array<{ path: string }>; violations?: Array<{ path: string }> };
-        const owned = rows.owned?.filter(row => targets.has(row.path)) ?? [], observations = rows.observations?.filter(row => targets.has(row.path)) ?? [];
-        const violations = rows.violations?.filter(row => targets.has(row.path)) ?? [];
-        return owned.length || observations.length || violations.length ? [{ phase: rows.phase, invoke_id: rows.invoke_id, owned, observations, violations }] : [];
-      });
-      if (writes.length) out.push({ label: '(test invocation write attribution)', content: JSON.stringify(writes, null, 2) });
-    }
     for (const file of tests) {
       const preservation = codingTestPreservation({ projectRoot: input.projectRoot, feature: input.feature, file, runId });
       out.push({ label: `(existing assertion evidence: ${file})`, content: JSON.stringify({ file, preserved: preservation.preserved, reason: preservation.reason }) });
-      if (preservation.beforeText !== undefined) out.push({ label: `(verified pre-write test original: ${file})`, content: preservation.beforeText });
+      if (preservation.beforeText !== undefined) out.push({ label: `(historical test original: ${file})`, content: preservation.beforeText });
     }
     if (!tests.length) out.push({ label: '(test strength evidence gap)', content: '当前适用验收尚无可读取的绑定测试源码；不能以空映射或自写PASS关闭测试充分性。' });
   } catch (error) { out.push({ label: '(test strength evidence gap)', content: `材料暂不可读：${(error as Error).message}；保留未验证，不推断PASS。` }); }
@@ -355,16 +344,17 @@ function sha256FileOrNull(abs: string): string | null {
 
 /** One versioned file projection for both material production and consumption. */
 export function verifierMaterialFileHash(input: { projectRoot: string; feature: string; file: string; phase?: string; factsContext?: FactsInvocationContext;
-  schema?: string; authorityReaders?: IdentityNeutralDigestReaders }): string | null {
+  schema?: string; authorityReaders?: IdentityNeutralDigestReaders; recorded?: string | null }): string | null {
   const abs = path.resolve(input.projectRoot, input.file);
   if (input.phase) {
-    const manifest = input.factsContext ? undefined : loadPhaseEvidenceManifest(input.projectRoot, input.feature, input.phase);
-    const facts = input.factsContext ? path.resolve(resolveFactsAbsPath(input.projectRoot, input.feature, input.factsContext)) === abs
-      : manifest?.integrityOk && [...manifest.manifest.inputs, ...manifest.manifest.outputs].some(entry =>
-        entry.facts_phase === input.phase && path.resolve(input.projectRoot, entry.path) === abs);
+    const facts = (input.factsContext || input.feature && input.feature !== GLOBAL_FEATURE_SENTINEL)
+      && path.resolve(resolveFactsAbsPath(input.projectRoot, input.feature, input.factsContext)) === abs;
     if (facts) {
-      try { return factsPhaseFingerprint(fs.readFileSync(abs, 'utf8'), input.phase); }
-      catch { return null; }
+      try {
+        const bytes = fs.readFileSync(abs);
+        if (input.recorded && crypto.createHash('sha256').update(bytes).digest('hex') === input.recorded) return input.recorded;
+        return factsPhaseFingerprint(bytes.toString('utf8'), input.phase, input.recorded);
+      } catch { return null; }
     }
   }
   if ((input.schema ?? VERIFIER_MATERIAL_SCHEMA) === VERIFIER_MATERIAL_SCHEMA && /\.(?:ya?ml|json)$/i.test(abs)) try {
@@ -407,7 +397,7 @@ export function verifierMaterialFileMatchesCurrent(input: { projectRoot: string;
   // Exact original bytes are a historical compatibility proof; @2 never chooses this recipe.
   if (recorded && input.material.schema === 'maison-verifier-material@1'
     && sha256FileOrNull(path.resolve(input.projectRoot, input.file)) === recorded.sha256) return true;
-  return !!recorded && (verifierMaterialFileHash({ ...input, phase: input.material.phase, schema: input.material.schema }) === recorded.sha256
+  return !!recorded && (verifierMaterialFileHash({ ...input, phase: input.material.phase, schema: input.material.schema, recorded: recorded.sha256 }) === recorded.sha256
     || input.material.schema === VERIFIER_MATERIAL_SCHEMA && unchangedLegacyBlueprintMaterial(input.projectRoot, input.file, recorded.sha256));
 }
 
@@ -506,7 +496,7 @@ export function verifierInputBindingsSha256(input: Pick<BuildVerifierMaterialInp
   return sha256Text(stableStringify([original ?? null, preimages]));
 }
 
-/** The independent strength judgment covers the complete comparison and actual pre-write facts, not just current bytes. */
+/** Bind the actual comparison used to judge the assertion strength. */
 function testStrengthFactSha256(input: BuildVerifierMaterialInput, check: BuildVerifierMaterialInput['checks'][number]): string | null {
   if (check.id !== 'coding_existing_test_preserved' || !check.affected_files?.length) return null;
   const { codingTestPreservation } = require('./repair-responsibility') as typeof import('./repair-responsibility');
@@ -518,21 +508,7 @@ function testStrengthFactSha256(input: BuildVerifierMaterialInput, check: BuildV
     return { file, preserved: original.preserved, reason: original.reason,
       before_sha256: original.beforeText === undefined ? null : sha256Text(original.beforeText) };
   });
-  const writes = new Set<string>();
-  if (runId) {
-    const { loadLineageRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-    for (const event of loadLineageRunEvents(input.projectRoot, input.feature, runId)) {
-      if (event.type !== 'phase_write_observed' && event.type !== 'phase_write_violation') continue;
-      const facts = event as unknown as { owned?: Array<{ path: string; how?: unknown; pre_sha256?: unknown; post_sha256?: unknown }>;
-        observations?: Array<{ path: string; how?: unknown; pre_sha256?: unknown; post_sha256?: unknown }>;
-        violations?: Array<{ path: string; how?: unknown; pre_sha256?: unknown; post_sha256?: unknown }> };
-      for (const kind of ['owned', 'observations', 'violations'] as const) for (const row of facts[kind] ?? []) {
-        if (files.includes(row.path)) writes.add(stableStringify({ producer: event.phase, kind, path: row.path, how: row.how,
-          pre_sha256: row.pre_sha256 ?? null, post_sha256: row.post_sha256 ?? null }));
-      }
-    }
-  }
-  return sha256Text(stableStringify({ details: check.details ?? '', files, originals, writes: [...writes].sort() }));
+  return sha256Text(stableStringify({ files, originals }));
 }
 
 export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): VerifierMaterialView {
@@ -561,6 +537,15 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
   } catch (error) {
     if (input.resolvedInputs) throw error;
     /* manifest 解析失败（无 frameworkRoot 等）→ 只按上下文文件寻址 */
+  }
+
+  if (feature && feature !== GLOBAL_FEATURE_SENTINEL && verifierUsesImplementationChanges(phase)) {
+    for (const file of implementationReviewReferences(projectRoot, feature, { frameworkRoot: input.frameworkRoot, resolvedInputs: input.resolvedInputs })) {
+      if (!files.has(file)) {
+        const sha = verifierMaterialFileHash({ projectRoot, feature, phase, factsContext: input.factsContext, file, authorityReaders });
+        if (sha !== null) files.set(file, sha);
+      }
+    }
   }
 
   const isExecutionKey = currentAcceptanceExecutionKeyMatcher(input);
@@ -687,10 +672,10 @@ export function verifierMaterialsEquivalent(previous: VerifierMaterialView | nul
     if (before === file.sha256) return true;
     if (!projectRoot || current.schema !== VERIFIER_MATERIAL_SCHEMA || !before) return false;
     const abs = path.resolve(projectRoot, file.path);
-    const unchanged = previous.schema === 'maison-verifier-material@1' ? sha256FileOrNull(abs) === before
-      : previous.schema === VERIFIER_MATERIAL_SCHEMA && unchangedLegacyBlueprintMaterial(projectRoot, file.path, before);
-    return isInsideProjectRoot(projectRoot, abs) && unchanged
-      && verifierMaterialFileHash({ projectRoot, feature: current.feature, phase: current.phase, file: file.path, schema: current.schema }) === file.sha256;
+    if (!isInsideProjectRoot(projectRoot, abs)) return false;
+    const unchanged = verifierMaterialFileMatchesCurrent({ projectRoot, feature: previous.feature, material: previous, file: file.path });
+    return unchanged && verifierMaterialFileHash({ projectRoot, feature: current.feature, phase: current.phase,
+      file: file.path, schema: current.schema }) === file.sha256;
   });
 }
 

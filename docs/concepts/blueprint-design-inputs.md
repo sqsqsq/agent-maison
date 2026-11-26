@@ -16,6 +16,8 @@ npm run check:component-blueprint -- --project-root <host> --blueprint <blueprin
 
 `--session-ref` 在同 writer 使用真实 `phase: component-design`，保存本请求 request/稳定原文源；**不带 `--prepare-source` 时也会准备这两个执行输入，但不改 canonical**。只有本次已授权设计写入时才加 `--prepare-source`：它仅补/刷新同源技术身份、来源 header/current-scope 项和指纹，不补 full 视图、admission 或业务 traceability，不删除已有人工/样例来源，也不替作者选择映射。写前须核本请求原 request 绑定/来源归属；其它请求、已有 canonical CU、admitted 完整材料或历史完成记录不允许由小型准备接管，须继续其原责任或为新独立请求使用自己的 blueprint_id。本请求自有、尚未完成且无 CU 的设计不因 full 形状而被拒绝；在途降档仍沿原 run 处理。已存在来源或 traceability 与本请求不一致时仍真实失败。校验/绑定失败或异常时，原 request/source 及本调用改变的 canonical 机器字段恢复原字节与旧绑定，不靠准备命令洗白。
 
+准备时蓝图地址尚不存在，`--prepare-source` 可先保留原请求和来源，再在该地址编写草稿。只读检查用当前字节。用户已提供草稿时，按真实原话、附件、身份和来源指纹核验；更新机器来源需要原 request 绑定、用户明确指向或合法设计修订。已签蓝图的验收或契约变更由原 request 的专项 review 对照原话和已核更正，记录丢失或削弱的条目。通过后按当前版本重签。
+
 可选 `--target <已知项目文件>`、`--requirement-source <已有项目内权威需求文件>` 均可重复；`--report-dir <宿主内相对目录>` 选择原独立报告目录。已有来源必须与原用户引用或已读调研关联；不提供需求文件时由 writer 保存必要原文底稿。JSON 在通过或具体失败时可返回 `request_file`、`source_refs` 与 `origin_gap`，作者沿真实结果补缺口；成功小型设计的 `design_scope` 为 `small-request-design`，另有 `summary`、`content_impact`，不是完整 admitted 或产品完成。
 
 后续只读重验复用返回的项目相对 request 路径，不重新准备来源：

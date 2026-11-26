@@ -1,6 +1,6 @@
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
 import { executionCompletionPhases } from './execution-scope';
-import { readRepairDependencyContext, workUnitMayWritePath } from './repair-responsibility';
+import { readRepairDependencyContext } from './repair-responsibility';
 import { phaseCompletionProblems, isBlockingCheck } from './check-disposition';
 import { resolveExecutionScope, readScopeRevisionUserControl, applyScopeUserControl, assertRevisionKeepsRequiredObligations, executionScopeFingerprint, effectiveScopeView, scopeProofHistory, phaseEvidenceIsCurrent, scopeRevisionInvalidations, authorizedScopePhases, acceptsDefinitionInputProof, EXECUTION_SOURCE_KINDS, OBLIGATION_PROVIDERS, type ScopeHistoryEvent, type ScopeEvidenceRef, type ScopeImpactJudgement, type ExecutionScope, type ExecutionScopeInput, type ResolvedScopeFacts } from './execution-scope';
 import { createHash } from 'crypto';
@@ -11,7 +11,7 @@ import { artifactBindingMatches, readBoundInput, DEPENDENCY_ONLY_PROVIDER_IDS, t
 import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } from './project-relative-path';
 import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from './goal-run-creation';
 import { loadFeatureContracts, contractFingerprint } from './skill-contract';
-import { createObservedSourceHashReader, loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File } from './phase-evidence-manifest';
+import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File } from './phase-evidence-manifest';
 import { authoritativeContentDrift, compareAuthoritativeContent, deriveBlueprintSkillInput, describeAuthoritativeDrift, projectionContentEqual } from './blueprint-skill-projection';
 import { hasNewSourcedFact } from './execution-scope';
 import { resolveWorkflowSpec } from '../../workflow-loader';
@@ -22,10 +22,8 @@ import type { FidelityTarget } from './fidelity-shared';
 import { validateChangeUnitFeatureProjection } from './change-unit-feature-projection';
 import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit, parseChangeUnitFeatureId } from './change-unit-path';
 import { loadCanonicalBlueprint } from './component-blueprint-path';
-import { isProducedPhaseChange, resolvePhasePathOwnership } from './phase-write-boundary';
-import { readHandoffMaterial, type SessionExecutionRequest } from './session-execution-handoff';
+import { readExecutionRequestOriginal, readHandoffMaterial } from './session-execution-handoff';
 import { repairCandidateCanReviseScope, scopeRepairReason, SCOPE_REVISION_FACT_KIND, type RepairCandidate } from './repair-candidates';
-import { invocationCompleted } from './invocation-completion';
 import { asRecord, asRecords } from './component-blueprint-model';
 import { resolveBlueprintTarget } from './blueprint-addressing';
 import { normalizeContractFilePath, resolveContractFileReferences, selectContractReferencePaths } from './contract-reference-closure';
@@ -42,7 +40,7 @@ import type { ChangeUnitArtifact } from './change-unit-model';
 
 import * as fs from 'fs';
 import * as YAML from 'yaml';
-import { componentIndexPath, featureArtifactPath, featureFilePath, featurePhaseReportsDir, relFeaturesDir, resolveFeatureArtifact } from '../../config';
+import { featureArtifactPath, featureFilePath, featurePhaseReportsDir, relFeaturesDir, resolveFeatureArtifact } from '../../config';
 import type { FeatureCompletion } from './verify-feature-completion';
 import { resolveFeatureTrack, type FeatureTrackDecl } from './runtime-policy';
 
@@ -926,145 +924,75 @@ function keepsAcceptanceCommitments(previous: AcceptanceSpec, current: unknown, 
   return true;
 }
 
-function matchesProducedComponentIndex(projectRoot: string, feature: string, events: readonly GoalRunEvent[],
-  relative: string, before: string | null, after: string | null): boolean {
-  const productions = new Map<string, { phase: string; before: unknown; after: unknown }>();
-  for (const event of events) {
-    const record = event as Record<string, unknown>;
-    if (event.type !== 'phase_write_observed' || !event.phase || !event.invoke_id
-      || record.feature !== feature || record.producer !== 'component-index') continue;
-    for (const row of asRecords(record.produced).filter(row => row.path === relative)) {
-      const first = productions.get(event.invoke_id);
-      productions.set(event.invoke_id, { phase: event.phase, before: first ? first.before : row.pre_sha256, after: row.post_sha256 });
-    }
-  }
-  let expected = before;
-  let advanced = false;
-  for (const [invokeId, production] of productions) {
-    if (!advanced && production.before !== expected) continue;
-    if (typeof production.after !== 'string' || !isProducedPhaseChange(projectRoot, production.phase,
-      { path: relative, how: expected === null ? 'added' : 'modified', preSha256: expected, postSha256: production.after },
-      { events, invokeId })) return false;
-    expected = production.after;
-    advanced = true;
-  }
-  return advanced && expected === after;
-}
-
-/** Rebind the admitted CU's acceptance after the exact authorized author settles, before requiring spec PASS. */
+/** Reparse the current acceptance against the CU's original design authority, then let the scope writer re-sign. */
 export function refreshOwnedAcceptanceScopeInput(ctx: { projectRoot: string; frameworkRoot: string; feature: string; requirement?: string; runId: string; runDir: string },
   previous: ExecutionScope, events: readonly GoalRunEvent[]): ExecutionScopeInput | undefined {
   if (!ctx.feature.startsWith('cu-')) return undefined;
   const prior = artifactAcceptanceBindings(previous.obligations)[0];
   if (!prior) return undefined;
-  const { projectRoot, frameworkRoot, feature, runId, runDir } = ctx;
+  const { projectRoot, frameworkRoot, feature, runDir } = ctx;
   const legacyRoot = inferLegacyProjectRoot(projectRoot, previous);
   const acceptance = resolveFeatureArtifact(projectRoot, feature, 'acceptance.yaml');
   if (!acceptance.exists) return undefined;
   const file = acceptance.actualPath;
-  const relative = path.relative(projectRoot, file).replace(/\\/g, '/');
   const before = prior.dependencies.find(dep => dep.role === 'artifact' && resolveDependencyPath(projectRoot, dep.path, legacyRoot) === file)?.sha256;
   const after = sha256File(file);
   if (!before || !after || before === after) return undefined;
-  try { readBoundInput({ ...ctx, phase: 'spec', track: 'full' }, prior, legacyRoot); return undefined; } catch { /* Inspect the exact observed transition. */ }
   const current = candidateInput(ctx, 'ut', 'acceptance');
   if (!current || !projectionContentEqual(current.binding.source, prior.source)
     || !current.binding.dependencies.some(dep => dep.path === file && dep.sha256 === after)) return undefined;
-  const changedInputs = prior.dependencies.flatMap(dep => {
-    const absolute = resolveDependencyPath(projectRoot, dep.path, legacyRoot);
-    return absolute !== file && (fs.existsSync(absolute) !== dep.exists || dep.exists && sha256File(absolute) !== dep.sha256) ? [{ ...dep, path: absolute }] : [];
-  });
-  const observed = createObservedSourceHashReader(projectRoot, feature, { frameworkRoot, runId, ownershipEvents: events, includeAuthorArtifacts: true });
-  if (observed({ path: relative, role: 'input', sha256: before, exists: true }, 'scope')?.sha256 !== after) return undefined;
   try {
-    const observedSource = createObservedSourceHashReader(projectRoot, feature, { frameworkRoot, runId, ownershipEvents: events });
-    const designInputs = changedInputs.filter(dep => {
-      if (!isInsideProjectRoot(projectRoot, dep.path)) return true;
-      const relative = relPosix(projectRoot, dep.path);
-      const hash = sha256File(dep.path);
-      if (dep.path === componentIndexPath(projectRoot)) return !matchesProducedComponentIndex(projectRoot, feature, events, relative, dep.sha256, hash);
-      const source = observedSource({ path: relative, role: 'input', exists: dep.exists, sha256: dep.sha256 }, 'scope');
-      return !source || source.sha256 !== hash || source.exists !== fs.existsSync(dep.path);
-    });
-    let expected = before;
-    let originalRequest: SessionExecutionRequest | undefined;
-    let last: { request: SessionExecutionRequest; start: GoalRunEvent } | undefined;
-    for (const [at, event] of events.entries()) {
-      if (event.type !== 'phase_write_observed' || !event.invoke_id) continue;
-      const observation = event as Record<string, unknown>;
-      const writes = asRecords(observation.owned).filter(row => row.path === relative && row.pre_sha256 !== row.post_sha256);
-      if (!writes.length || !originalRequest && writes[0].pre_sha256 !== expected) continue;
-      const [write] = writes;
-      if (writes.length !== 1 || write.pre_sha256 !== expected || typeof write.post_sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(write.post_sha256)) return undefined;
-      const start = events.find(item => item.type === 'agent_invoke_start' && item.invoke_id === event.invoke_id);
-      const issued = events.find(item => item.type === 'phase_start' && item.invoke_id === event.invoke_id && item.handoff_request) ?? start;
-      const end = events.find(item => item.type === 'agent_invoke_end' && item.invoke_id === event.invoke_id);
-      if (!start || !issued?.handoff_request || !end || start.phase !== event.phase || events.indexOf(issued) >= at
-        || events.indexOf(end) <= events.indexOf(start) || !invocationCompleted({ ...end, exitCode: end.exit_code })
-        || events.some(item => item.type === 'phase_write_violation' && item.invoke_id === event.invoke_id)) return undefined;
-      const request = readHandoffMaterial<SessionExecutionRequest>(runDir, issued.handoff_request);
-      const boundary = request.write_boundary;
-      if (request.invoke_id !== event.invoke_id || request.context.feature !== feature || request.context.runId !== runId
-        || request.context.phase !== start.phase || request.context.owner.owner_id !== start.owner_id || request.context.owner.epoch !== start.owner_epoch
-        || !boundary || path.resolve(boundary.projectRoot) !== path.resolve(projectRoot) || boundary.executionRole !== 'author'
-        || !workUnitMayWritePath(boundary, relative) || resolvePhasePathOwnership(boundary, relative).owner !== 'spec'
-        || observation.pre_snapshot !== request.pre_snapshot?.sha256
-        || !request.pre_snapshot?.entries.some(entry => entry.path === relative && entry.kind === 'file' && entry.sha256 === expected)) return undefined;
-      if (end.handoff_report) {
-        if (end.handoff_report.request_sha256 !== issued.handoff_request.sha256) return undefined;
-        const report = readHandoffMaterial<{ post_snapshot?: SessionExecutionRequest['pre_snapshot'] }>(runDir, end.handoff_report);
-        if (report.post_snapshot?.sha256 !== observation.post_snapshot
-          || !report.post_snapshot?.entries.some(entry => entry.path === relative && entry.kind === 'file' && entry.sha256 === write.post_sha256)) return undefined;
-      }
-      originalRequest ??= request;
-      last = { request, start };
-      expected = write.post_sha256;
-    }
-    if (!originalRequest || !last || expected !== after) return undefined;
-    const { request, start } = last;
     const { blueprintId, changeUnitId } = parseChangeUnitFeatureId(feature);
+    const blueprint = loadCanonicalBlueprint(projectRoot, blueprintId);
     const unit = loadCanonicalChangeUnit(projectRoot, blueprintId, changeUnitId);
+    const designInputs = prior.dependencies.filter(dep => {
+      const absolute = resolveDependencyPath(projectRoot, dep.path, legacyRoot);
+      return (absolute === blueprint.canonicalPath || absolute === unit.canonicalPath) && sha256File(absolute) !== dep.sha256;
+    });
     if (designInputs.length) {
-      const blueprint = loadCanonicalBlueprint(projectRoot, blueprintId);
-      const design = events.slice(0, events.indexOf(start)).filter(event => event.type === 'design_authority_repair') as Array<GoalRunEvent & {
+      const designEvents = events.filter(event => event.type === 'design_authority_repair') as Array<GoalRunEvent & {
         blueprint_id?: string; stage?: string; new_revision?: number; outcome?: string; failed_step?: string; signature?: string;
         handoff_context?: import('./session-execution-handoff').HandoffReference;
       }>;
-      const publication = [...design].reverse().find(event => event.blueprint_id === blueprintId && event.stage === 'published'
-        && event.new_revision === blueprint.blueprint.revision && (event.outcome === 'recovered' || event.failed_step === 'probe'));
-      const attempt = publication && design.slice(0, design.indexOf(publication)).reverse().find(event =>
+      const publication = [...designEvents].reverse().find(event => event.blueprint_id === blueprintId
+        && event.stage === 'published' && event.new_revision === blueprint.blueprint.revision
+        && (event.outcome === 'recovered' || event.failed_step === 'probe'));
+      const attempt = publication && designEvents.slice(0, designEvents.indexOf(publication)).reverse().find(event =>
         event.signature === publication.signature && event.stage === 'attempted' && event.handoff_context);
       if (!attempt?.handoff_context || sha256File(path.join(runDir, 'design-repair/component-blueprint.yaml')) !== sha256File(blueprint.canonicalPath)) return undefined;
       const previousDesign = readHandoffMaterial<{ baseline: string; cu?: string }>(runDir, attempt.handoff_context);
-      const original = new Map([[blueprint.canonicalPath, previousDesign.baseline], [unit.canonicalPath, previousDesign.cu]]);
       if (designInputs.some(dep => {
-        const bytes = original.get(dep.path);
-        const relative = path.relative(projectRoot, dep.path).replace(/\\/g, '/');
-        return !bytes || createHash('sha256').update(Buffer.from(bytes, 'base64')).digest('hex') !== dep.sha256
-          || !request.pre_snapshot?.entries.some(entry => entry.path === relative && entry.kind === 'file' && entry.sha256 === sha256File(dep.path));
+        const bytes = resolveDependencyPath(projectRoot, dep.path, legacyRoot) === blueprint.canonicalPath ? previousDesign.baseline : previousDesign.cu;
+        return !bytes || createHash('sha256').update(Buffer.from(bytes, 'base64')).digest('hex') !== dep.sha256;
       })) return undefined;
     }
     const authority = deriveBlueprintSkillInput(projectRoot, feature, frameworkRoot, 'acceptance');
     if (authority.state !== 'resolved') return undefined;
     let priorAcceptance = authority.value as AcceptanceSpec;
-    if (originalRequest.acceptance_preimage) {
-      const bytes = Buffer.from(originalRequest.acceptance_preimage, 'base64');
-      if (createHash('sha256').update(bytes).digest('hex') !== before) return undefined;
-      const parsed = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, {
-        context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
-        phase: 'spec', values: {}, artifacts: { 'acceptance@1': YAML.parse(bytes.toString('utf8')) },
-      });
-      if (!parsed.acceptance || parsed.shape_issues?.length) return undefined;
-      priorAcceptance = parsed.acceptance;
+    let foundOriginal = false;
+    for (const event of events) {
+      if (event.type !== 'agent_invoke_start' || !event.invoke_id) continue;
+      try {
+        const original = readExecutionRequestOriginal(runDir, event.invoke_id, events)?.request;
+        if (original?.context.feature !== feature || original.context.runId !== ctx.runId || !original.acceptance_preimage) continue;
+        const bytes = Buffer.from(original.acceptance_preimage, 'base64');
+        if (createHash('sha256').update(bytes).digest('hex') !== before) continue;
+        const parsed = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, {
+          context: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] },
+          phase: 'spec', values: {}, artifacts: { 'acceptance@1': YAML.parse(bytes.toString('utf8')) },
+        });
+        if (!parsed.acceptance || parsed.shape_issues?.length || !artifactBindingMatches(ctx, prior, parsed.acceptance)) return undefined;
+        priorAcceptance = parsed.acceptance;
+        foundOriginal = true;
+        break;
+      } catch { /* Historical writer material is optional when the original canonical design is still bound. */ }
     }
-    if (!artifactBindingMatches(ctx, prior, priorAcceptance) || !keepsAcceptanceCommitments(priorAcceptance, current.value, authority.value)
-      || sha256File(file) !== after) return undefined;
-    const replace = (binding: InputBinding): InputBinding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1'
-      ? current.binding : binding;
+    if ((!foundOriginal && designInputs.length && !artifactBindingMatches(ctx, prior, priorAcceptance))
+      || !keepsAcceptanceCommitments(priorAcceptance, current.value, authority.value) || sha256File(file) !== after) return undefined;
     const facts = structuredClone(previous.obligations);
     for (const fact of facts) {
-      if (!fact.basis.some(binding => replace(binding) !== binding)) continue;
-      fact.basis = fact.basis.map(replace);
+      if (!artifactAcceptanceBindings([fact]).length) continue;
+      fact.basis = fact.basis.map(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1' ? current.binding : binding);
       delete fact.satisfied_by;
     }
     return scopeWithRefreshedBindings(previous, facts);

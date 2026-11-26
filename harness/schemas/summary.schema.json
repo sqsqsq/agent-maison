@@ -200,8 +200,8 @@
       "description": "Verified full-track closure marker. Deliberately excludes the manifest hash to avoid a summary-manifest hash cycle."
     },
     "generated_at": { "type": "string", "description": "t2 v2（receipt-slim）：base summary 生成时刻" },
-    "source_commit_sha": { "type": "string", "description": "t2 v2：生成时 git HEAD——slim 回执三方绑定（summary↔receipt claimed↔当前 HEAD），杜绝旧 PASS 件复用" },
-    "worktree_digest": { "type": "string", "description": "t2 v3：产品层目录工作区状态摘要——HEAD 不动源码改动同样使旧件失效（check-receipt slim 重算比对）" },
+    "source_commit_sha": { "type": "string", "description": "生成时的 Git HEAD，用于核对回执对原报告的引用及专项历史审计" },
+    "worktree_digest": { "type": "string", "description": "生成时的工作区审计摘要。普通闭环按该报告真正用到的输入和原件判断" },
     "run_id": { "type": "string", "description": "t2 v2：goal run 身份（MAISON_GOAL_RUN_ID）" },
     "compile_first_error": { "$ref": "#/$defs/compile_first_error" },
     "soft_advisories": {

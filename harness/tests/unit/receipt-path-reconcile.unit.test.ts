@@ -1,3 +1,4 @@
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 // ============================================================================
 // receipt-path-reconcile.unit.test.ts — legacy receipt 路径 → doc/features/reports
 // ============================================================================
@@ -124,6 +125,7 @@ function writeModernArtifacts(root: string): { traceRel: string; verifierRel: st
     path.join(root, 'doc/features/demo/review/context-exploration.md'),
     'ready_to_produce: true\n',
   );
+  writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, frameworkRoot, feature: 'demo', phase: 'review', extraInputs: [sourceFile] }));
   return { traceRel, verifierRel, traceAbs: path.join(root, traceRel).replace(/\\/g, '/') };
 }
 

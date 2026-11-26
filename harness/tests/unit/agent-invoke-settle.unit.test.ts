@@ -257,6 +257,10 @@ process.exit(v==='empty-zero'||v==='authentication'||v==='quota'?0:1);`);
         const config = JSON.parse(fs.readFileSync(configFile, 'utf8')); config.project_profile.name = 'hmos-app';
         fs.writeFileSync(configFile, JSON.stringify(config)); clearFrameworkConfigCache();
         fs.mkdirSync(path.dirname(path.join(f.root, testFile)), { recursive: true });
+        const contractFile = path.join(f.root, 'doc/features', f.feature, 'contracts.yaml');
+        const yaml = require('yaml') as typeof import('yaml');
+        const contracts = yaml.parse(fs.readFileSync(contractFile, 'utf8'));
+        fs.writeFileSync(contractFile, yaml.stringify({ ...contracts, files: [...(contracts.files ?? []), testFile] }));
         execFileSync('git', ['init', '-q'], { cwd: f.root }); execFileSync('git', ['config', '--local', 'core.autocrlf', 'false'], { cwd: f.root });
         execFileSync('git', ['add', 'src/demo/value.ts'], { cwd: f.root });
         execFileSync('git', ['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', 'commit', '-qm', 'actual unit facts baseline'], { cwd: f.root });
@@ -423,8 +427,11 @@ process.exit(v==='empty-zero'||v==='authentication'||v==='quota'?0:1);`);
       const events = path.join(runDir, 'events.jsonl');
       const tick = path.join(root, 'grandchild-tick');
       const pidFile = path.join(root, 'grandchild-pid');
-      fs.writeFileSync(path.join(directory, 'request-e1.json'), JSON.stringify({ context: ctx }));
-      fs.writeFileSync(events, JSON.stringify({ type: 'agent_invoke_start', phase: 'coding', invoke_id: 'idle-one' }) + '\n');
+      const issued = writePhaseExecutionRequestMaterial({ context: ctx, invokeId: 'idle-one', issuedAt: new Date().toISOString(),
+        preSnapshot: null, writeBoundary: null, gateTimeoutMs: 0, cleanupReserveMs: 0 });
+      fs.writeFileSync(events, JSON.stringify({ type: 'agent_invoke_start', phase: 'coding', invoke_id: 'idle-one',
+        ts: issued.request.issued_at, attempt_id: ctx.attemptId, owner_id: ctx.owner.owner_id, owner_epoch: ctx.owner.epoch,
+        handoff_request: issued.reference }) + '\n');
       let grandchild = 0;
       try {
         timers.DEFAULT_AGENT_OUTPUT_IDLE_MS = 1_500;

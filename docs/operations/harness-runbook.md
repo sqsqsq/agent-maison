@@ -172,7 +172,7 @@ doc/features/<feature>/
 | `ai-prompt.md` | 独立 verifier | 本轮材料原件，由 verifier 按 request 中的 `prompt_path` 读取 |
 | `verifier.request.<subject>.json` | 核验执行器 | 签发凭证。执行器投递原 JSON，可在前面附已签复核范围，字段保持原样 |
 | `verifier.report.<subject>.md` | check-receipt / 闭环执行器 | 写界及 subject 核对通过后，由 runtime 投影原答全文至 `summary.verifier_report`；终态块须回显 subject，结论须与 `blocker_count` 自洽。报告独立于 evidence manifest 和 closure attestation 哈希 |
-| `trace.json`            | harness 内部 / 调试       | 记录本次进入 phase 时的 git HEAD（供 `ut_no_src_mutation` 的 **git fallback 域**用；review 已正式闭环时该门禁基线=review closure attestation，不看 trace/HEAD） |
+| `trace.json`            | harness 内部 / 调试       | 记录进入阶段时的 HEAD，供历史诊断 |
 
 控制台默认展开 `FAIL`、`WARN` 与 `BLOCKER-SKIP`。闭环要求脚本 PASS 及所有必需证据。阶段核验适用性由 profile、workflow 与 evidence policy 统一解析；关闭策略只免除新增核验，当前同材料的有效否决仍生效。完整交付与单阶段按 NEXT 各由现有执行者派发，命令与模型来源见[独立阶段核验](../../skills/reference/agents-entry-detail.md#独立阶段核验)。
 
@@ -246,7 +246,7 @@ doc/features/<feature>/
 | Phase   | 规则（hmos-app 示例） | 摘要 |
 | ------- | --------------------- | ---- |
 | coding  | `coding_hvigor_build` | 宿主编译（hvigor / DevEco 对齐） |
-| ut      | `ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation` | 测试源静态检查、ohosTest 构建与真机 hypium、review 闭环后的产品源码零漂移（内容哈希基线，无授权登记通道） |
+| ut      | `ut_tsc_compiles` / `ut_hvigor_build` / `ut_hvigor_test` / `ut_no_src_mutation` | 测试源静态检查、ohosTest 构建与真机 hypium、本次 review 涉及的实现与实际依赖发生变化时，列明需要复核的项 |
 | testing | `device_test.build` / `install` / `run` | Hylyre 真机链；`acceptance.yaml` > `device_focus` 派生 test-plan |
 
 **Context Exploration Gate（v2.9）**：spec / plan / coding / review / ut 写主产物前须 `context-exploration.md`（schema **1.1.0**）；量化阈值见 phase-rules + `exploration-strategy.ts`；存量 feature 可用 `compat.yaml` 或 `npm run backfill:context`。

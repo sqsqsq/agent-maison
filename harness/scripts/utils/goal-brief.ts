@@ -7,7 +7,9 @@
 
 import { loadFrameworkConfig, resolveFeatureArtifact } from '../../config';
 import { loadRefElementsFile, refElementsAbsPath, resolveCurrentRequirementSource } from './fidelity-shared';
-import { resolveEffectiveScopeSource } from './goal-run-creation';
+import { loadScopeRevisions, resolveEffectiveScopeSource } from './goal-run-creation';
+import { loadAuthoritativeEvents } from './goal-runner-phase';
+import { readAcceptedScopeUserControlSource, type ExecutionScopeInput } from './execution-scope';
 import { effectiveHeadlessUnattended, loadGoalRunManifestFromRun, isInitialDesignManifest, type InitialDesignGoalManifest } from './goal-manifest';
 import { parseScope } from './scope-parser';
 import { readRepairDeclineOriginals, verifiedDeclineBasis, designRepairDeclines } from './repair-candidates';
@@ -18,6 +20,7 @@ import * as path from 'path';
 export interface GoalBrief {
   /** null = 需求原文不可得（如实写明，不猜） */
   requirement: string | null;
+  scope_corrections?: Array<{ user_id: string; text: string }>;
   requested?: { completion_target: string; requested_results: string[] };
   exclusions?: { elements: Array<{ element_id: string; quote: string }>; out_of_scope_modules: string[] };
   deferrals?: Array<{ element_id: string; screen?: string; text?: string; note: string; source: string }>;
@@ -26,9 +29,9 @@ export interface GoalBrief {
   resolved_conflicts: Array<{ candidate: string; basis: string; run_id: string }>;
 }
 
-export type GoalBriefSection = 'requirement' | 'requested' | 'exclusions' | 'deferrals' | 'permissions' | 'resolved_conflicts' | 'judgement';
+export type GoalBriefSection = 'requirement' | 'scope_corrections' | 'requested' | 'exclusions' | 'deferrals' | 'permissions' | 'resolved_conflicts' | 'judgement';
 
-const ALL_SECTIONS: readonly GoalBriefSection[] = ['requirement', 'requested', 'exclusions', 'deferrals', 'permissions', 'resolved_conflicts', 'judgement'];
+const ALL_SECTIONS: readonly GoalBriefSection[] = ['requirement', 'scope_corrections', 'requested', 'exclusions', 'deferrals', 'permissions', 'resolved_conflicts', 'judgement'];
 
 /** goal 执行者：需求行与冻结范围段已在提示词里，简报块补范围裁决与判定办法（§3.2 装配去重）。 */
 export const EXECUTOR_BRIEF_SECTIONS: readonly GoalBriefSection[] = ['exclusions', 'deferrals', 'resolved_conflicts', 'judgement'];
@@ -58,6 +61,23 @@ export function assembleGoalBrief(projectRoot: string, feature: string, opts: { 
     const scope = resolveEffectiveScopeSource(projectRoot, feature, runId)?.scope;
     if (scope) brief.requested = { completion_target: scope.completion_target, requested_results: [...scope.requested_results] };
   } catch { /* 范围不可得 → 省略该栏 */ }
+
+  if (runId && !initial) {
+    try {
+      const manifest = loadGoalRunManifestFromRun(projectRoot, runId, { feature });
+      if (manifest.execution_scope) {
+        const identity = { projectRoot, feature, runId };
+        const events = loadAuthoritativeEvents(path.resolve(projectRoot, manifest.report_dir, 'events.jsonl'));
+        const corrections = new Map<string, string>();
+        for (const revision of loadScopeRevisions(events, manifest.execution_scope, identity)) {
+          const source = (revision.revision_input as ExecutionScopeInput | undefined)?.request?.user_control;
+          const accepted = source && readAcceptedScopeUserControlSource(source, identity);
+          if (accepted) corrections.set(accepted.user.id, accepted.user.text);
+        }
+        if (corrections.size) brief.scope_corrections = [...corrections].map(([user_id, text]) => ({ user_id, text }));
+      }
+    } catch { /* Invalid revision proof remains a scope reader issue. */ }
+  }
 
   const refElements = loadRefElementsFile(refElementsAbsPath(projectRoot, feature))?.elements ?? [];
   const elements = refElements
@@ -126,6 +146,7 @@ export function renderGoalBrief(
 
 const SECTION_TITLES: Record<GoalBriefSection, string> = {
   requirement: '需求原文',
+  scope_corrections: '已受理的用户更正',
   requested: '请求结果与完成目标',
   exclusions: '明确不做',
   deferrals: '本次延后',
@@ -139,6 +160,8 @@ function sectionBody(brief: GoalBrief, key: GoalBriefSection, requirementInConte
     case 'requirement':
       if (requirementInContext) return '需求原文已在上方已解析输入中，此处不重复。';
       return brief.requirement ?? '需求原文不可得（本次调用身份下没有可核实的需求来源）；以下栏目照常。';
+    case 'scope_corrections':
+      return brief.scope_corrections?.map(item => `用户消息 ${item.user_id}\n\n${item.text}`).join('\n\n') ?? '';
     case 'requested':
       return brief.requested
         ? `- 完成终点：${brief.requested.completion_target}\n- 请求结果：${brief.requested.requested_results.join('；') || '（无）'}`

@@ -1,3 +1,5 @@
+import { computeGateFingerprint } from './gate-fingerprint';
+import { reviewCoverageDisclosure } from './diff-scope';
 // ============================================================================
 // 统一报告生成器
 // ============================================================================
@@ -170,13 +172,22 @@ export function generateScriptReport(
 }
 
 /** Request reports reuse checks/summary serializers without Feature compatibility or closure writes. */
-export function generateRequestScriptReport(ctx: RequestCheckContext, checks: CheckResult[]): { verdict: Verdict; reportPath: string } {
+export function generateRequestScriptReport(ctx: RequestCheckContext, checks: CheckResult[]): { verdict: Verdict; reportPath: string; reviewCoverage?: string } {
   const finalized = checks.map(check => ({ ...check, suggestion: resolveEffectiveSuggestion(check, ctx.phase) }));
   const summary = { ...computeSummary(finalized), disclosed_failures: collectDisclosedFailures(finalized) };
   const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'request', projectRoot: ctx.projectRoot,
     request: ctx.request, checks: finalized, summary }));
   if (!disposition.completionEligible) summary.verdict = summary.verdict === 'INCOMPLETE' ? 'INCOMPLETE' : 'FAIL';
+  const reviewFile = ctx.request.inputs.review_report;
+  const reviewCoverage = ctx.phase === 'review' ? reviewCoverageDisclosure(ctx.projectRoot, [],
+    fs.existsSync(reviewFile) ? fs.readFileSync(reviewFile, 'utf8') : undefined) : undefined;
   const common = { subject: 'request', completion_target: 'request', request_sha256: ctx.request.request_sha256, phase: ctx.phase,
+    request_file: path.relative(ctx.projectRoot, ctx.request.requestFile).replace(/\\/g, '/'),
+    gate_fingerprint: computeGateFingerprint(ctx.frameworkRoot, ctx.phase),
+    ...(ctx.executionInputs ? { execution_inputs: ctx.executionInputs } : {}),
+    ...(ctx.executionArtifacts ? { execution_artifacts: ctx.executionArtifacts } : {}),
+    ...(reviewCoverage ? { review_coverage: reviewCoverage } : {}),
+    ...(ctx.request.comparison_gap ? { comparison_gap: ctx.request.comparison_gap } : {}),
     ...(ctx.request.intake_context ? { request_origin: `${ctx.request.intake_context.session_id}#${ctx.request.intake_context.user.id}` } : {}),
     ...(ctx.request.origin_gap ? { origin_gap: ctx.request.origin_gap } : {}),
     requested_result: ctx.request.requested_result, baseline: ctx.request.baseline, targets: ctx.request.bindings,
@@ -188,7 +199,7 @@ export function generateRequestScriptReport(ctx: RequestCheckContext, checks: Ch
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n');
   const native = finalized.flatMap(check => (check.structured as { request_evidence?: unknown[] } | undefined)?.request_evidence ?? []);
   fs.writeFileSync(path.join(ctx.reportDir, 'summary.json'), JSON.stringify({ ...common, ...summary, input_bindings: inputBindings, evidence: { script_report: path.relative(ctx.projectRoot, reportPath).replace(/\\/g, '/'), script_report_sha256: crypto.createHash('sha256').update(fs.readFileSync(reportPath)).digest('hex'), native } }, null, 2) + '\n');
-  return { verdict: summary.verdict, reportPath };
+  return { verdict: summary.verdict, reportPath, reviewCoverage };
 }
 
 /**
@@ -812,6 +823,10 @@ export function generateMergedReport(
   }
   lines.push('');
 
+  if (phase === 'review') {
+    const { featureReviewCoverageDisclosure } = require('./diff-scope') as typeof import('./diff-scope');
+    lines.push(featureReviewCoverageDisclosure(projectRoot, feature), '');
+  }
   const report = lines.join('\n');
   const dir = ensureReportDir(projectRoot, feature, phase, frameworkRoot);
   fs.writeFileSync(path.join(dir, 'merged-report.md'), report, 'utf-8');

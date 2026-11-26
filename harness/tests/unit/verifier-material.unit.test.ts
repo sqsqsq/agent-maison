@@ -28,7 +28,7 @@ import {
 } from '../../scripts/utils/verifier-material';
 import { readImplementationReviewChanges } from '../../scripts/utils/diff-scope';
 import { buildVerifierRequest } from '../../scripts/utils/verifier-request';
-import { stableStringify } from '../../scripts/utils/phase-evidence-manifest';
+import { resolvePhaseEvidenceManifest, stableStringify, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import type { ContextFileEntry } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
 import { copyC6HostReplay } from '../utils/c6-host-replay';
@@ -47,7 +47,7 @@ import type { ResolvedPhaseInputs } from '../../scripts/utils/capability-resolut
 import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
 import type { CheckContext } from '../../scripts/utils/types';
 import { readPhaseRepairIssues, verifierSemanticChecks } from '../../scripts/utils/repair-candidates';
-import { finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
+import { currentRequirementEvidenceSha, executedEvidenceInputs, finalizePhaseClosure } from '../../scripts/utils/phase-closure-finalizer';
 import { computeGateFingerprint } from '../../scripts/utils/gate-fingerprint';
 import { phaseCompletionProblems } from '../../scripts/utils/check-disposition';
 import { createIndependentQuestioningResult, describeQuestioningChanges, requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning, independentQuestioningBlockers } from '../../scripts/utils/blueprint-questioning';
@@ -233,8 +233,11 @@ const cases: Array<{ name: string; run: () => void }> = [
           loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, verifierPromptRel),
           { scope: { mode: 'full', requiredIds: [], reviewIds: [], reusedRows: [] }, previousReport: null });
         assert(restored.includes('### 检查 6:') && !readVerifierItemReviewPrompt(restored), 'late evidence can restore full review from the bound template');
-        put(root, '02-Feature/Demo/unknown-dependency.ets', 'export const newInput = 1;\n');
-        assert.equal(produce().itemReview.scope.mode, 'full', 'an unassignable actual path requires full review');
+        const extra = '02-Feature/Demo/unknown-dependency.ets';
+        put(root, extra, 'export const newInput = 1;\n');
+        assert.equal(produce().material.material_sha256, second.material.material_sha256, 'an unclaimed candidate is not a changed review input');
+        put(root, currentProduct, marker + '\n## 审查范围\n\n- ' + extra + '\n');
+        assert.equal(produce().itemReview.scope.mode, 'full', 'an adopted source without a mapped review item requires full review');
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
@@ -940,6 +943,25 @@ const cases: Array<{ name: string; run: () => void }> = [
           reportText: refutedBody, skipSummaryPatch: true });
         const close = () => finalizePhaseClosure({ ...options, phase: 'plan', resolvedInputs, factsContext: entry.factsContext,
           goalRunId: f.runId, persistPhaseState: () => undefined });
+        assert.throws(close, /gate_fingerprint/, 'a reply alone cannot refresh a tool result from older rules');
+        const publishCurrentPlanEvidence = (material: ReturnType<typeof build>) => {
+          const live = resolveCapabilityInputs({ ...options, track: 'full', ...entry }).inputs!;
+          const report = generateScriptReport(path.join(frameworkRoot, 'harness'), 'plan', f.feature, f.root, script.checks, frameworkRoot);
+          const previousRun = process.env.MAISON_GOAL_RUN_ID;
+          process.env.MAISON_GOAL_RUN_ID = f.runId;
+          try {
+            const summary = writeRunSummaryBase(f.root, report, frameworkRoot, { verifierMaterial: material,
+              verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'current check with consumed bindings' } });
+            writePhaseEvidenceManifest(f.root, resolvePhaseEvidenceManifest({ ...options, resolvedInputs: live, factsContext: entry.factsContext,
+              requirementSha: currentRequirementEvidenceSha({ ...options, resolvedInputs: live, runId: f.runId }),
+              extraInputs: executedEvidenceInputs(f.root, f.feature, 'plan', frameworkRoot) }));
+            return summary;
+          } finally {
+            if (previousRun === undefined) delete process.env.MAISON_GOAL_RUN_ID;
+            else process.env.MAISON_GOAL_RUN_ID = previousRun;
+          }
+        };
+        assert.equal(publishCurrentPlanEvidence(changedView).verifier_subject_id, changed.verifier_subject_id);
         assert.equal(close().summary.closure_status, 'closed', 'a real reply on the changed subject must close the original verification lifecycle');
         assert(!current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface'));
         fs.appendFileSync(config, '// another current configuration change\n');
@@ -979,6 +1001,7 @@ const cases: Array<{ name: string; run: () => void }> = [
           verifierPlan: { mode: 'enabled', reason: 'policy_required', verifier_prompt: 'prompts/verify-plan.md', message: 'current native evidence refresh' } });
         publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: refreshedRequest.verifier_subject_id,
           reportText: refutedBody, skipSummaryPatch: true });
+        assert.equal(publishCurrentPlanEvidence(refreshedView).verifier_subject_id, refreshedRequest.verifier_subject_id);
         assert.equal(close().summary.closure_status, 'closed');
         assert.equal(build().material_sha256, refreshedView.material_sha256, 'the refreshed anchor stays stable after the original verifier reply');
         assert(!current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface'));
@@ -995,6 +1018,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert.equal(build().material_sha256, frozenView.material_sha256, 'issuing a request cannot discard the configuration inputs selected for its frozen-evidence diagnosis');
         publishFixtureVerifierEvidence({ projectRoot: f.root, reportsDir: reports, feature: f.feature, phase: 'plan', subjectId: frozenRequest.verifier_subject_id,
           reportText: refutedBody, skipSummaryPatch: true });
+        assert.equal(publishCurrentPlanEvidence(frozenView).verifier_subject_id, frozenRequest.verifier_subject_id);
         assert.equal(close().summary.closure_status, 'closed');
         assert(!current().completionBlocking.some(problem => problem.id === 'open_finding:acceptance_to_interface'));
       } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }

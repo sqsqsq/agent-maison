@@ -6,7 +6,8 @@
 # `summary.closure_status=closed` 提交后才 best-effort 生成；生成失败只 WARN。备注、决策点、已知未解决项写 `<phase>/notes.md`。
 #
 # 字段来源：feature/phase = CLI；agent_model/agent_runtime = adapter 与环境；claimed_completion_at = 生成时刻；
-# claimed_completion_commit_sha = summary.source_commit_sha；claimed_attempt_id = closure 上下文投影（非 goal 留空）；
+# claimed_completion_commit_sha 投影原 summary 的历史提交号；普通闭环核实际相关材料。
+# claimed_attempt_id = closure 上下文投影（非 goal 留空）；
 # verifier = 当前或经核实沿用的 verifier.report.<subject>.md；
 # testing_run_artifacts（仅 testing）= 权威 run 目录的 trace/report 与 app 快照缓存目录。
 

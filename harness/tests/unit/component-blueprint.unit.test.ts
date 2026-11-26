@@ -439,7 +439,9 @@ function withPublicSmallBlueprint(run: (fixture: {
       add({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: call, content: output }] } });
     };
     const startRequest = (userId: string) => {
-      add({ type: 'user', uuid: userId, message: { role: 'user', content: '按小型处理：空标题返回未命名，其余不变。原需求在 requirements/compact.md。' } });
+      const draft = path.relative(root, componentBlueprintPath(root, id)).replace(/\\/g, '/');
+      const address = userId === 'user-small' ? `请更新现有草稿 ${draft}。` : '';
+      add({ type: 'user', uuid: userId, message: { role: 'user', content: '按小型处理：空标题返回未命名，其余不变。原需求在 requirements/compact.md。' + address } });
       tool('Bash', { command: 'git rev-parse HEAD' }, head); tool('Bash', { command: 'git status --porcelain' }, git('status', '--porcelain'));
       for (const file of [source, 'requirements/compact.md']) tool('Read', { file_path: path.join(root, file) }, fs.readFileSync(path.join(root, file), 'utf8'));
       add({ type: 'assistant', message: { role: 'assistant', content: '本请求修标题默认值；Q1=否；Q2=否；Q3=否；依赖结果=否；跨部件=否；预期明确=是；做法唯一=是。依据 src/title.ts、requirements/compact.md。' } });
@@ -607,7 +609,7 @@ export function runAll(): UnitCaseResult[] {
     const first = cli(['--session-ref', nativeFile + '#user-small', '--target', source, '--requirement-source', 'requirements/compact.md', '--report-dir', 'doc/reports/short-design', '--prepare-source', '--write-review']);
     assert(first.status === 0, first.stderr + first.stdout);
     const output = JSON.parse(first.stdout), requestPath = path.join(root, output.request_file), request = JSON.parse(fs.readFileSync(requestPath, 'utf8'));
-    assert(request.phase === 'component-design' && request.baseline.base === head && output.design_scope === 'small-request-design', first.stdout);
+    assert(request.phase === 'component-design' && request.baseline.base === undefined && output.design_scope === 'small-request-design', first.stdout);
     assert(request.blueprint?.ref.blueprint_id === id && request.blueprint.acceptance_ids.includes('AC-1') && output.blueprint_binding.ref.artifact_sha256 === request.blueprint.ref.artifact_sha256, '未绑定实际canonical身份/AC');
     assert(output.review_document.status === 'not_applicable' && !fs.existsSync(blueprintReviewPath(root, id)), '小型生成了独立review');
     assert(fs.readdirSync(path.dirname(path.dirname(canonical))).length === 1, '小型创建了CU/其它设计物');
@@ -625,8 +627,8 @@ export function runAll(): UnitCaseResult[] {
     const stale = cli(['--request-file', output.request_file]);
     assert(stale.status !== 0, 'readonly接受了旧revision绑定');
     const rebound = cli(['--request-file', output.request_file, '--prepare-source']);
-    assert(rebound.status === 0, rebound.stderr + rebound.stdout);
-    assert(JSON.parse(fs.readFileSync(requestPath, 'utf8')).blueprint.ref.revision === repaired.revision, '修订后仍绑旧revision');
+    assert(rebound.status !== 0 && JSON.parse(rebound.stdout).status === 'REVIEW_REQUIRED', rebound.stderr + rebound.stdout);
+    assert(JSON.parse(fs.readFileSync(requestPath, 'utf8')).blueprint.ref.revision === ref.revision, '待审核时原签发保留');
   })));
   for (const mode of ['other-request', 'admitted', 'cu', 'completed']) {
     results.push(test(`R2 public source preparation preserves ${mode} byte-for-byte`, () => withPublicSmallBlueprint(f => {
@@ -699,11 +701,13 @@ export function runAll(): UnitCaseResult[] {
     const first = f.cli(['--session-ref', f.nativeFile + '#user-small', '--target', f.source, '--requirement-source', 'requirements/compact.md', '--report-dir', 'doc/reports/full-shape', '--prepare-source']);
     assert(first.status === 0, first.stderr + first.stdout);
     const output = JSON.parse(first.stdout), draft = readYaml(f.canonical), full = validBlueprint();
+    const request = path.join(f.root, output.request_file), signed = JSON.parse(fs.readFileSync(request, 'utf8')).blueprint;
     for (const field of ['review_summary', 'decisions_and_gaps', 'relations', 'contracts', 'providers', 'app_lens', 'derived_results']) draft[field] ??= clone(full[field]);
     delete asRecord(draft.review_summary)!.admission;
     fs.writeFileSync(f.canonical, YAML.stringify(draft)); const business = JSON.stringify(draft.design_views);
     const prepared = f.cli(['--request-file', output.request_file, '--prepare-source']);
-    assert(prepared.status === 0, prepared.stderr + prepared.stdout);
+    assert(prepared.status !== 0 && JSON.parse(prepared.stdout).status === 'REVIEW_REQUIRED', prepared.stderr + prepared.stdout);
+    assert(JSON.stringify(JSON.parse(fs.readFileSync(request, 'utf8')).blueprint) === JSON.stringify(signed), '待审保留原签发绑定');
     assert(JSON.stringify(readYaml(f.canonical).design_views) === business, '自有未完成full降档改掉业务内容');
   })));
   results.push(test('B3 same-file medium expansion retains short acceptance and code; original questioning/admission gates still run', () => withTempProject((root, file) => {

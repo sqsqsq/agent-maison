@@ -1079,27 +1079,12 @@ export function createGoalRun(options: {
   if (options.manifest.execution_scope && (options.manifest.start_phase !== phaseChain[0] || options.manifest.end_phase !== phaseChain.at(-1) || JSON.stringify(options.manifest.chain_override) !== JSON.stringify(phaseChain))) throw new Error('[goal-run-creation] scope start/end/chain_override mismatch');
   if (!initialDesign) options.manifest.phase_chain = phaseChain;
 
-  if (requiresRunBase(options.projectRoot, options.manifest, phaseChain, options.frameworkRoot)) {
-    if (options.manifest.successor_of) {
-      if (!options.manifest.run_base_sha) {
-        throw new Error(
-          '[goal-run-creation] successor 缺少可信 lineage run_base_sha；须人工 rebaseline supersede',
-        );
-      }
-      options.manifest.run_base_sha = validateExactSha(
-        options.manifest.run_base_sha,
-        'successor run_base_sha',
-      );
-    } else {
-      options.manifest.run_base_sha = validateExactSha(
-        (options.resolveHead ?? (() => resolveGoalRunHeadSha(options.projectRoot)))(),
-        'Git HEAD',
-      );
-    }
-  } else if (options.manifest.run_base_sha !== undefined) {
+  if (options.manifest.run_base_sha !== undefined) {
     options.manifest.run_base_sha = validateExactSha(options.manifest.run_base_sha, 'run_base_sha');
+  } else if (!options.manifest.successor_of && requiresRunBase(options.projectRoot, options.manifest, phaseChain, options.frameworkRoot)) {
+    try { options.manifest.run_base_sha = validateExactSha((options.resolveHead ?? (() => resolveGoalRunHeadSha(options.projectRoot)))(), 'Git HEAD'); }
+    catch (error) { if (options.resolveHead) throw error; }
   }
-
   const fields = computeManifestIdentityFields(options.manifest);
   const baseDigest = fields.run_base_sha ?? null;
   const withoutHash = {

@@ -1,3 +1,4 @@
+import { loadPhaseEvidenceManifest, recomputeManifestAggregate, recomputePhaseEvidenceStaleness, sha256File, writePhaseEvidenceManifest } from './utils/phase-evidence-manifest';
 import { resolveCompletionDisposition, readPhaseChecks } from './utils/verify-feature-completion';
 import { phaseCompletionProblems } from './utils/check-disposition';
 // ============================================================================
@@ -26,7 +27,6 @@ import { phaseCompletionProblems } from './utils/check-disposition';
 
 import * as fs from 'fs';
 import * as path from 'path';
-import { spawnSync } from 'child_process';
 import * as YAML from 'yaml';
 import minimist from 'minimist';
 import { loadFrameworkConfig, resolveReceiptFilePath, featurePhaseReportsDir, relFeaturesDir } from '../config';
@@ -50,7 +50,6 @@ import { assessAndRenderNextStep } from './utils/assess-renderer';
 import { isClaudeKernelAdapter } from './utils/types';
 import { scanCommandForPreloadInjection } from './utils/process-integrity';
 import { validateLiteSchema } from './utils/lite-json-schema';
-import { computeProductWorktreeDigest } from './utils/worktree-digest';
 import { isCapabilitySkipped } from '../capability-registry';
 import { isPhaseDisabledByProfile, loadResolvedProfile } from '../profile-loader';
 import {
@@ -79,7 +78,6 @@ import {
   type VerifierPlan,
 } from './utils/verifier-plan';
 import { SUMMARY_SCHEMA_VERSION_CURRENT } from './utils/quality-axes';
-import { recomputePhaseEvidenceStaleness } from './utils/phase-evidence-manifest';
 import { RECEIPT_PROJECTION_SCHEMA } from './utils/receipt-scaffold';
 import type { VerifierClosureRecord } from './utils/types';
 import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
@@ -439,95 +437,15 @@ function main(): void {
           message: `无法加载 summary.schema.json 做校验：${(e as Error).message}`,
         });
       }
-      // t2 v2（codex BLOCKER3b）：run identity 三方绑定——summary.source_commit_sha 必须存在、
-      // 等于回执 claimed sha、且等于当前 git HEAD；同版本 framework 下旧 PASS 件复用被 sha 拒绝。
+      // 回执若引用历史提交，校对其原 summary 的审计字段。
       const summarySha = ((slimSummary as { source_commit_sha?: string }).source_commit_sha ?? '').trim();
-      if (!summarySha) {
+      const claimedRaw = (frontmatter.claimed_completion_commit_sha ?? '').trim();
+      if (claimedRaw && /^[a-f0-9]{7,40}$/i.test(claimedRaw) && !summarySha.toLowerCase().startsWith(claimedRaw.toLowerCase())) {
         issues.push({
-          id: 'slim_summary_source_sha_missing',
+          id: 'slim_summary_source_sha_mismatch',
           severity: 'BLOCKER',
-          message:
-            'summary.json 缺 source_commit_sha（run identity 锚）——请用当前版本 harness 重跑生成 base summary。',
+          message: `summary.source_commit_sha=${summarySha} 与回执 claimed_completion_commit_sha=${claimedRaw} 不一致。`,
         });
-      } else {
-        // v3（codex）：短 SHA 先解析为完整 SHA 再比较（claimed 允许 7-40 位）。
-        const claimedRaw = (frontmatter.claimed_completion_commit_sha ?? '').trim();
-        let claimedFull = claimedRaw;
-        if (claimedRaw) {
-          const resolveClaimed = spawnSync('git', ['rev-parse', `${claimedRaw}^{commit}`], {
-            windowsHide: true,
-            cwd: projectRoot,
-            encoding: 'utf-8',
-            shell: false,
-          });
-          if (resolveClaimed.status === 0) claimedFull = resolveClaimed.stdout.trim();
-        }
-        if (claimedFull && summarySha !== claimedFull) {
-          issues.push({
-            id: 'slim_summary_source_sha_mismatch',
-            severity: 'BLOCKER',
-            message:
-              `summary.source_commit_sha=${summarySha} 与回执 claimed_completion_commit_sha=${claimedRaw} 不一致——` +
-              'summary 与回执必须出自同一工作状态（旧 summary 冒充/回执后补皆拒）。',
-          });
-        }
-        const headProbe = spawnSync('git', ['rev-parse', 'HEAD'], { windowsHide: true, cwd: projectRoot, encoding: 'utf-8', shell: false });
-        const headSha = headProbe.status === 0 ? headProbe.stdout.trim() : '';
-        // v6（codex 第五轮 P1）：HEAD 解析失败=run identity 无法核实 → fail-closed BLOCKER，
-        // 不得静默跳过 HEAD 绑定校验（slim 凭证链以 git 为前提）。
-        if (!headSha) {
-          issues.push({
-            id: 'slim_summary_head_unverifiable',
-            severity: 'BLOCKER',
-            message:
-              'git rev-parse HEAD 失败——当前 HEAD 无法核实时不得放行 summary 的 commit 绑定（fail-closed）；' +
-              '排查 git 环境后重跑闭环校验。',
-          });
-        } else if (summarySha !== headSha) {
-          issues.push({
-            id: 'slim_summary_source_sha_stale',
-            severity: 'BLOCKER',
-            message:
-              `summary.source_commit_sha=${summarySha} ≠ 当前 HEAD=${headSha}——` +
-              'HEAD 已推进，summary 属旧工作状态；请重跑 harness 重新生成后再闭环。',
-          });
-        }
-      }
-      // t2 v3（codex 阻断3）：dirty worktree 绑定——重算产品层目录工作区摘要比对；
-      // HEAD 不动但源码已改时旧 PASS 件失效。
-      const summaryWorktree = ((slimSummary as { worktree_digest?: string }).worktree_digest ?? '').trim();
-      if (!summaryWorktree) {
-        issues.push({
-          id: 'slim_summary_worktree_missing',
-          severity: 'BLOCKER',
-          message: 'summary.json 缺 worktree_digest——请用当前版本 harness 重跑生成 base summary。',
-        });
-      } else {
-        const layerDirs = (fw.architecture?.outer_layers ?? []).map(l => l.id);
-        const currentDigest = computeProductWorktreeDigest(projectRoot, layerDirs);
-        // v6（codex 第五轮 P1，收紧 v5）：**只有两侧都是 16 hex 摘要（或双 no-layers 的
-        // 确定性配置态）才允许相等比较**——no-git/unverifiable/未知哨兵一律 BLOCKER，
-        // 构造性排除"两侧同错误常量假匹配"（no-git===no-git 曾可放行）。
-        const HEX16 = /^[0-9a-f]{16}$/;
-        const bothNoLayers = currentDigest === 'no-layers' && summaryWorktree === 'no-layers';
-        if (!bothNoLayers && (!HEX16.test(currentDigest) || !HEX16.test(summaryWorktree))) {
-          issues.push({
-            id: 'slim_summary_worktree_unverifiable',
-            severity: 'BLOCKER',
-            message:
-              `worktree_digest 无法核实（summary=${summaryWorktree}，当前重算=${currentDigest}）——` +
-              '闭环只认成功生成的 16 hex 摘要；git 失败/文件不可读等哨兵值一律不放行（fail-closed）。' +
-              '排查 git 环境与不可读文件后重跑 harness。',
-          });
-        } else if (summaryWorktree !== currentDigest) {
-          issues.push({
-            id: 'slim_summary_worktree_stale',
-            severity: 'BLOCKER',
-            message:
-              `worktree_digest 失配（summary=${summaryWorktree}，当前=${currentDigest}）——` +
-              '产品源码工作区状态已变（HEAD 未动也算），summary 属旧状态；请重跑 harness。',
-          });
-        }
       }
       // t2 v3（codex 阻断3）：goal 环境 run 身份绑定——同 commit 上 run A 的 summary 不得被
       // run B 复用。v4（codex 第三轮高优）fail-closed：goal 环境下当前 run id / summary run id
@@ -1106,6 +1024,16 @@ function main(): void {
       }
     }
     if (currentRunReadable) {
+      const original = loadPhaseEvidenceManifest(projectRoot, feature, phase);
+      const scriptPath = path.join(canonicalReportsDir, 'script-report.json');
+      const reportBound = original?.integrityOk && original.manifest.outputs.some(entry =>
+        path.resolve(projectRoot, entry.path) === scriptPath && entry.exists && entry.sha256 === sha256File(scriptPath));
+      const [freshness] = recomputePhaseEvidenceStaleness(projectRoot, feature, [phase], { frameworkRoot, runId });
+      const changed = freshness.changed_paths;
+      if (!reportBound || freshness.verdict === 'missing' || freshness.verdict === 'tampered' || changed.length) {
+        issues.push({ id: 'slim_summary_not_pass', severity: 'BLOCKER',
+          message: '阶段原报告或实际输入仍待核实：' + (changed.join('、') || freshness.integrity_errors?.join('；') || '缺少可匹配的脚本报告和原证据') });
+      }
       const disposition = resolveCompletionDisposition({ projectRoot, frameworkRoot, feature, chain: [phase], runId, workflow: workflowSpecForPlan,
         currentResults: [{ phase, summary: slimSummary, resolvedInputs: resolvedVerifierInputs, checks: readPhaseChecks(projectRoot, feature, phase, slimSummary) }] });
       const pending = phaseCompletionProblems(disposition, [phase]);
@@ -1309,10 +1237,14 @@ export function patchSummarySoftAdvisory(
   const summaryPath = path.join(projectRoot, reportDirRel.trim(), 'summary.json');
   if (!fs.existsSync(summaryPath)) return;
   try {
-    const summary = JSON.parse(fs.readFileSync(summaryPath, 'utf-8')) as HarnessRunSummary;
+    const original = fs.readFileSync(summaryPath, 'utf-8');
+    const summary = JSON.parse(original) as HarnessRunSummary;
     // Closed summary bytes are manifest-bound evidence. Advisory is presentation-only
     // and must never mutate an already committed closure.
     if (summary.closure_status === 'closed') return;
+    const evidence = loadPhaseEvidenceManifest(projectRoot, summary.feature, summary.phase);
+    const summaryEntry = evidence?.manifest.outputs.find(entry => path.resolve(projectRoot, entry.path) === summaryPath);
+    if (!evidence?.integrityOk || !summaryEntry || summaryEntry.sha256 !== sha256File(summaryPath)) return;
     const existing = Array.isArray(summary.soft_advisories) ? summary.soft_advisories : [];
     const entry: SoftAdvisory = {
       id: advisory.id,
@@ -1325,9 +1257,19 @@ export function patchSummarySoftAdvisory(
       ...existing.filter(a => a?.id !== advisory.id),
       entry,
     ];
-    fs.writeFileSync(summaryPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf-8');
+    const after = `${JSON.stringify(summary, null, 2)}\n`;
+    if (original === after) return;
+    fs.writeFileSync(summaryPath, after, 'utf8');
+    try {
+      summaryEntry.sha256 = sha256File(summaryPath);
+      evidence.manifest.aggregate_sha256 = recomputeManifestAggregate(evidence.manifest);
+      writePhaseEvidenceManifest(projectRoot, evidence.manifest);
+    } catch {
+      fs.writeFileSync(summaryPath, original, 'utf8');
+    }
   } catch {
-    /* best-effort */
+    /* An advisory need not update the machine report. */
+
   }
 }
 

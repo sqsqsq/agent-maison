@@ -297,16 +297,61 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [{
           checks: executeCheck(context(phase), () => [{ ...pass, id: 'actual_product_finding',
             status: fs.readFileSync(path.join(root, artifact), 'utf8').includes('is open') ? 'FAIL' : 'PASS',
             affected_files: [artifact], details: '真实产物中的待修结论' }], 'actual_product_finding').concat(gap(phase)),
-        } : null,
+        } : phase === 'ut' ? { checks: fixtureReadDependencies(root, [{ ...pass, id: 'ut_product_under_check',
+          details: fs.readFileSync(path.join(root, artifact), 'utf8') }], [artifact]) } : null,
       });
       const verdicts = probe.events.filter(event => event.type === 'phase_verdict' && event.phase === 'review');
       assert.equal(verdicts[0]?.verdict, 'FAIL');
       assert.equal(verdicts[1]?.verdict, 'INCOMPLETE');
       assert.equal(probe.invokedPhases.filter(phase => phase === 'work-unit-author').length, 2);
-      assert.equal(probe.harnessPhases.filter(phase => phase === 'ut').length, 2, '真实源码修复只补一次受影响UT，剩余框架缺口不重买测试');
+      assert.equal(probe.harnessPhases.filter(phase => phase === 'ut').length, 2,
+        '真实源码修复只补一次受影响UT，剩余框架缺口不重买测试：' + JSON.stringify(probe.harnessPhases));
       assert(!probe.events.some(event => event.type === 'budget_turns'));
       assert(probe.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING' && event.run_wait_kind === 'external'));
       assert(fs.readFileSync(path.join(root, artifact), 'utf8').includes('repaired'));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+  },
+}, {
+  name: 'separate framework report drift cannot hide an actionable current UT failure',
+  run: async () => {
+    const { root } = setupGoalRuntimeHost('codex', false);
+    try {
+      const artifact = PRODUCT_FILE;
+      const original = fs.readFileSync(path.join(root, artifact), 'utf8');
+      const configFile = path.join(root, 'framework.config.json');
+      const config = JSON.parse(fs.readFileSync(configFile, 'utf8'));
+      config.active_workflow = 'obligation-driven';
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      clearFrameworkConfigCache();
+      const requirement = `修复 ${artifact} 并实际复验 UT，不改变设备行为。`;
+      const prepared = prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: ROOT, feature: FEATURE,
+        completionTarget: 'request', requestedResults: [requirement], requestedPhases: ['coding', 'review', 'ut'], requirement,
+        impact: { userVisibleBehaviorChange: false, reason: '修复内部源码', basisPaths: [artifact] } });
+      let changedFrameworkReport = false;
+      const probe = await runGoalRuntimeChain(root, { adapter: 'codex', frameworkRoot: ROOT,
+        freshRequirement: requirement, freshStartPhase: 'coding', freshEndPhase: 'ut',
+        freshManifestContent: YAML.stringify({ feature: FEATURE, adapter: 'codex', requirement, execution_scope: prepared.scope,
+          chain_override: prepared.scope.phase_chain, unattended: { write_mode: 'full-access', approval_mode: 'never' } }),
+        onAuthor: ({ attempt }) => writeFile(root, artifact, original + (attempt === 1 ? '\n// deliberate type deficit\n' : '\n// fixed type deficit\n')),
+        onHarnessSummary: ({ phase }) => {
+          if (phase === 'coding') return { checks: gap(phase) };
+          if (phase !== 'ut') return null;
+          const product = fs.readFileSync(path.join(root, artifact), 'utf8');
+          if (!changedFrameworkReport && product.includes('deliberate type deficit')) {
+            const report = path.join(root, 'doc/features', FEATURE, 'coding/reports/script-report.json');
+            fs.appendFileSync(report, '\n');
+            changedFrameworkReport = true;
+          }
+          return { checks: fixtureReadDependencies(root, [{ ...pass, id: 'actual_ut_product_deficit',
+            status: product.includes('deliberate type deficit') ? 'FAIL' : 'PASS',
+            affected_files: [artifact], details: '当前实际产品的 UT 输入' }], [artifact]) };
+        },
+      });
+      assert(changedFrameworkReport);
+      assert.deepEqual(probe.events.filter(event => event.type === 'phase_verdict' && event.phase === 'ut').map(event => event.verdict), ['FAIL', 'PASS']);
+      assert.equal(probe.invokedPhases.filter(phase => phase === 'work-unit-author').length, 2);
+      assert(probe.events.some(event => event.type === 'phase_halt' && event.run_disposition === 'WAITING'));
+      assert(fs.readFileSync(path.join(root, artifact), 'utf8').includes('fixed type deficit'));
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   },
 }, {

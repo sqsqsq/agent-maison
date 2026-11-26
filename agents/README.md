@@ -244,13 +244,13 @@ DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共
 
 ### 前门规则与真实客户端证据
 
-所有 adapter 的根入口/常驻规则/Skill 跳板必须引用 [project-entry.md](../docs/operations/project-entry.md) 的唯一规则，不各维护档位表；这是统一入口的规则要求，不代表各客户端的新原生来源读取链已全覆盖。原 compile/request 从可用原生环境自动取得同一 session/project 与真实 user 来源；已有请求沿返回的 `session_ref` 复用，需显式交接时把该引用原样传给 `--session-ref`，不要求用户在可自动取得时手配。引用可以是原生 JSONL 原件加消息 ID（相应格式可用 `line:n`）、DSH 压缩原件加真实 `user/message.data.id`，或 OpenCode 原生 SQLite/session/user 引用；不能以 assistant 转述、路径存在或模型自称授权替代原件。普通“继续”不因新增 user 消息重复加载，语义新请求/本请求豁免边界归原入口，不归纯 hook。
+所有 adapter 的根入口/常驻规则/Skill 跳板必须引用 [project-entry.md](../docs/operations/project-entry.md) 的唯一规则，不各维护档位表；这是统一入口的规则要求，不代表各客户端的新原生来源读取链已全覆盖。原 compile/request 从可用原生环境自动取得同一 session/project 与真实 user 来源；已有请求沿返回的 `session_ref` 复用，需显式交接时把该引用原样传给 `--session-ref`，不要求用户在可自动取得时手配。引用可以是原生 JSONL 原件加消息 ID（相应格式可用 `line:n`）、DSH 压缩原件加真实 `user/message.data.id`，或 OpenCode 原生 SQLite/session/user 引用；不能以 assistant 转述、路径存在或模型自称授权替代原件。普通续作按真实用户指向的对象与原请求绑定识别。
 
 自动精确来源现已接 Codex 线程索引、Claude 原生 shell session、DSH_HOME + DSH_SESSION_ID 及 OpenCode 普通前台插件的当次 session/call。先设计、先 CLI 无需先触发编辑 hook；只消费本次来源，不扫描最近会话，不把外层 Codex 标记冒充当前 DSH/OpenCode/Claude。Codex 信号与单一其它有效宿主会话信号（Claude、DSH 或 OpenCode）同时存在时，采用该其它宿主会话；多个非 Codex 宿主信号冲突仍保留 gap，OpenCode PTY 缺少 sessionID/callID 时不回退使用 Codex。DSH 首次取准确原件最后一条已落盘真实 user；原 request/Goal 已有引用后固定沿用，不随追加消息换锚。CodeAgent 仍沿 hook/已有显式引用，待内网回传真实 shell 信号及生产守卫结果；Cursor 仅接已核历史格式，未知原生来源/授权继续降级。
 
-已由原生短例核实的编辑 hook，只在对应工具和场景机械证明同一会话可消费上下文中已加载前门规则，缺失拒绝当前产品写入、补读即恢复；最近压缩明确保留加载事实可复用。实现按既有 RUN_ID/ATTEMPT/ATTEMPT_PHASE/HEADLESS 信号并集识别 Maison 派出作者免重复入口，客户端实际环境以下表为准；仍不免 framework 只读、实际写界和真实完成核验。该信号是合作约定，不声称抵抗任意 Shell 伪造，不增加令牌/身份层。
+前门由常驻规则和统一入口提供。编辑 hook 保留对应工具的 framework 发布件保护、原生权限及适用的受管写界。普通工具结果缺失或错配只影响依赖该调用的结论。
 
-下表是 **2026-11-11 至 14 隔离原生短例、历史结构及本机合成前台诊断**，不代表正式发布件、业务宿主、设备、完整四档或全能力验收，也不构成效率基准。早期原件保存在开发验证目录 `temp/native-client-probes/` 的 `RESULTS.md`、`A8-PRODUCTION-RESULTS.md`；Codex/CodeAgent 证据与补测包在 `harness/reports/a6-client-validation/`；历史调查在 `harness/reports/adapter-intake-probe/`。本轮实现证据在 `harness/reports/multi-host-intake/` 的 `claude-cli/public-*`、`opencode/frontend-*-evidence.json`、`dsh/live-report.json`、`dsh/live-selfcheck.json` 及定向测试报告。以上均为开发证据、不随发布件；原报告中的权限拒绝、程序失败、未知和后续恢复分别保留，不用最后成功改写首因。旧 hook 原生调用绑定当时源码哈希；本轮从旧验证 worktree 的保留原件取得五个真实调用前缀，以最终生产源再回放 5/5 通过，见 `harness/reports/multi-host-intake/core/legacy-claude-prefix-final-source-replay.json`。该回放不是新的原生调用；下表分别标明本轮实际前台结果。
+下表保留 **2026-11-11 至 14 旧版隔离原生短例、历史结构及本机合成前台诊断**，不代表正式发布件、业务宿主、设备、完整四档或全能力验收，也不构成效率基准。早期原件保存在开发验证目录 `temp/native-client-probes/` 的 `RESULTS.md`、`A8-PRODUCTION-RESULTS.md`；Codex/CodeAgent 证据与补测包在 `harness/reports/a6-client-validation/`；历史调查在 `harness/reports/adapter-intake-probe/`。本轮实现证据在 `harness/reports/multi-host-intake/` 的 `claude-cli/public-*`、`opencode/frontend-*-evidence.json`、`dsh/live-report.json`、`dsh/live-selfcheck.json` 及定向测试报告。以上均为开发证据、不随发布件；原报告中的权限拒绝、程序失败、未知和后续恢复分别保留，不用最后成功改写首因。旧 hook 原生调用绑定当时源码哈希；本轮从旧验证 worktree 的保留原件取得五个真实调用前缀，以最终生产源再回放 5/5 通过，见 `harness/reports/multi-host-intake/core/legacy-claude-prefix-final-source-replay.json`。该回放不是新的原生调用；下表分别标明本轮实际前台结果。
 
 | 客户端 | 框架实现状态 | 本次原生格式 / CLI 证据 | 未测或降级边界 |
 |---|---|---|---|
@@ -263,9 +263,9 @@ DeepSeek Harness 使用 `deepseek-harness` adapter、自有 `.dsh/skills` 和共
 | Chrys | AGENTS/`.agents` bundle 与调用构造已实现；rules 仅引用可达，原生来源未接入 | 用户确认本机未安装，本轮无原生格式、CLI 或 hook 实证；没有安装或全盘搜索 | 现有权限旗标未核，detached 预检以 adapter_headless_permission_unsupported 拒绝，dry-run 为 WARN；不泛化为所有有人会话不可用。不能因文档/argv 存在宣称完整 headless、读图或工具审计支持 |
 | generic | 固定 native reader 不适用；共享入口、显式 `--target/--test-target` 及同 schema 自动 request 的 `origin_gap` 已有 | 任意外部 CLI 无统一原生格式，本轮没有其专用线上实证 | 只保证实际执行的显式局部目标结果；读不到原话时不核档位/完整 diff 归属，不签完整 review 或请求 PASS，不据此授豁免。实际能力仍由宿主 provider/profile 决定，不因有 bundle 或命令模板就称已执行 |
 
-Claude 实际落盘 `uuid` 为原始 user 引用，hook 的 prompt_id 对应原件 promptId，二者不等；新版 api-request-blob 为缓存快照、压缩总结虽 type=user 但带 isCompactSummary/isVisibleInTranscriptOnly，均不得当新用户授权。compact_boundary 是 system 记录，落盘字段 compactMetadata；能明确保留已读规则才复用。Codex 原件中的 agent_message 代理通讯不能当用户；已知 `# AGENTS.md instructions`、`<environment_context>` 等客户端指令/环境注入即使落为 role=user，也不能当用户原请求或流程授权。标有 `thread_source: subagent` 或子代理血缘的会话不能冒充根用户来源，须沿原请求核准确根线程原件；不能从子代理唯一一条 user 记录推定根用户授权。字段按真实版本解析，不以角色、格式可解析或文件存在宣称真实用户来源/语义已由机器证明。
+Claude 实际落盘 `uuid` 为原始 user 引用，hook 的 prompt_id 对应原件 promptId，二者不等；新版 api-request-blob 为缓存快照、压缩总结虽 type=user 但带 isCompactSummary/isVisibleInTranscriptOnly，均不得当新用户授权。compact_boundary 是 system 记录，落盘字段 compactMetadata；保留作为历史诊断。Codex 原件中的 agent_message 代理通讯不能当用户；已知 `# AGENTS.md instructions`、`<environment_context>` 等客户端指令/环境注入即使落为 role=user，也不能当用户原请求或流程授权。标有 `thread_source: subagent` 或子代理血缘的会话不能冒充根用户来源，须沿原请求核准确根线程原件；不能从子代理唯一一条 user 记录推定根用户授权。字段按真实版本解析，不以角色、格式可解析或文件存在宣称真实用户来源/语义已由机器证明。
 
-原生 trust/逐 hook review 仍由用户控制；框架物化不自动绕过或改全局信任。Codex 的 `.codex/hooks.json` 含本机绝对路径，是本机生成文件。工程移动或克隆后必须重跑 init，并按新定义重新完成 native 信任。Codex 必须信任准确的项目层及当前 hook 定义，祖先目录 trusted 不保证新嵌套项目已启用；未启用或原件不可读时如实降级。Shell 重定向、脚本、场外进程和未覆盖编辑工具是明确盲区；无 hook 时常驻规则及首次 compile/request 后验只覆盖实际进入框架的调用，完全绕开且不再检查的会话没有发现保证。前门保证和原有 framework 编辑写保护分别报告。
+原生 trust/逐 hook review 仍由用户控制；框架物化不自动绕过或改全局信任。Codex 的 `.codex/hooks.json` 含本机绝对路径，是本机生成文件。工程移动或克隆后必须重跑 init，并按新定义重新完成 native 信任。Codex 必须信任准确的项目层及当前 hook 定义，祖先目录 trusted 不保证新嵌套项目已启用；未启用或原件不可读时如实降级。Shell 重定向、脚本、场外进程和未覆盖编辑工具是明确盲区；无 hook 时常驻规则及首次 compile/request 后验只覆盖实际进入框架的调用，完全绕开且不再检查的会话没有发现保证。各客户端的写保护、原生来源与专项终检分别报告。
 
 ### Layer 3 合作式拦截（settings_file + hooks）
 

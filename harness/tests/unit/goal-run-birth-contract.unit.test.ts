@@ -216,7 +216,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 'successor preserves lineage baseline without reading HEAD and missing lineage fails closed',
+    name: 'successor preserves lineage baseline and legacy successors proceed without inventing one',
     run: () => {
       const ok = fixture('coding');
       const missing = fixture('coding');
@@ -230,10 +230,11 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert.strictEqual(ok.manifest.run_base_sha, SHA);
 
         missing.manifest.successor_of = 'legacy-without-base';
-        assert.throws(() => createGoalRun({
-          projectRoot: missing.root, manifest: missing.manifest, chain: ['coding'], resolveHead: () => SHA,
-        }), /缺少可信 lineage/);
-        assert(!fs.existsSync(path.join(missing.root, missing.manifest.report_dir, 'manifest.json')));
+        createGoalRun({
+          projectRoot: missing.root, manifest: missing.manifest, chain: ['coding'],
+          resolveHead: () => { throw new Error('legacy successor must not read HEAD'); },
+        });
+        assert.strictEqual(loadGoalManifestFromRun(missing.root, missing.manifest.run_id, { feature: 'demo' }).run_base_sha, undefined);
       } finally {
         fs.rmSync(ok.root, { recursive: true, force: true });
         fs.rmSync(missing.root, { recursive: true, force: true });

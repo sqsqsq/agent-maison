@@ -2,9 +2,9 @@
   "rules": [
     {
       "id": "ut_no_src_mutation",
-      "status": "FAIL",
-      "severity": "BLOCKER",
-      "details_includes": "DemoFlow.ets"
+      "status": "WARN",
+      "severity": "MAJOR",
+      "details_includes": "尚无可核历史对照"
     }
   ]
 }

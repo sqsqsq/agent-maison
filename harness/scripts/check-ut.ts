@@ -34,11 +34,7 @@ import { scanNamedBusinessHandler } from './utils/named-handler';
 import { resolveArtifactContent } from './utils/artifact-content';
 import { inspectUseCaseItem } from './utils/design-content-checks';
 import {
-  diffChangedFiles,
-  filterBusinessSourceChanges,
   listFilesAtRef,
-  readTraceStartCommit,
-  analyzeDiffStaleness,
 } from './utils/git-diff';
 import {
   resolveUtTargets,
@@ -69,10 +65,8 @@ import {
 // M5A §4.3：逻辑 featureId → 物理相对路径唯一 SSOT
 import { featureRelativePath } from './utils/feature-identity';
 import { isPhaseDisabledByProfile } from '../profile-loader';
-import { driftFactsFromClosureAttestation, partitionDriftByGitStatus } from './utils/source-drift-facts';
-import { classifyDriftRisk, reviewClosureAttestationPath } from './utils/closure-attestation';
+import { classifyDriftRisk, reconcileReviewInputs, reviewClosureAttestationPath } from './utils/closure-attestation';
 import { classifySourceDrift } from './utils/mutation-authorization';
-import { hasGoalExecutionSignal, resolveHarnessDiffBaseRef } from './utils/phase-state';
 import {
   tryLoadUtHostImpl,
   tryLoadUtSourceRootResolver,
@@ -831,94 +825,8 @@ function checkUtAssertionExists(
  *
  * 受保护前缀由实例 `architecture.outer_layers[].id` 推导；与 SKILL.md 约束 #12 对齐。
  */
-function utSrcProtectedPrefixes(ctx: CheckContext): string[] {
-  return deriveBusinessSourcePathPrefixes(ctx.projectRoot);
-}
-
-function filterProtected(ctx: CheckContext, changes: string[]): string[] {
-  const extra = tryLoadDiffExcludeTestPathRegexes(ctx.resolvedProfile.profileDir) ?? [];
-  return filterBusinessSourceChanges(changes, utSrcProtectedPrefixes(ctx), {
-    excludeTestPathRegexes: extra,
-  });
-}
-
-/**
- * 计算 reports/<feature>/ 的扫描根。
- * - 配置了 `reports_dir_pattern`：`doc/features/<feature>/` 整树（含 `<phase>/reports/`）。
- * - 否则：`framework/harness/reports/<feature>/<phase>/`（未配置 `reports_dir_pattern` 时的旧布局）。
- * 若设置 HARNESS_REPORTS_ROOT_OVERRIDE，则 `<override>/<feature>/`。
- */
-function computeReportsFeatureRoot(projectRoot: string, feature: string): string {
-  const override = process.env.HARNESS_REPORTS_ROOT_OVERRIDE;
-  if (override) return path.join(override, featureRelativePath(feature));
-  const cfg = loadFrameworkConfig(projectRoot);
-  if (typeof cfg.paths.reports_dir_pattern === 'string' && cfg.paths.reports_dir_pattern.trim().length > 0) {
-    return path.join(featuresDirPath(projectRoot), featureRelativePath(feature));
-  }
-  return path.join(HARNESS_ROOT, 'reports', featureRelativePath(feature));
-}
-
-function findTraceJsonFiles(projectRoot: string, feature: string): string[] {
-  const reportsRoot = computeReportsFeatureRoot(projectRoot, feature);
-  if (!fs.existsSync(reportsRoot)) return [];
-  const hits: string[] = [];
-  const walk = (dir: string, depth: number) => {
-    if (depth > 4) return;
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const e of entries) {
-      const abs = path.join(dir, e.name);
-      if (e.isDirectory()) walk(abs, depth + 1);
-      else if (e.isFile() && e.name === 'trace.json') hits.push(abs);
-    }
-  };
-  walk(reportsRoot, 0);
-  return hits;
-}
-
-/**
- * 纯函数（profile 无关）：从未授权改动清单里挑出「非 src/ 下」的工程/构建配置文件。
- * 业务源码落在 src/ 内，模块根的构建/工程配置则在 src/ 外；这类文件常被 agent 为排障触碰、
- * 又受源码门禁约束，单列以便给针对性回退指引。具体宿主配置文件名属 profile 知识，根侧保持中性。
- */
 export function pickNonSrcConfigChanges(files: string[]): string[] {
   return files.filter(f => !/(?:^|\/)src\//.test(f.replace(/\\/g, '/')));
-}
-
-/**
- * plan e7c2a4d8 T4d（codex 三轮 P0-A + 二轮 P0-c）：goal 编排环境的改码门禁——
- * 与 runner reconcileMutablePhaseSourceDrift **共享同一基线与判定**（review closure
- * attestation + classifySourceDrift），只裁决 review 后漂移：coding 阶段合法业务
- * 改动（trace.start_commit 起算全量 diff，宿主实测 ~36 文件）不在裁决域，照 v3 直接
- * 要求 runner 背书会把合法实现全打成 BLOCKER。任何 receipt、gap-notes 或用户身份
- * 都不构成质量放行；goal 与 attended 模式都把 UT 期间的源码漂移交回 coding owner。
- */
-function checkUtNoSrcMutationGoalEnv(ctx: CheckContext): CheckResult[] {
-  const desc = ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation');
-  // plan a5f9c3e2 t1③：事实采集经统一 provider 归一为 SourceDriftFacts（canonical
-  // 三元组与 direct 模式 provider 同 schema；provenance/baseline_kind 是来源标注）。
-  const closure = driftFactsFromClosureAttestation(ctx.projectRoot, ctx.feature);
-  if (!closure) {
-    return [utBaselineUnavailableWarn(desc, 'goal 环境 review closure attestation 缺失/损坏——无源码基线，判不了「review 后漂移」。')];
-  }
-  if (closure.clean) {
-    return [{
-      id: 'ut_no_src_mutation',
-      category: 'structure',
-      description: desc,
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details:
-        'goal 环境基线=review closure attestation：review 后源码零漂移' +
-        '（coding 阶段合法实现不在裁决域）。',
-    }];
-  }
-  const files = [...closure.facts.added, ...closure.facts.modified, ...closure.facts.deleted];
-  return [utDriftTieredWarn(desc, files, 'goal 环境基线=review closure attestation')];
 }
 
 /**
@@ -1145,37 +1053,6 @@ function probeReviewClosureState(ctx: CheckContext): ReviewClosureProbe {
  * 不接 classifySourceDrift / 任何授权链：direct 无 runner 三源授权，人签通行证已整套
  * 剪除；gap-notes / 用户回复照旧不参与质量放行。
  */
-function checkUtNoSrcMutationDirectAttested(ctx: CheckContext, probeReason: string): CheckResult[] {
-  const desc = ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation');
-  const closure = driftFactsFromClosureAttestation(ctx.projectRoot, ctx.feature);
-  if (!closure) {
-    return [utBaselineUnavailableWarn(desc, `review 已正式闭环，但 review-closure-attestation.json 缺失/不可读——源码基线不可用。\n闭环探测：${probeReason}`)];
-  }
-  if (closure.clean) {
-    return [{
-      id: 'ut_no_src_mutation',
-      category: 'structure',
-      description: desc,
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details:
-        '基线=review closure attestation：review 后源码零漂移' +
-        '（coding 阶段合法实现不在裁决域；不依赖 git 提交状态）。',
-    }];
-  }
-  const files = [
-    ...closure.facts.added,
-    ...closure.facts.modified,
-    ...closure.facts.deleted,
-  ];
-  return [utDriftTieredWarn(desc, files, '基线=review closure attestation')];
-}
-
-/**
- * plan 07a41ec6 T8（codex review P1-2）：review 后源码漂移 → 分级 WARN，direct / goal 两条路径同一投影。
- * 不再永久 BLOCKER：UT 阶段改了生产代码按 coding change 归类（本轮 UT 门禁已覆盖编译与用例），
- * review 语义结论对这些改动未重审，按风险分级给所需复核，如实标注、不阻塞普通开发完成。
- */
 function utDriftTieredWarn(desc: string, files: string[], baselineNote: string): CheckResult {
   const risk = classifyDriftRisk(files);
   return {
@@ -1211,186 +1088,28 @@ function utBaselineUnavailableWarn(desc: string, note: string): CheckResult {
     description: desc,
     severity: 'MAJOR',
     status: 'WARN',
-    details:
-      `${note}\n` +
-      '无法对 review 后源码漂移分级——按「未复核」如实标注：所需复核 = 一次最终合并 diff review（review 闭环快照缺失）。' +
-      '不回退 run-start/working git diff 冒充基线（那正是把 coding 合法产物误判成 UT 改码的老路），也不读 gap-notes/用户回复放行。',
+    details: `${note}；本次保留已取得的实际 UT 结果。`,
     failure_kind: 'review_closure_baseline_unavailable',
     blocking_class: 'ut_no_src_mutation',
-    structured: { baseline: 'unavailable', drift_classes: [], required_reviews: ['无基线：做一次最终合并 diff review'] },
+    structured: { baseline: 'unavailable', drift_classes: [], required_reviews: ['核实本次交付的 review 所需材料'] },
     suggestion: '不阻塞 UT 闭环；重跑一次 review 闭环（harness → verifier → check-receipt）即可重建 attestation 基线。无需提交任何产物。',
   };
 }
 
-/**
- * 导出仅为单测直接驱动分派全路（attested / fail-closed / 孤儿 attestation / git fallback）；
- * 生产调用点仍是本文件内的 checker.check。
- */
 export function checkUtNoSrcMutation(ctx: CheckContext): CheckResult[] {
-  // plan e7c2a4d8 T4d：goal 编排环境走 review-closure 基线共享判定（见上）。
-  if (hasGoalExecutionSignal()) {
-    return checkUtNoSrcMutationGoalEnv(ctx);
-  }
-  // plan f3a9d2c7 T1：direct 模式 attestation-first —— 分派条件是**基线可用性**而非
-  // 编排身份。顺序不可倒：先判 review 正式 closed，再看 attestation（孤儿 attestation
-  // 一律不读不采信）。
+  const desc = ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation');
   const probe = probeReviewClosureState(ctx);
-  if (probe.state === 'closed') {
-    return checkUtNoSrcMutationDirectAttested(ctx, probe.reason);
-  }
-  if (probe.state === 'unverifiable') {
-    return [{
-      id: 'ut_no_src_mutation',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation'),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details:
-        `review 闭环状态不可核实：${probe.reason}\n` +
-        '既不进 attestation 基线（闭环没被证实，可能是孤儿快照），也不回退 git diff' +
-        '（回退等于用一个已知会误伤 coding 产物、且看不见已提交改动的基线做裁决）——fail-closed。',
-      failure_kind: 'review_closure_baseline_unavailable',
-      blocking_class: 'ut_no_src_mutation',
-      suggestion:
-        '补跑一次 review 闭环（harness + verifier + receipt + check-receipt）重建 summary 与 attestation，' +
-        '确认 closure 状态可读后重跑 UT 门禁；无需提交任何产物。',
-    }];
-  }
-  return checkUtNoSrcMutationDirectGitFallback(ctx, probe.reason);
+  const current = probe.state === 'closed' ? reconcileReviewInputs(ctx) : null;
+  if (!current) return [utBaselineUnavailableWarn(desc, `当前 review 实现材料尚无可核历史对照：${probe.reason}`)];
+  const files = [...current.added, ...current.modified, ...current.deleted];
+  return files.length ? [utDriftTieredWarn(desc, files, '当前 review 范围与原材料比较')]
+    : [{ id: 'ut_no_src_mutation', category: 'structure', description: desc,
+      severity: 'BLOCKER', status: 'PASS', details: '本次范围内已审源码与当前证据一致。' }];
 }
 
-/**
- * plan f3a9d2c7 T1：direct 模式的 **git fallback** —— 生效域已收窄为「**盘上观察不到任何
- * review 闭环痕迹**」：无 closure attestation 且 summary 缺失/legacy，或 profile 明确禁用
- * review。行为与改造前逐字等值，只在 FAIL details 里多一行「基线降级原因」说明为什么走的
- * 是 git。措辞是"观察不到"而不是"从未闭环"——盘上的证据只支持前者。
- *
- * **有痕迹却说没闭环**（attestation 在盘）不进本分支——那是证据残缺，由 probe 判 fail-closed；
- * 否则「删掉 summary」就成了绕过内容哈希基线、退回 commit-blind working diff 的许可证。
- * 把闭环产物**全部**删光仍会落到这里：那是可观察性的边界（默认工作流还允许 review/UT 并行，
- * 「没有 summary」本身不能当错误），要封须改 DAG 或引入工作区外的可信锚，不在本 change。
- *
- * 生效域内保留既有兼容行为**及其已知 commit-blind 风险**（working 基线看不见已提交的
- * 改动）；本 plan 只保证「已有正式 review closure」的 direct 场景。git fallback 完全
- * 退役属后续 change。
- *
- * 孤儿 attestation 的**内容**在全流程一律不读不采信（只用它在不在做残缺判定）。
- */
-function checkUtNoSrcMutationDirectGitFallback(ctx: CheckContext, degradeReason: string): CheckResult[] {
-  // 解析 baseRef：聚合所有找到的 trace.json（按修改时间选最新，降低多次跑带来的歧义）
-  const envBaseRef = resolveHarnessDiffBaseRef() ?? '';
-  const traceFiles = findTraceJsonFiles(ctx.projectRoot, ctx.feature).sort((a, b) => {
-    const sa = fs.statSync(a).mtimeMs;
-    const sb = fs.statSync(b).mtimeMs;
-    return sb - sa;
-  });
-  let baseRef: string | undefined;
-  if (envBaseRef) {
-    baseRef = envBaseRef;
-  } else {
-    for (const tf of traceFiles) {
-      const sc = readTraceStartCommit(tf);
-      if (sc) { baseRef = sc; break; }
-    }
-  }
-
-  const prefixes = utSrcProtectedPrefixes(ctx);
-
-  const diff = diffChangedFiles({
-    projectRoot: ctx.projectRoot,
-    baseRef,
-    pathspecs: prefixes,
-  });
-
-  if (!diff.executed) {
-    return [{
-      id: 'ut_no_src_mutation',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation'),
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details:
-        `无法运行 git diff：${diff.error ?? '未知错误'}\n` +
-        `该规则要求项目是 git 仓库。请初始化 git 或在 git 环境下跑 harness。`,
-    }];
-  }
-
-  // plan a5f9c3e2 t1③：direct provider —— 与 goal provider 归一成同一 SourceDriftFacts。
-  // **集合口径与改造前逐字等值**：partition 只分区不增删，union 后排序 = 原
-  // filterProtected(diff.changedFiles)（该数组本就 normalizeSorted）。
-  const driftFacts = partitionDriftByGitStatus({
-    projectRoot: ctx.projectRoot,
-    baseRef: diff.baseRef,
-    files: filterProtected(ctx, diff.changedFiles),
-    untrackedFiles: filterProtected(ctx, diff.untrackedFiles),
-    provenance: `trace-start-commit:${diff.baseRef}`,
-  });
-  const businessChanges = [
-    ...new Set([...driftFacts.added, ...driftFacts.modified, ...driftFacts.deleted]),
-  ].sort();
-  const committedBusinessChanges = filterProtected(ctx, diff.committedFiles);
-  const workingBusinessChanges = filterProtected(ctx, diff.workingTreeFiles);
-  const stagedBusinessChanges = filterProtected(ctx, diff.stagedFiles);
-  const untrackedBusinessChanges = filterProtected(ctx, diff.untrackedFiles);
-  const staleness = analyzeDiffStaleness(diff);
-  const baseHint = envBaseRef
-    ? `HARNESS_DIFF_BASE_REF=${envBaseRef}`
-    : 'trace.json.start_commit（若存在）；否则默认 working';
-
-  if (businessChanges.length === 0) {
-    return [{
-      id: 'ut_no_src_mutation',
-      category: 'structure',
-      description: ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation'),
-      severity: 'BLOCKER',
-      status: 'PASS',
-      details:
-        `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback)' : ''}；` +
-        `mode=${diff.workingOnly ? 'working-only' : 'committed+working'}；` +
-        `base 来源：${baseHint}；` +
-        `未检测到 ${prefixes.join(' / ')} 下的业务源码变更。`,
-    }];
-  }
-
-  const unauthorized = businessChanges;
-
-  const oldBaseHint = staleness.stale
-    ? '\n\n诊断：stale_diff_base。你显式收窄/拉长了 diff 区间，committed 远大于当前 working 变更。若只想拦未提交的 UT 改动，请去掉 HARNESS_DIFF_BASE_REF 并确保无 trace.start_commit pinning；或调整后重跑。'
-    : '';
-
-  // 未授权清单含「非 src/ 下」的工程/构建配置文件时，给出针对性指引：
-  // 这类文件常被 agent 为排障触碰，但同样受门禁约束，且常因排障被改坏，应优先回退而非叠加。
-  const configChanges = pickNonSrcConfigChanges(unauthorized);
-  const configHint =
-    configChanges.length > 0
-      ? ` 其中含 src/ 之外的改动（${configChanges.join(', ')}，通常是工程/构建配置文件）：这类文件同样受源码改动门禁约束——` +
-        '若是为排障临时改动、反而把原本合法的配置改坏的，优先回退到 trace.json.start_commit 的版本，' +
-        '而不是继续叠加改动；确需保留则交回 coding owner 纳入实现并重走 review→ut→testing。'
-      : '';
-
-  return [{
-    id: 'ut_no_src_mutation',
-    category: 'structure',
-    description: ruleDesc(ctx, 'structure_checks', 'ut_no_src_mutation'),
-    severity: 'BLOCKER',
-    status: 'FAIL',
-    details:
-      `基线降级原因（未走 review closure attestation）：${degradeReason}\n` +
-      `baseRef=${diff.baseRef}${diff.baseIsFallback ? ' (fallback — trace.json.start_commit 未记录，可信度较低)' : ''}\n` +
-      `mode=${diff.workingOnly ? 'working-only' : 'committed+working'}；base 来源：${baseHint}\n` +
-      `变更拆分：committed=${committedBusinessChanges.length}, working=${workingBusinessChanges.length}, staged=${stagedBusinessChanges.length}, untracked=${untrackedBusinessChanges.length}\n` +
-      `检测到 ${unauthorized.length} 个不属于 UT owner 的业务源码变更：\n${unauthorized.map(f => '  - ' + f).join('\n')}\n` +
-      `legacy approved_src_mutations/用户回复不参与质量放行。${oldBaseHint}`,
-    affected_files: unauthorized,
-    failure_kind: staleness.stale ? 'stale_diff_base' : 'unauthorized_src_mutation',
-    blocking_class: staleness.stale ? 'stale_diff_base' : 'ut_no_src_mutation',
-    suggestion:
-      staleness.stale
-        ? '可先去掉 HARNESS_DIFF_BASE_REF（默认 working）后重跑；或显式设 `HARNESS_DIFF_BASE_REF=working`。若源码漂移仍存在，交回 coding owner 重验。'
-        : '停止 UT 阶段改码；把所需可测性改造作为 coding repair candidate，回 coding 修改并完整重走 review→ut→testing。' +
-          configHint,
-  }];
-}
+// --------------------------------------------------------------------------
+// v2 新增 Structure Checks — use-cases.yaml 自身
+// --------------------------------------------------------------------------
 
 function checkMockStubForAsync(
   ctx: CheckContext,
@@ -1468,10 +1187,6 @@ function checkMockStubForAsync(
     suggestion: 'async_call 节点必须有 stub_strategy 定义，且 UT 中需有对应的 Mock 实现。',
   }];
 }
-
-// --------------------------------------------------------------------------
-// v2 新增 Structure Checks — use-cases.yaml 自身
-// --------------------------------------------------------------------------
 
 function checkUseCaseSpecRecommended(ctx: CheckContext): CheckResult[] {
   const specExists = !!loadUseCaseSpec(ctx);

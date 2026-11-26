@@ -45,10 +45,14 @@ export function runAll(): UnitCaseResult[] {
     try {
       fs.mkdirSync(path.join(host, 'app/src'), { recursive: true });
       fs.writeFileSync(path.join(host, 'app/src/A.ts'), 'export const A = 1;\n');
+      const sha = (require('../../scripts/utils/phase-evidence-manifest') as typeof import('../../scripts/utils/phase-evidence-manifest')).sha256File(path.join(host, 'app/src/A.ts'));
       const scope: ExecutionScope = { schema_version: '1.0', completion_target: 'feature', requested_results: ['delivery'],
-        phase_chain: ['spec', 'plan', 'coding', 'review'], reused_phases: [], unresolved: [], policy_fingerprint: 'a'.repeat(64), obligations: [{ id: 'review', kind: 'code-review', owner_phase: 'review', applicability: 'required', reason: 'review consumes this source', basis: [{ input_id: 'codebase', source: { kind: 'derive', provider_id: 'derive.codebase' }, source_refs: ['app/src/A.ts'], dependencies: [{ path: path.join(host, 'app/src/A.ts'), exists: true, sha256: 'a'.repeat(64), role: 'derive' }], content_fingerprint: 'a'.repeat(64) }] }] };
+        phase_chain: ['spec', 'plan', 'coding', 'review'], reused_phases: [], unresolved: [], policy_fingerprint: 'a'.repeat(64), obligations: [{ id: 'review', kind: 'code-review', owner_phase: 'review', applicability: 'required', reason: 'review consumes this source', basis: [{ input_id: 'codebase', source: { kind: 'derive', provider_id: 'derive.codebase' }, source_refs: ['app/src/A.ts'], dependencies: [{ path: path.join(host, 'app/src/A.ts'), exists: true, sha256: sha, role: 'derive' }], content_fingerprint: 'a'.repeat(64) }] }] };
       for (const phase of ['spec', 'review']) {
+        const binding = scope.obligations[0].basis[0];
         const manifest = resolvePhaseEvidenceManifest({ projectRoot: host, frameworkRoot: root, feature: 'f', phase,
+          ...(phase === 'review' ? { resolvedInputs: { phase, context: { schema_version: '1.1' as const, subject: { feature: 'f' },
+            obligations: {}, required_outputs: [] }, values: { codebase: { state: 'resolved' as const, binding, value: [] } }, artifacts: {} } } : {}),
           factsContext: { subject: { feature: 'f' }, first_phase: 'spec', source_paths: ['app/src/A.ts'], source_owners: { 'app/src/A.ts': 'coding' }, required_input_snippets: [] } });
         writePhaseEvidenceManifest(host, manifest);
       }

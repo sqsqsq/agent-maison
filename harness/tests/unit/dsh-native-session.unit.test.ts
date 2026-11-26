@@ -168,8 +168,8 @@ const cases: Array<{ name: string; run(f: ReturnType<typeof fixture>, s: ReturnT
       // Each variant is a separate original evidence fixture, not an unsourced reclassification.
       if (extra) judgment.data.message.content[0].text = judgment.data.message.content[0].text.replace(extra.split('=')[0] + '=' + (extra.endsWith('否') ? '是' : '否'), extra);
       s.flush(); const intake = readRequestIntake({ projectRoot: f.root, frameworkRoot: f.framework });
-      assert.equal(intake.policy.selected, selected); assert.equal(intake.user.id, 'human-1'); assert(intake.front_door_loaded);
-      assert(intake.targets.includes('src/value.js')); assert(intake.source_reads.includes('src/value.js'));
+      assert.equal(intake.policy.selected, selected); assert.equal(intake.user.id, 'human-1'); assert.deepEqual(intake.gaps, []);
+      assert(intake.targets.includes('src/value.js')); assert(intake.facts.design_tradeoff.sources.includes('src/value.js'));
       assert(!intake.baseline.preimages?.['src/value.js'], 'full line display cannot supply an exact initial dirty preimage');
     }
     human.data.content[0].text = '本请求按小型处理，不跑UT。'; s.flush();

@@ -163,8 +163,7 @@ import {
 import { featureArtifactLayoutWarnings } from './utils/feature-artifact-legacy';
 import {
   classifyDriftRisk,
-  loadReviewClosureAttestation,
-  reconcileSourceTreeAgainstAttestation,
+  reconcileReviewInputs,
 } from './utils/closure-attestation';
 import { buildBehaviorSwitchCheckResult } from './utils/behavior-switch-scan';
 import { isPhaseDisabledByProfile } from '../profile-loader';
@@ -6447,8 +6446,8 @@ function checkReviewClosureAttestationGate(ctx: CheckContext): CheckResult[] {
   }
   // plan 07a41ec6 T8：不再一刀 BLOCKER。缺基线 / 有漂移都按风险分级给出所需的一次复核，
   // 未做时 WARN 并如实标注（review 语义结论对这些改动未重审），不阻塞普通开发完成。
-  const att = loadReviewClosureAttestation(ctx.projectRoot, ctx.feature);
-  if (!att) {
+  const rec = reconcileReviewInputs(ctx);
+  if (!rec) {
     return [{
       id, category: 'structure', description,
       severity: 'MAJOR', status: 'WARN',
@@ -6459,7 +6458,6 @@ function checkReviewClosureAttestationGate(ctx: CheckContext): CheckResult[] {
       suggestion: '重跑一次 review 闭环（harness → verifier → check-receipt）即可重建 attestation；本轮 testing 可先闭环。',
     }];
   }
-  const rec = reconcileSourceTreeAgainstAttestation(ctx.projectRoot, att);
   if (!rec.ok) {
     const fmt = (label: string, arr: string[]): string =>
       arr.length === 0 ? '' : `\n${label}（${arr.length}）：${arr.slice(0, 8).join('、')}${arr.length > 8 ? '…' : ''}`;
@@ -6484,7 +6482,7 @@ function checkReviewClosureAttestationGate(ctx: CheckContext): CheckResult[] {
   return [{
     id, category: 'structure', description,
     severity: 'MAJOR', status: 'PASS',
-    details: `产品源码与 review 闭环快照一致（inventory ${att.inventory.file_count} 文件，roots=${att.inventory.roots.length}）。`,
+    details: '本次范围内已审源码与当前证据一致。',
   }];
 }
 

@@ -7573,13 +7573,18 @@ test('repair1 R1 disclosed visual MAJOR and valid defer complete a real run with
       '本轮报告已经可消费。旧动作和末尾空行不应增加独立模型调用');
     assert(readExecutionActivity(probe.events).calls === probe.events.filter(event => event.type === 'agent_invoke_start').length,
       '视觉披露完成过程的实际模型调用必须仍计入原预算');
-    const { collectCleanPassIssues } = await import('../../scripts/utils/verify-feature-completion');
-    assert(collectCleanPassIssues({ projectRoot: root, frameworkRoot: REPO_ROOT, feature, chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] }).length === 0, '真实 run 完成消费仍存在缺口');
+    const disposition = resolveCompletionDisposition({ projectRoot: root, frameworkRoot: REPO_ROOT, feature,
+      runId: path.basename(probe.reportDir), chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] });
+    assert(disposition.completionEligible && disposition.completionBlocking.length === 0, JSON.stringify(disposition.completionBlocking));
+    assert(!disposition.releaseReady && disposition.releaseBlocking.some(problem => problem.phase === 'testing'
+      && problem.id === 'quality_axis_verified' && problem.action === 'disclose' && problem.detail.includes('visual 轴 UNVERIFIED')),
+    JSON.stringify(disposition.releaseBlocking));
     for (const phase of ['review', 'testing']) {
       const summary = JSON.parse(fs.readFileSync(featureFilePath(root, feature, `${phase}/reports/summary.json`), 'utf-8'));
       assert(summary.release_readiness === 'BLOCKED', '差异不得假称可发布');
-      assert(summary.readiness_signals.some((signal: { id: string; status: string }) => signal.id === 'visual_debt_disclosure' && signal.status === 'unknown'), '未验披露丢失');
-      assert(summary.quality_axes.visual.resolution?.class !== 'needs_fix', '可披露差异不得成为永久 completion 缺陷');
+      assert(summary.readiness_signals.some((signal: { id: string; status: string; message: string }) => signal.id === 'visual_debt_disclosure'
+        && signal.status === 'unknown' && signal.message.includes('bank-search')), '原 bank-search 延后与未验披露丢失');
+      if (phase === 'testing') assert(summary.quality_axes.visual.verdict === 'UNVERIFIED', '没有实际视觉对照的结果须保留 UNVERIFIED');
     }
     assert(fs.readFileSync(featureFilePath(root, feature, 'review/review-report.md'), 'utf-8').includes('MAJOR: 1'), '原始统计被清零');
   } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }

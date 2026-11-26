@@ -26,14 +26,13 @@ import {
   verifyPhaseEvidenceManifestWithStagedOutputs,
   sha256File,
   phaseEvidenceBusinessInputs,
-  factsBaselineBusinessDependencies,
   phaseEvidenceManifestCandidatePaths,
   recomputeManifestAggregate,
 } from '../../scripts/utils/phase-evidence-manifest';
 import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
 import { computeRequirementSsotAggregate } from '../../scripts/utils/verify-feature-completion';
-import { resolveFactsAbsPath, factsBaselineFingerprint, type FactsInvocationContext } from '../../scripts/utils/context-facts';
-import { buildVerifierMaterialView } from '../../scripts/utils/verifier-material';
+import { resolveFactsAbsPath, factsBaselineFingerprint, projectFactsForPhase, type FactsInvocationContext } from '../../scripts/utils/context-facts';
+import { buildVerifierMaterialView, verifierMaterialFileMatchesCurrent, verifierMaterialsEquivalent } from '../../scripts/utils/verifier-material';
 import { readBoundInput, resolveCapabilityInputs, type InputBinding } from '../../scripts/utils/capability-resolution';
 import { reconcileChangeUnitBlueprintRefs } from '../../scripts/utils/change-unit-design-preparation';
 import { changeUnitPath } from '../../scripts/utils/change-unit-path';
@@ -290,7 +289,6 @@ const cases: Case[] = [
         assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['spec'], opts)[0].verdict, 'fresh');
         assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['spec'])[0].verdict, 'fresh', '只读调用从同份产物的确切身份取得同一依据');
         assert.strictEqual(verifyPhaseEvidenceManifestWithStagedOutputs({ projectRoot: root, feature: FEATURE, phase: 'spec', stagedOutputs: [], ...opts }).verdict, 'fresh');
-        assert(!factsBaselineBusinessDependencies(root, FEATURE, context, opts).some(dep => dep.path === control));
         const next = resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'spec', factsContext: context, requirementSha: opts.currentRequirementSha });
         assert(!next.inputs.some(entry => path.resolve(root, entry.path) === control));
         assert(!phaseEvidenceManifestCandidatePaths({ projectRoot: root, feature: FEATURE, phase: 'spec', factsContext: context }).has(path.relative(root, control).replace(/\\/g, '/')));
@@ -298,7 +296,6 @@ const cases: Case[] = [
         assert.strictEqual(fs.readFileSync(phaseEvidenceManifestPath(root, FEATURE, 'spec'), 'utf8'), evidenceBytes);
         fs.writeFileSync(source, 'genuine business change');
         assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['spec'], { runId: run })[0].verdict, 'stale');
-        assert(factsBaselineBusinessDependencies(root, FEATURE, context, { runId: run }).some(dep => dep.path === control), '真实需求漂移不建立控制等价');
       } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
@@ -353,99 +350,32 @@ const cases: Case[] = [
     },
   },
   {
-    name: '下游责任阶段可推进其源码，非责任漂移仍使上游 stale',
+    name: '实际消费同一源码的义务会失效，独立阶段继续可用',
     run: () => {
       const root = mkProject();
-      const source = path.join(root, 'src', 'value.ts');
-      fs.mkdirSync(path.dirname(source), { recursive: true });
-      fs.writeFileSync(source, 'before\n');
-      const planFacts: FactsInvocationContext = {
-        subject: { feature: FEATURE, run_id: 'run' }, first_phase: 'plan',
-        source_paths: ['src/value.ts'], source_owners: { 'src/value.ts': 'coding' }, required_input_snippets: [],
-      };
-      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'plan', factsContext: planFacts }));
-      fs.writeFileSync(source, 'after\n');
-      assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['plan', 'coding'])[0].verdict, 'stale', '无责任阶段证据时不得洗绿');
-      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({
-        projectRoot: root, feature: FEATURE, phase: 'coding',
-        factsContext: { ...planFacts, baseline: { established_by: 'plan', fingerprint: 'baseline', dependencies: [] } },
-      }));
-      const advanced = recomputePhaseEvidenceStaleness(root, FEATURE, ['plan', 'coding']);
-      assert.deepStrictEqual(advanced.map(item => item.verdict), ['fresh', 'fresh']);
-      assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['plan'])[0].verdict, 'fresh', 'owner 承接不得依赖调用方传完整 chain');
-      fs.writeFileSync(source, 'unattributed\n');
-      assert.deepStrictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['plan', 'coding']).map(item => item.verdict), ['stale', 'stale']);
+      try {
+        const source = path.join(root, 'src', 'value.ts');
+        const discovery = path.join(root, 'src', 'discovery.ts');
+        fs.mkdirSync(path.dirname(source), { recursive: true });
+        fs.writeFileSync(source, 'before');
+        fs.writeFileSync(discovery, 'candidate');
+        const facts: FactsInvocationContext = { subject: { feature: FEATURE, run_id: 'R1' }, first_phase: 'plan',
+          source_paths: ['src/discovery.ts'], required_input_snippets: [], source_owners: { 'src/discovery.ts': 'coding' } };
+        for (const phase of ['plan', 'coding', 'ut'] as const) {
+          writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase,
+            factsContext: facts, extraInputs: phase === 'plan' ? [] : [source] }));
+        }
+        fs.writeFileSync(discovery, 'parallel request change');
+        assert.deepStrictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['plan', 'coding', 'ut']).map(row => row.verdict), ['fresh', 'fresh', 'fresh']);
+        fs.writeFileSync(source, 'after');
+        const current = recomputePhaseEvidenceStaleness(root, FEATURE, ['plan', 'coding', 'ut'], { pendingOwnerPhase: 'coding' });
+        assert.deepStrictEqual(current.map(row => row.verdict), ['fresh', 'stale', 'stale']);
+        for (const change of current.slice(1)) assert.deepStrictEqual(change.changed_paths, ['src/value.ts']);
+      } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
   {
-    name: 'UT 自有测试不反向作废 coding/review，产品源码变化仍从 coding 失效',
-    run: () => {
-      const root = mkProject();
-      for (const [rel, body] of [['src/value.ts', 'source\n'], ['test/value.test.ts', 'test one\n']] as const) {
-        const abs = path.join(root, rel); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, body);
-      }
-      const common = { subject: { feature: FEATURE, run_id: 'run' } as const, first_phase: 'coding', required_input_snippets: [] as string[] };
-      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'coding', factsContext: { ...common, source_paths: ['src/value.ts'], source_owners: { 'src/value.ts': 'coding' } } }));
-      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'review', factsContext: { ...common, source_paths: ['src/value.ts'], baseline: { established_by: 'coding', fingerprint: 'baseline', dependencies: [] } } }));
-      const utFacts: FactsInvocationContext = { ...common, source_paths: ['src/value.ts', 'test/value.test.ts'], source_owners: { 'test/value.test.ts': 'ut' }, baseline: { established_by: 'coding', fingerprint: 'baseline', dependencies: [] } };
-      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'ut', factsContext: utFacts }));
-      fs.writeFileSync(path.join(root, 'test/value.test.ts'), 'test two\n');
-      assert.deepStrictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['coding', 'review']).map(item => item.verdict), ['fresh', 'fresh']);
-      assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['coding', 'review', 'ut'])[2].verdict, 'stale');
-      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'ut', factsContext: utFacts }));
-      fs.writeFileSync(path.join(root, 'src/value.ts'), 'source changed\n');
-      const changed = recomputePhaseEvidenceStaleness(root, FEATURE, ['coding', 'review', 'ut']);
-      assert.strictEqual(changed[0].verdict, 'stale');
-      assert.strictEqual(changed[1].propagated_from, 'coding');
-    },
-  },
-  {
-    // OWN-T5 反例（plan b5c1e9d7 §4）：归属登记扩大之后，"正在施工"这把豁免**只**属于条目上
-    // 写着的那个 owner。落点是本次修复真正接线的那个消费点——`recomputePhaseEvidenceStaleness`
-    // （授权门与 `capability-resolution-entry-input` 的 facts 基线都经它）。终局 completion 的
-    // ⑤ 血缘不在其列：`verify-feature-completion.ts` 那处 recompute 本笔一行未改，只给
-    // requirement/frameworkRoot，**没有**入口能声明"某阶段正在施工"。
-    name: 'OWN-T5 反例：pendingOwner 只豁免条目自己的 owner，非 owner 阶段改 coding 源码仍 stale',
-    run: () => {
-      const root = mkProject();
-      const source = path.join(root, 'src/value.ts');
-      fs.mkdirSync(path.dirname(source), { recursive: true });
-      fs.writeFileSync(source, 'source\n');
-      // 观察期 plan 闭环后的真实形状（本笔修复的产物）：产品源码以 `owner_phase=coding` 进 plan 证据，
-      // 而 coding 还没有自己的 manifest。
-      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({
-        projectRoot: root, feature: FEATURE, phase: 'plan',
-        factsContext: { subject: { feature: FEATURE, run_id: 'run' }, first_phase: 'plan', required_input_snippets: [], source_paths: ['src/value.ts'], source_owners: { 'src/value.ts': 'coding' } },
-      }));
-      assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['plan'])[0].verdict, 'fresh', '前提：闭环后须 fresh');
-      fs.writeFileSync(source, 'edited\n');
-      // 反例：改的是 **coding 负责**的源码，review/ut/testing 声称"自己在施工"不得因此洗绿；
-      // 不声明任何 pending owner 同样必须 stale。
-      for (const claimant of [undefined, 'review', 'ut', 'testing']) {
-        const verdict = recomputePhaseEvidenceStaleness(root, FEATURE, ['plan'],
-          claimant ? { pendingOwnerPhase: claimant } : undefined)[0].verdict;
-        assert.strictEqual(verdict, 'stale',
-          `pendingOwnerPhase=${claimant ?? '<none>'} 洗绿了非本人负责的漂移`);
-      }
-      // 单变量对照：换成条目上真正写着的那个 owner 才承接——证明上面几条不是"恒 stale"。
-      assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['plan'], { pendingOwnerPhase: 'coding' })[0].verdict, 'fresh',
-        'owner 施工期上游被判漂移——本次修复的正向效果没了');
-    },
-  },
-  {
-    name: '写集外 Research 漂移没有 owner 豁免',
-    run: () => {
-      const root = mkProject();
-      const source = path.join(root, 'readonly.config'); fs.writeFileSync(source, 'before\n');
-      const facts: FactsInvocationContext = { subject: { feature: FEATURE, run_id: 'run' }, first_phase: 'plan', source_paths: ['readonly.config'], required_input_snippets: [] };
-      writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'plan', factsContext: facts }));
-      fs.writeFileSync(source, 'after\n');
-      assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['plan'])[0].verdict, 'stale');
-      assert.strictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, ['plan'], { pendingOwnerPhase: 'coding' })[0].verdict, 'stale', 'pending owner 不得豁免无归属 Research');
-    },
-  },
-  {
-    name: 'facts 只绑定基线与本阶段增量，普通和 staged 新鲜度同判',
+    name: 'facts 绑定建立阶段，普通和 staged 新鲜度同判',
     run: () => {
       const root = mkProject();
       const factsContext: FactsInvocationContext = { subject: { feature: FEATURE, run_id: 'run' }, first_phase: 'coding', source_paths: [], required_input_snippets: [] };
@@ -469,50 +399,86 @@ const cases: Case[] = [
       assertVerdict('review', 'fresh');
       fs.writeFileSync(file, base + coding + review.replace('none', 'changed review fact'));
       assertVerdict('coding', 'fresh');
-      assertVerdict('review', 'stale');
+      assertVerdict('review', 'fresh');
       fs.writeFileSync(file, base + coding.replace('original', 'changed') + review);
       assertVerdict('coding', 'stale');
       fs.writeFileSync(file, base.replace('base fact', 'changed base') + coding + review);
       assertVerdict('coding', 'stale');
-      assertVerdict('review', 'stale');
+      assertVerdict('review', 'fresh');
     },
   },
   {
-    name: 'facts 原来源在 manifest 与 verifier 发布前必须保持绑定，不能重签新字节',
+    name: 'facts 的弃用阅读计数不改变当前证据，保留原件等价与实际业务输入',
     run: () => {
-      for (const includeSourcePath of [false, true]) {
-        const root = mkProject();
-        const source = path.join(root, 'source.ts');
-        fs.writeFileSync(source, 'before');
+      const root = mkProject();
+      try {
+        const phase = 'coding';
+        const factsContext: FactsInvocationContext = { subject: { feature: FEATURE, run_id: 'run' },
+          first_phase: phase, required_input_snippets: [], source_paths: ['src/value.ts'] };
+        const file = resolveFactsAbsPath(root, FEATURE, factsContext);
+        const relative = path.relative(root, file).replace(/\\/g, '/');
+        const source = path.join(root, 'src/value.ts');
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.mkdirSync(path.dirname(source), { recursive: true });
+        fs.writeFileSync(source, 'export const value = 42;');
+        const raw = ['---', 'schema_version: "1.1"', 'feature: ' + FEATURE, 'run_id: run', 'established_by: coding',
+          'ready_to_produce: true', 'files_inspected_count: 1', 'source_code_paths: [src/value.ts]', 'decisions_unlocked: [verify value]',
+          '---', '## Code Facts', 'The accepted value is 42.', '', '## phase_delta: coding', 'Current implementation verified.', ''].join('\n');
+        fs.writeFileSync(file, raw);
+        const manifest = resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase, factsContext, extraInputs: [source] });
+        const material = () => buildVerifierMaterialView({ projectRoot: root, feature: FEATURE, phase, factsContext, gateFingerprint: null,
+          phaseRuleText: '', templateText: '', checks: [], contextFiles: [{ label: 'src/value.ts', content: 'Current source' }] });
+        const currentView = material();
+        const legacy = structuredClone(manifest);
+        const oldHash = crypto.createHash('sha256').update(JSON.stringify([factsBaselineFingerprint(raw), projectFactsForPhase(raw, phase).delta])).digest('hex');
+        legacy.outputs.find(entry => entry.path === relative)!.sha256 = oldHash;
+        legacy.aggregate_sha256 = recomputeManifestAggregate(legacy);
+        const oldView = { ...currentView, files: currentView.files.map(entry => entry.path === relative ? { ...entry, sha256: oldHash } : entry) };
+        writePhaseEvidenceManifest(root, legacy);
+        assert.equal(recomputePhaseEvidenceStaleness(root, FEATURE, [phase])[0].verdict, 'fresh', 'exact old original remains usable');
+        assert(verifierMaterialsEquivalent(oldView, currentView, root), 'old verifier view uses the same original content');
+
+        writePhaseEvidenceManifest(root, manifest);
+        fs.writeFileSync(file, raw.replace('files_inspected_count: 1', 'files_inspected_count: 9'));
+        assert.equal(recomputePhaseEvidenceStaleness(root, FEATURE, [phase])[0].verdict, 'fresh');
+        assert.equal(material().material_sha256, currentView.material_sha256);
+        assert(verifierMaterialFileMatchesCurrent({ projectRoot: root, feature: FEATURE, material: currentView, file: relative }));
+
+        fs.writeFileSync(source, 'export const value = 99;');
+        assert.deepStrictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, [phase])[0].changed_paths, ['src/value.ts']);
+        assert.notEqual(material().material_sha256, currentView.material_sha256);
+        fs.writeFileSync(source, 'export const value = 42;');
+        for (const changed of [
+          raw.replace('accepted value is 42', 'accepted value is 99'),
+          raw.replace('source_code_paths: [src/value.ts]', 'source_code_paths: [src/another.ts]'),
+          raw.replace('run_id: run', 'run_id: other'),
+        ]) {
+          fs.writeFileSync(file, changed);
+          assert.deepStrictEqual(recomputePhaseEvidenceStaleness(root, FEATURE, [phase])[0].changed_paths, [relative]);
+          assert(!verifierMaterialFileMatchesCurrent({ projectRoot: root, feature: FEATURE, material: currentView, file: relative }));
+        }
+      } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: '实际输入在发布前变化时不会被当前字节冒充',
+    run: () => {
+      const root = mkProject();
+      try {
+        const source = path.join(root, 'source.ts'); fs.writeFileSync(source, 'before');
         const dep = { path: source, exists: true, sha256: sha256File(source), role: 'derive' as const };
-        const factsContext: FactsInvocationContext = { subject: { feature: FEATURE, run_id: 'run' }, first_phase: 'review', source_paths: includeSourcePath ? ['source.ts'] : [], required_input_snippets: [], baseline: { established_by: 'coding', fingerprint: 'baseline', dependencies: [dep] } };
-        const resolvedInputs = { context: { schema_version: '1.1' as const, subject: { feature: FEATURE }, obligations: {}, required_outputs: [] }, phase: 'review', values: {}, artifacts: {} };
-        const opts = { projectRoot: root, feature: FEATURE, phase: 'review', factsContext, resolvedInputs };
+        const binding = { input_id: 'code', source: { kind: 'derive' as const, provider_id: 'derive.codebase' as const },
+          content_fingerprint: 'a'.repeat(64), dependencies: [dep], source_refs: ['source.ts'] };
+        const context = { schema_version: '1.1' as const, subject: { feature: FEATURE }, obligations: {}, required_outputs: [] };
+        const resolvedInputs: import('../../scripts/utils/capability-resolution').ResolvedPhaseInputs = {
+          context, phase: 'coding', values: { code: { state: 'resolved', binding, value: [] } }, artifacts: {},
+        };
+        const opts = { projectRoot: root, feature: FEATURE, phase: 'coding', resolvedInputs };
         const publishers = [() => resolvePhaseEvidenceManifest(opts), () => buildVerifierMaterialView({ ...opts, gateFingerprint: null, phaseRuleText: '', templateText: '', checks: [], contextFiles: [] })];
         for (const publish of publishers) assert.doesNotThrow(publish);
         fs.writeFileSync(source, 'after');
         for (const publish of publishers) assert.throws(publish, /input binding stale/);
-        fs.unlinkSync(source);
-        for (const publish of publishers) assert.throws(publish, /input binding stale/);
-      }
-    },
-  },
-  {
-    name: '责任阶段可在闭环时承接自己刚写出的新字节',
-    run: () => {
-      const root = mkProject();
-      const source = path.join(root, 'source.ts');
-      fs.writeFileSync(source, 'before');
-      const dep = { path: source, exists: true, sha256: sha256File(source), role: 'derive' as const };
-      fs.writeFileSync(source, 'after');
-      const factsContext: FactsInvocationContext = {
-        subject: { feature: FEATURE, run_id: 'run' }, first_phase: 'plan', source_paths: ['source.ts'],
-        source_owners: { 'source.ts': 'coding' }, required_input_snippets: [],
-        baseline: { established_by: 'plan', fingerprint: 'baseline', dependencies: [dep] },
-      };
-      const manifest = resolvePhaseEvidenceManifest({ projectRoot: root, feature: FEATURE, phase: 'coding', factsContext });
-      const entry = manifest.outputs.find(item => item.path === 'source.ts');
-      assert(entry && entry.owner_phase === 'coding' && entry.sha256 === sha256File(source), 'coding 应绑定完成后的当前源码');
+      } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
   {
@@ -741,7 +707,7 @@ const cases: Case[] = [
     },
   },
   {
-    name: 'staleness：上游 stale/missing 沿链传染下游（propagated_from）',
+    name: 'staleness：相关依赖变化独立核实',
     run: () => {
       const root = mkProject();
       seedSpecPhase(root);
@@ -751,17 +717,17 @@ const cases: Case[] = [
       writeReceipt(root, 'plan', 'phase: "plan"\n');
       writeManifestWithPointer(root, 'spec');
       writeManifestWithPointer(root, 'plan');
-      // spec 的产出 acceptance.yaml 被改 → spec stale，plan 被传染
+      // plan 也消费 acceptance.yaml，直接重算同一依赖的字节。
       fs.appendFileSync(resolveFeatureArtifact(root, FEATURE, 'acceptance.yaml').actualPath, 'x: 1\n', 'utf-8');
       const r = recomputePhaseEvidenceStaleness(root, FEATURE, ['spec', 'plan']);
       assert.strictEqual(r[0].verdict, 'stale');
       assert.strictEqual(r[1].verdict, 'stale');
-      assert.strictEqual(r[1].propagated_from, 'spec');
-      // missing 同样传染
+      assert.strictEqual(r[1].propagated_from, undefined);
       fs.rmSync(phaseEvidenceManifestPath(root, FEATURE, 'spec'));
       const r2 = recomputePhaseEvidenceStaleness(root, FEATURE, ['spec', 'plan']);
       assert.strictEqual(r2[0].verdict, 'missing');
-      assert.strictEqual(r2[1].propagated_from, 'spec');
+      assert.strictEqual(r2[1].verdict, 'stale');
+      assert.strictEqual(r2[1].propagated_from, undefined);
     },
   },
   {

@@ -372,7 +372,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         fs.writeFileSync(path.join(fw, 'RELEASE-MANIFEST.json'), JSON.stringify({ schema_version: '1.0', files: [] }), 'utf-8');
         fs.copyFileSync(frameworkAbs(LAYOUT, 'specs/runtime-artifact-policy.json'), path.join(fw, 'specs', 'runtime-artifact-policy.json'));
         fs.copyFileSync(frameworkAbs(LAYOUT, 'agents/shared/guard-framework-write-core.mjs'), path.join(fw, 'agents', 'shared', 'guard-framework-write-core.mjs'));
-        for (const name of ['native-request.cjs', 'goal-execution-signal.cjs']) fs.copyFileSync(frameworkAbs(LAYOUT, `agents/shared/${name}`), path.join(fw, 'agents/shared', name));
+        for (const name of ['native-request.cjs', 'goal-execution-signal.cjs', 'work-unit-write-authority.cjs']) fs.copyFileSync(frameworkAbs(LAYOUT, `agents/shared/${name}`), path.join(fw, 'agents/shared', name));
         fs.copyFileSync(CURSOR_SHELL_ABS, path.join(fw, 'agents', 'cursor', 'hooks', 'guard-framework-write.mjs'));
 
         const run = (toolInput: Record<string, unknown>) =>

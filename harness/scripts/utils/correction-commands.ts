@@ -1,3 +1,4 @@
+import { validateProjectRelativePath } from './project-relative-path';
 // ============================================================================
 // correction-commands.ts — 修正路由命令实现（C5-min correction-routing，plan d4a7c1e8；
 // plan 07a41ec6 T1 删除 --correction-check 与 touched_layers 对账）
@@ -28,8 +29,8 @@ import { AstAnalyzer } from './ast-analyzer';
 import type { CheckContext, CheckResult } from './types';
 import { isCapabilitySkipped } from '../../capability-registry';
 import { tryLoadProfileCodingHost } from '../../profile-host-loader';
-import { diffChangedFiles } from './git-diff';
-import { classifyChangedFiles, layerDirPrefixes } from './diff-scope';
+import { diffChangedFilesWithStatus } from './git-diff';
+import { layerDirPrefixes, resolveModulePathPrefixes } from './diff-scope';
 import { loadCatalog } from './catalog-parser';
 import {
   classifyCorrection,
@@ -56,8 +57,9 @@ import {
   workflowFeaturePhases,
   type AdapterEnforcementManifest,
 } from './runtime-policy';
-import { isGoalOrchestrationEnv } from './phase-state';
-import { isBlockingCheck } from './check-disposition';
+import { isGoalOrchestrationEnv, resolveHarnessDiffBaseRef } from './phase-state';
+import { isBlockingCheck, isRequiredCheckGap } from './check-disposition';
+import { resolveVerdictFromChecks } from './report-generator';
 import { standaloneReportDir } from './standalone-report-dir';
 import { inspectCompletionRecord } from './verify-feature-completion';
 import { resolveChangeUnitExpectedExecution } from './change-unit-completion';
@@ -191,11 +193,7 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
   }
 
   // no-feature：无 workflow 投影，层即类别；载体为 --adhoc-correction，需要 base_commit 状态。
-  const baseCommit = resolveBaseCommit(projectRoot);
-  if (!baseCommit) {
-    console.error('❌ correction-init: 无法解析 git HEAD（no-feature 修正的 base_commit 必需，红线 fail-closed）');
-    return 1;
-  }
+  const baseCommit = resolveBaseCommit(projectRoot) ?? 'unavailable';
   const rootLayer = resolveCorrectionCategory(opts.answers);
   const touched = touchedCategories(opts.answers);
   const revalidate: RevalidateEntry[] = [{ phase: 'adhoc', status: 'pending' }];
@@ -209,6 +207,14 @@ export function runCorrectionInit(projectRoot: string, opts: CorrectionInitOpts)
     request_text: opts.requestText,
     enforcement_tier: tier,
   });
+  const requestedPaths = opts.requestText.match(/`[^`]+`|[^\s，。；、：<>(){}"']+/g) ?? [];
+  const targetFiles = [...new Set(requestedPaths.flatMap(item => {
+    const file = item.replace(/^`|`$/g, '').replace(/\\/g, '/').trim();
+    if (!file.includes('/') || !path.posix.extname(file)) return [];
+    try { return [validateProjectRelativePath(projectRoot, file, 'correction target')]; }
+    catch { return []; }
+  }))];
+  if (targetFiles.length) state.target_files = targetFiles;
   const abs = writeCorrectionState(projectRoot, state);
   console.log('✅ correction-init: 已写入 no-feature 修正状态（供 --adhoc-correction 读取 base_commit）');
   console.log(`   state: ${path.relative(projectRoot, abs).replace(/\\/g, '/')}`);
@@ -260,31 +266,28 @@ export function adhocReportsRoot(projectRoot: string): string {
 // --adhoc-correction
 // --------------------------------------------------------------------------
 
-/** catalog 反查：changed file → 命中 entry_file dirname 前缀的模块名 */
 function reverseLookupTouchedModules(projectRoot: string, changedFiles: string[]): {
   touched: string[];
   unattributed: string[];
+  matched: string[];
 } {
-  const load = loadCatalog(projectRoot);
-  const prefixes: Array<{ name: string; prefix: string }> = [];
-  if (load.ok) {
-    for (const m of load.catalog.modules) {
-      if (!m.entry_file) continue;
-      const dir = path.posix.dirname(m.entry_file.replace(/\\/g, '/'));
-      if (dir && dir !== '.') prefixes.push({ name: m.name, prefix: dir.replace(/\/+$/, '') + '/' });
-    }
-  }
+  const catalog = loadCatalog(projectRoot);
+  const modules = catalog.ok ? catalog.catalog.modules.map(module => module.name) : [];
+  const prefixes = [...resolveModulePathPrefixes(projectRoot, modules).prefixByModule]
+    .sort(([, left], [, right]) => right.length - left.length);
   const layers = layerDirPrefixes(projectRoot);
   const touched = new Set<string>();
+  const matched: string[] = [];
   const unattributed: string[] = [];
-  for (const f of changedFiles) {
-    const norm = f.replace(/\\/g, '/');
-    if (!layers.some((l) => norm.startsWith(l))) continue; // 层外中性变更
-    const hit = prefixes.find((p) => norm.startsWith(p.prefix));
-    if (hit) touched.add(hit.name);
-    else unattributed.push(norm);
+  for (const file of changedFiles) {
+    if (!layers.some(layer => file.startsWith(layer))) continue;
+    const hit = prefixes.find(([, prefix]) => file.startsWith(prefix));
+    if (hit) {
+      touched.add(hit[0]);
+      matched.push(file);
+    } else unattributed.push(file);
   }
-  return { touched: [...touched].sort(), unattributed };
+  return { touched: [...touched].sort(), unattributed, matched };
 }
 
 function buildAdhocCheckContext(
@@ -345,55 +348,37 @@ export async function runAdhocCorrection(
   const ts = new Date().toISOString().replace(/[:.]/g, '-');
   const outDir = standaloneReportDir(projectRoot, frameworkRoot, path.relative(projectRoot, path.join(adhocReportsRoot(projectRoot), ts)));
 
-  // 1) changed-files：git diff base_commit ∪ 工作区（含 staged/untracked）
-  const diff = diffChangedFiles({ projectRoot, baseRef: state.base_commit });
-  if (!diff.executed) {
-    results.push({
-      id: 'adhoc_changed_files',
-      category: 'traceability',
-      description: '修正变更文件推导（git diff base_commit ∪ 工作区）',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `无法执行 git diff：${diff.error ?? '未知错误'}（fail-closed）`,
-    });
-  } else if (diff.baseIsFallback) {
-    // codex review 采纳：base_commit 不可达时 diffChangedFiles 静默退化为 HEAD..HEAD，
-    // 会漏检已提交的越权改动——no-feature 场景没有 scope 声明兜底，必须 fail-closed。
-    results.push({
-      id: 'adhoc_changed_files',
-      category: 'traceability',
-      description: '修正变更文件推导（git diff base_commit ∪ 工作区）',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `base_commit="${state.base_commit}" 不可达，git diff 已静默退化为对比 HEAD 自身` +
-        `（会漏检已提交的越权改动，fail-closed）——请重建 correction（--correction-init）以刷新 base_commit。`,
-    });
-  } else {
-    results.push({
-      id: 'adhoc_changed_files',
-      category: 'traceability',
-      description: '修正变更文件推导（git diff base_commit ∪ 工作区）',
-      severity: 'MINOR',
-      status: 'PASS',
-      details: `base=${state.base_commit.slice(0, 12)}，共 ${diff.changedFiles.length} 个变更文件`,
-    });
-  }
-  const changedFiles = diff.executed && !diff.baseIsFallback ? diff.changedFiles : [];
+  const explicitTargets = (Array.isArray(state.target_files) ? state.target_files : []).flatMap(file => {
+    try { return [validateProjectRelativePath(projectRoot, file, 'correction target')]; }
+    catch { return []; }
+  });
+  const requestedBase = resolveHarnessDiffBaseRef();
+  const diff = diffChangedFilesWithStatus({ projectRoot, baseRef: requestedBase ?? 'HEAD' });
+  // The recorded start helps discover committed candidates. The actual analyzer always reads current bytes.
+  const history = !explicitTargets.length && !requestedBase && /^([a-f0-9]{40}|[a-f0-9]{64})$/i.test(state.base_commit)
+    && diff.baseSha !== state.base_commit ? diffChangedFilesWithStatus({ projectRoot, baseRef: state.base_commit }) : undefined;
+  const changedFiles = [...new Set([...diff.entries, ...(history?.entries ?? [])].map(entry => entry.path))].sort();
+  results.push({
+    id: 'adhoc_changed_files',
+    category: 'traceability',
+    description: '当前修正的工作区差异候选',
+    severity: 'MINOR',
+    status: diff.executed ? 'PASS' : 'WARN',
+    details: diff.executed ? `比较 ${diff.baseRef}，发现 ${changedFiles.length} 个候选${history?.executed ? '，含修正开始后提交的路径' : ''}。`
+      : `当前比较未取得：${diff.error ?? 'Git 不可用'}`,
+  });
 
-  // 2) catalog 反查 touched modules（diff_within_scope 的 no-feature 替代——不豁免越界防护）
-  const lookup = reverseLookupTouchedModules(projectRoot, changedFiles);
+  const lookup = reverseLookupTouchedModules(projectRoot, explicitTargets.length ? explicitTargets : changedFiles);
   results.push({
     id: 'adhoc_touched_modules',
     category: 'traceability',
     description: 'catalog 反查触及模块（记录回 correction state）',
-    severity: 'BLOCKER',
-    status: lookup.unattributed.length === 0 ? 'PASS' : 'FAIL',
+    severity: 'MINOR',
+    status: lookup.unattributed.length === 0 ? 'PASS' : 'WARN',
     details:
       lookup.unattributed.length === 0
         ? `touched modules: ${lookup.touched.length > 0 ? lookup.touched.join(', ') : '(无层内变更)'}`
-        : `层内变更无法归属任何 catalog 模块（${lookup.unattributed.length} 个）：\n` +
-          lookup.unattributed.slice(0, 10).map((f) => `  - ${f}`).join('\n') +
-          '\n请补 module-catalog 的 entry_file 或确认改动落点。',
+        : `没有映射到 catalog 模块的工作区差异候选：${lookup.unattributed.join('、')}`,
   });
 
   // 3)-5) compile / lint / 架构规则 三段各自按 capability/provider 判定，互不连带
@@ -475,52 +460,51 @@ export async function runAdhocCorrection(
     });
   }
 
-  // 5) 架构规则（层依赖 / 跨模块出口）——只扫描变更中的宿主源码文件。
-  //    host 缺失时源码后缀集未知 → MINOR SKIP（代码工程的 fail-closed 已由
-  //    adhoc_compile 的 BLOCKER FAIL 分支承担；纯文档工程属合法形态）
+  const architectureRequired = state.touched_layers.includes('coding');
+  const declaration = { category: 'structure' as const, description: '架构规则检查（模块内分层和跨模块出口）' };
+  const missingArchitecture = (details: string, affected_files?: string[]): void => {
+    results.push({ id: 'adhoc_architecture_rules', ...declaration, severity: 'BLOCKER', status: 'SKIP', failure_kind: 'capability_missing', details, affected_files });
+  };
   if (!host) {
-    results.push({
-      id: 'adhoc_architecture_rules',
-      category: 'structure',
-      description: '架构规则检查（宿主未提供 coding host，源码后缀集未知）',
-      severity: 'MINOR',
-      status: 'SKIP',
-      details: '无 coding-host-rules 可派生 sourceFileSuffixes；代码工程请补 profile coding host。',
-    });
+    if (architectureRequired) missingArchitecture('当前 profile 未提供架构检查所需的源码类型。');
+    else results.push({ id: 'adhoc_architecture_rules', ...declaration, severity: 'MINOR', status: 'SKIP', details: '当前修正未涉及编码且没有源码分析能力。' });
   } else {
-    const suffixes = host.sourceFileSuffixes.map((s) => (s.startsWith('.') ? s : `.${s}`));
-    const changedSources = changedFiles.filter(
-      (f) => suffixes.some((suf) => f.endsWith(suf)) && fs.existsSync(path.join(projectRoot, f)),
-    );
+    const suffixes = host.sourceFileSuffixes.map(suffix => suffix.startsWith('.') ? suffix : `.${suffix}`);
+    const candidates = explicitTargets.length ? explicitTargets : lookup.matched;
+    const sources = [...new Set(candidates.filter(file => suffixes.some(suffix => file.endsWith(suffix))))];
     try {
-      const cfg = loadFrameworkConfig(projectRoot);
-      const analyzer = new AstAnalyzer(projectRoot, cfg.architecture);
-      const analyses = changedSources.length > 0 ? analyzer.analyzeFiles(changedSources) : [];
-      const violations: string[] = [];
-      for (const a of analyses) {
-        for (const v of analyzer.checkInternalLayerCompliance(a)) violations.push(v.message);
-        for (const v of analyzer.checkArchLayerCompliance(a)) violations.push(v.message);
+      const present = sources.filter(file => fs.statSync(path.resolve(projectRoot, file), { throwIfNoEntry: false })?.isFile());
+      if (present.length === 0) {
+        if (architectureRequired) missingArchitecture('本次修正的架构检查缺少可核验的源码目标。编译和 lint 结果单独保留。', sources);
+        else results.push({ id: 'adhoc_architecture_rules', ...declaration, severity: 'MINOR', status: 'SKIP', details: '该修正没有需要检查的源码改动。' });
+      } else {
+        const analyzer = new AstAnalyzer(projectRoot, loadFrameworkConfig(projectRoot).architecture);
+        const analyses = analyzer.analyzeFiles(present);
+        const violations = analyses.flatMap(source => [
+          ...analyzer.checkInternalLayerCompliance(source), ...analyzer.checkArchLayerCompliance(source),
+        ]);
+        const missing = sources.filter(file => !analyses.some(source => source.filePath === file));
+        const affected = [...new Set([...violations.map(violation => violation.file), ...missing])];
+        const detail = violations.slice(0, 10).map(violation => violation.message).join('\n');
+        if (violations.length && explicitTargets.length) {
+          results.push({ id: 'adhoc_architecture_rules', ...declaration, severity: 'BLOCKER', status: 'FAIL', details: detail, affected_files: affected });
+        } else if (violations.length || missing.length) {
+          const unresolved = [
+            violations.length ? '候选中发现架构问题，尚未确认这些路径属于本次修正。' : '',
+            missing.length ? `未取得源码原件：${missing.join('、')}。` : '',
+            detail,
+          ].filter(Boolean).join('\n');
+          if (architectureRequired || explicitTargets.length) missingArchitecture(unresolved, affected);
+          else results.push({ id: 'adhoc_architecture_rules', ...declaration, severity: 'MAJOR', status: 'WARN', details: unresolved, affected_files: affected });
+        } else {
+          results.push({ id: 'adhoc_architecture_rules', ...declaration, severity: 'BLOCKER', status: 'PASS',
+            details: `已核验 ${analyses.length} 个${explicitTargets.length ? '本次目标' : '可映射候选'}源码文件。`,
+            affected_files: analyses.map(source => source.filePath) });
+        }
       }
-      results.push({
-        id: 'adhoc_architecture_rules',
-        category: 'structure',
-        description: '架构规则检查（模块内分层 + 跨模块依赖，变更源码范围）',
-        severity: 'BLOCKER',
-        status: violations.length === 0 ? 'PASS' : 'FAIL',
-        details:
-          violations.length === 0
-            ? `${changedSources.length} 个变更源码文件均符合架构规则`
-            : `${violations.length} 处违规：\n` + violations.slice(0, 10).map((v) => `  - ${v}`).join('\n'),
-      });
-    } catch (err) {
-      results.push({
-        id: 'adhoc_architecture_rules',
-        category: 'structure',
-        description: '架构规则检查执行失败',
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: (err as Error).message,
-      });
+    } catch (error) {
+      if (explicitTargets.length) results.push({ id: 'adhoc_architecture_rules', ...declaration, severity: 'BLOCKER', status: 'FAIL', details: (error as Error).message });
+      else missingArchitecture(`候选源码分析未完成：${(error as Error).message}`, sources);
     }
   }
 
@@ -559,8 +543,7 @@ export async function runAdhocCorrection(
 
   // 报告落盘（确定性路径，不落 features_dir；不建临时假 feature 目录）
   fs.mkdirSync(outDir, { recursive: true });
-  const blockerFails = results.filter((r) => isBlockingCheck(r));
-  const verdict = blockerFails.length === 0 ? 'PASS' : 'FAIL';
+  const verdict = resolveVerdictFromChecks(results);
   const generatedAt = new Date().toISOString();
   fs.writeFileSync(
     path.join(outDir, 'correction-report.json'),
@@ -598,12 +581,11 @@ export async function runAdhocCorrection(
   // touched modules 记录回 state（catalog 反查结果）
   writeCorrectionState(projectRoot, { ...state, touched_modules: lookup.touched });
 
-  console.log(`${verdict === 'PASS' ? '✅' : '❌'} adhoc-correction: verdict=${verdict}`);
+  console.log(`${verdict === 'PASS' ? '✅' : verdict === 'INCOMPLETE' ? '⏳' : '❌'} adhoc-correction: verdict=${verdict}`);
   console.log(`   报告: ${path.relative(projectRoot, outDir).replace(/\\/g, '/')}/correction-report.md`);
-  if (blockerFails.length > 0) {
-    for (const b of blockerFails) {
-      console.error(`   BLOCKER ${b.id}: ${(b.details ?? '').split('\n')[0]}`);
-    }
+  for (const result of results) {
+    if (isBlockingCheck(result)) console.error(`   BLOCKER ${result.id}: ${(result.details ?? '').split('\n')[0]}`);
+    else if (isRequiredCheckGap(result)) console.error(`   欠验 ${result.id}: ${(result.details ?? '').split('\n')[0]}`);
   }
   return verdict === 'PASS' ? 0 : 1;
 }

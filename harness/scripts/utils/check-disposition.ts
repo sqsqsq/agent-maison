@@ -182,6 +182,19 @@ export interface DispositionCheck {
   verification?: { verdict: 'confirmed' | 'refuted' | 'unclear'; evidence?: string };
 }
 
+/** PASS and advisory WARN both need the visual producer's explicit evidence qualification. */
+export function visualGateAllowsEvidence(gate: Pick<DispositionCheck, 'id' | 'status' | 'severity' | 'structured'> | null | undefined): boolean {
+  if (gate?.id !== 'visual_diff' || (gate.status !== 'PASS' && gate.status !== 'WARN')) return false;
+  const payload = gate.structured as { kind?: string; channel_evidence_usable?: unknown } | undefined;
+  return payload?.kind === 'visual_diff' && payload.channel_evidence_usable === true;
+}
+
+/** The testing comparison is the evidence source; capture/reuse and debt disclosure are supporting checks. */
+export function testingVisualEvidenceGap<T extends Pick<DispositionCheck, 'id' | 'status' | 'structured'>>(checks: readonly T[]): T | undefined {
+  const gate = [...checks].reverse().find(check => check.id === 'visual_diff');
+  return gate && !visualGateAllowsEvidence(gate) ? gate : undefined;
+}
+
 export type CheckDisposition =
   | { action: 'none' }
   | { action: 'block'; entry: DispositionEntry | null }
@@ -454,6 +467,13 @@ export function resolveCurrentDisposition(input: CurrentDispositionInput): Curre
     }
     for (const [axisId, axis] of Object.entries(phase.axes ?? {})) {
       if (!axis.applicable || !axis.required_for_release) continue;
+      // A closed report from an earlier writer may have counted capture or disclosure as the comparison.
+      if (phaseName === 'testing' && axisId === 'visual' && axis.verdict === 'PASS') {
+        const gap = testingVisualEvidenceGap(currentChecks);
+        if (gap) push({ phase: phaseName, id: 'quality_axis_verified', action: 'disclose', affects: 'release', severity: 'MAJOR',
+          detail: `visual 轴缺可用于发布的实际对照（${gap.id}=${gap.status}）${gap.details ? `：${gap.details}` : ''}`,
+          ...(gap.affected_files?.length ? { files: gap.affected_files } : {}) });
+      }
       if (axis.verdict === 'PASS' || axis.verdict === 'NOT_APPLICABLE') continue;
       const knownNegative = currentChecks.filter(check => check.status === 'FAIL' && axis.source_checks?.includes(check.id));
       if (axis.verdict === 'FAIL' && knownNegative.length && knownNegative.every(check =>

@@ -89,7 +89,7 @@ coding 确认疑似上游缺口时，才写本阶段可选 `coding/upstream-issu
 
 spec/plan/coding 交现有候选/范围修订；蓝图、CU、架构 DSL 交既有设计 owner，不能就地改权威或增加 design 阶段。owner 修订重签后回原阶段复验。目标冲突拒修沿既有账本 `repair_candidate:<指纹>` 并用「」引目标原文；事实误判拒修写当前 `路径:行号` 和合法做法，由原独立核实逐条确认 `issue=<gate_id>`（evidence 含完整拒修依据）。原阶段读取理由后修自身产物或补真实新事实；未看理由的旧 subject、换 ID/措辞/路径格式均不能取得新的回修机会，真实activity继续统计，未完请求显式用户截止不重置。单职责 request 仍按原授权终点处理，不自动扩大调度。
 
-`summary.next_action` 分流：`rerun_with_HARNESS_DIFF_BASE_REF_working`/`diff_within_scope` 报 `stale_diff_base` → 自动重跑 `HARNESS_DIFF_BASE_REF=working` 版本，仍越界才进 scope 扩展或撤销流程；`resolve_project_dependencies_then_rerun`/`project_dependency_missing` → harness 应已自动安装，仍 FAIL 读日志按上节处理；`declare_dependencies_then_rerun`/`project_dependency_undeclared` → agent 自补声明重跑；`resolve_dependency_install_blocker_then_rerun`/`project_dependency_install_failed` → 按日志 registry/鉴权/网络原因处理。
+`diff_within_scope` 按原请求、本次实现与实际依赖核范围。普通比较取当前 HEAD，用户指定历史区间时沿原区间。确认越权或需要改变真实范围时回原责任方；`resolve_project_dependencies_then_rerun`/`project_dependency_missing` → harness 应已自动安装，仍 FAIL 读日志按上节处理；`declare_dependencies_then_rerun`/`project_dependency_undeclared` → agent 自补声明重跑；`resolve_dependency_install_blocker_then_rerun`/`project_dependency_install_failed` → 按日志 registry/鉴权/网络原因处理。
 
 ## 正式 Feature/CU 前置
 

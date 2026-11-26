@@ -591,6 +591,11 @@ export function dispositionOf(decision: Decision): Disposition {
   }
 }
 
+/** The legacy writer used this incident for a pure time-window mismatch. */
+export function isHistoricalWriteWindowStop(event: Readonly<Record<string, unknown>>): boolean {
+  return event.halt_reason === 'unauthorized_source_mutation';
+}
+
 /** ut drift 走保守恢复时的决策原因——**不复用授权语义**（不产 matched_receipts）。 */
 export const UNTRUSTED_DRIFT_REASON = 'untrusted_source_drift_revalidation';
 

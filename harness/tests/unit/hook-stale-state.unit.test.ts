@@ -85,6 +85,15 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     const before = fs.readFileSync(f.stateFile); const result = invoke(f.root, { session_id: 'unrelated' }); assert.equal(result.status, 0);
     assert(result.stderr.includes('历史会话记录只读')); assert.deepEqual(fs.readFileSync(f.stateFile), before);
   }) },
+  { name: 'Stop leaves a freshly written unstamped state unassigned', run: () => withFixture({ error: 'unrelated completion' }, f => {
+    fs.writeFileSync(f.stateFile, JSON.stringify({ ...f.state, session_id: null }));
+    const before = fs.readFileSync(f.stateFile);
+    const result = invoke(f.root);
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, '');
+    assert(!result.stderr.includes('unrelated completion'));
+    assert.deepEqual(fs.readFileSync(f.stateFile), before);
+  }) },
   { name: 'D8 dedicated native Stop returns to its original outer coordinator without another phase judgment', run: () => withFixture({ error: 'not consumed' }, f => {
     const result = invoke(f.root, {}, { MAISON_GOAL_HEADLESS: '1' }); assert.equal(result.status, 0); assert.equal(result.stdout, '');
   }) },
@@ -98,7 +107,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     const result = invoke(f.root); assert.equal(result.status, 2); assert(result.stderr.includes('cu-'));
     assert(!fs.existsSync(path.join(f.root, 'doc/features/cu-invalid')));
   }, true) },
-  { name: 'D8 session routing still uses existing grace and TTL while retired counter defaults disappear', async run() {
+  { name: 'D8 session routing requires exact identity while retired counter defaults disappear', async run() {
     const hook = await dynamicImport(pathToFileURL(HOOK).href);
     assert.equal(hook.HOOK_DEFAULT_GRACE_MS, DEFAULT_STATE_MACHINE.grace_period_minutes * 60_000);
     assert.equal(hook.HOOK_DEFAULT_TTL_MS, DEFAULT_STATE_MACHINE.ttl_hours * 3_600_000);

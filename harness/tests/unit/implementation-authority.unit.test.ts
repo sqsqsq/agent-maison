@@ -8,7 +8,7 @@ import { clearFrameworkConfigCache } from '../../config';
 import coding, { checkDiffWithinScope } from '../../scripts/check-coding';
 import { checkContractFileReferenceClosure } from '../../scripts/check-plan';
 import { compareAuthoritativeContent } from '../../scripts/utils/blueprint-skill-projection';
-import { implementationFiles, implementationChangeContext, resolveImplementationScope } from '../../scripts/utils/diff-scope';
+import { implementationFiles, implementationChangeContext, implementationReviewReferences, resolveImplementationScope } from '../../scripts/utils/diff-scope';
 import { resolvePhaseWriteBoundary, resolvePhasePathOwnership } from '../../scripts/utils/phase-write-boundary';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
@@ -86,9 +86,13 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     assert.equal(checkContractFileReferenceClosure(ctx)[0].status, 'PASS');
   }) },
   { name: 'forecast module exclusions do not deny an actual necessary project change', run: () => withProject(ctx => {
-    write(ctx.projectRoot, '02-Feature/AccountManager/src/main/ets/Account.ets', 'export class Account { opened = true }');
+    const adopted = '02-Feature/AccountManager/src/main/ets/Account.ets';
+    write(ctx.projectRoot, adopted, 'export class Account { opened = true }');
+    write(ctx.projectRoot, `doc/features/${feature}/review/review-report.md`, `## 审查范围\n\n- ${adopted}\n`);
     const result = checkDiffWithinScope(ctx)[0]; assert.equal(result.status, 'PASS', result.details);
-    assert(implementationFiles(ctx.projectRoot, feature, ctx.featureSpec.contracts).some(file => file.includes('Account.ets')));
+    assert(!implementationFiles(ctx.projectRoot, feature, ctx.featureSpec.contracts).includes(adopted), 'ordinary file selection must respect its own scope');
+    const references = implementationReviewReferences(ctx.projectRoot, feature, { featureSpec: ctx.featureSpec, frameworkRoot: ctx.frameworkRoot });
+    assert(implementationFiles(ctx.projectRoot, feature, ctx.featureSpec.contracts, undefined, undefined, references).includes(adopted));
   }) },
   { name: 'an explicit original request Scope remains a boundary, irrespective of planning extensions', run: () => withProject(ctx => {
     const requirement = '# Scope\n```yaml\nin_scope_modules: [WalletMain]\nout_of_scope_modules: [AccountManager]\nrationale: 用户明确限定\n```';

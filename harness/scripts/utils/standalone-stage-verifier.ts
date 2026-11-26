@@ -23,11 +23,11 @@ import { invocationCompleted, invocationEndFacts } from './invocation-completion
 import { loadPhaseEvidenceManifest } from './phase-evidence-manifest';
 import { preparePhaseRepairFeedback } from './phase-closure-finalizer';
 import { runSyncClosureDetailed } from './phase-state';
-import { capturePhaseInvocationSnapshot, classifyPhaseInvocationChanges, phaseWriteWindows,
+import { capturePhaseInvocationSnapshot, invocationWriteConflicts, phaseWriteWindows, readInvocationWritePaths,
   readPhaseRecoveryFile, resolvePhaseWriteBoundary, type PhaseInvocationSnapshot } from './phase-write-boundary';
 import { resolveFeatureTrack } from './runtime-policy';
 import { readExecutionRequestOriginal, nativeExecutionCompleted, phaseBindingStarted, readPhaseBinding,
-  sessionEvents, sessionRunMaterialPath, writePhaseExecutionRequestMaterial, type IssuedSessionExecution, type SessionExecutionRequest } from './session-execution-handoff';
+  managedWriteRequestEnv, sessionEvents, sessionRunMaterialPath, writePhaseExecutionRequestMaterial, type IssuedSessionExecution, type SessionExecutionRequest } from './session-execution-handoff';
 import { phaseBindingCapture, protectStageVerifierInputs, readSignedStageVerifier, renderStageVerifierRepairInstruction,
   resolveStageVerifierItemFocus, restoreStageVerifierReport, launchStandaloneVerifierWorker, stageVerifierDraftPath, standaloneVerifierRunDir,
   type StageVerifierLocation } from './stage-verifier-execution';
@@ -154,25 +154,23 @@ function commitStageHandback(runDir: string, issued: Pick<IssuedSessionExecution
   const events = stageEvents(runDir);
   const binding = readPhaseBinding(runDir, issued, events);
   const windows = phaseWriteWindows(pre, binding, post);
-  const writes = windows.kind === 'checked' ? classifyPhaseInvocationChanges(boundary, context.phase, windows.returned, { events, invokeId }) : undefined;
-  const violations = windows.kind === 'checked' ? [
-    ...windows.beforeBinding.map(write => ({ ...write, violation: 'signed_input_drift' })), ...writes?.violations ?? [],
-  ] : [];
-  const rejection = windows.kind === 'unverifiable' ? windows.reason : violations.length
-    ? '已拒收越界交回，涉及 ' + [...new Set(violations.map(write => write.path))].join('、')
-    : !binding && invocationCompleted(terminal) ? '缺少可核实的原生绑定快照' : undefined;
+  const violations = invocationWriteConflicts(boundary, windows, request.snapshot_options,
+    readInvocationWritePaths(context.projectRoot, context.adapter, path.join(runDir, path.dirname(reference.path), 'agent-events.jsonl')));
+  const rejection = violations.length
+    ? '已签发的核验输入变化，涉及 ' + [...new Set(violations.map(write => write.path))].join('、') : undefined;
   if (violations.length) logEvent(runDir, { type: 'phase_write_violation', phase: context.phase, invoke_id: invokeId,
     pre_snapshot: pre.sha256, post_snapshot: post.sha256, violations });
   if (!rejection && invocationCompleted(terminal) && boundary.verifierResultPath) {
     const target = path.resolve(context.projectRoot, boundary.verifierResultPath);
     const draft = readPhaseRecoveryFile(context.projectRoot, target);
     const observed = post.entries.find(entry => entry.kind === 'file' && path.resolve(context.projectRoot, entry.path) === target);
-    if (draft.bytes && observed && createHash('sha256').update(draft.bytes).digest('hex') === observed.sha256) {
+    const before = pre.entries.find(entry => path.resolve(context.projectRoot, entry.path) === target);
+    if (draft.bytes && observed && observed.sha256 !== before?.sha256 && createHash('sha256').update(draft.bytes).digest('hex') === observed.sha256) {
       const arch = path.join(runDir, path.dirname(reference.path), 'independent-' + path.basename(target));
       if (!fs.existsSync(arch)) fs.writeFileSync(arch, draft.bytes, { flag: 'wx' });
       logEvent(runDir, { type: 'phase_write_observed', phase: context.phase, invoke_id: invokeId,
         pre_snapshot: pre.sha256, post_snapshot: post.sha256,
-        owned: (writes?.allowed ?? []).map(write => ({ path: write.path, post_sha256: write.postSha256 })) });
+        owned: [{ path: observed.path, post_sha256: observed.sha256 }] });
     }
   }
   logEvent(runDir, { ...terminal, type: 'agent_invoke_end', phase: context.phase, invoke_id: invokeId, purpose,
@@ -340,6 +338,7 @@ async function executeUnderLock(input: StandaloneInput, signed: Signed, runDir: 
   let stoppedBeforeBinding: { detail: string; settled: boolean } | undefined;
   try {
     result = await invokeAgentHeadless(plan, input.projectRoot, { authorization: authority, executionRole: 'verifier',
+      extraEnv: managedWriteRequestEnv(runDir, issued),
       outputLogPath, toolEventCapture: loaded.capability.tool_event_provenance, usageCapture: loaded.capability.usage_capture,
       userDeadlineAt: deadline, signal: controller.signal, containment: { runId: signed.request.subject_id, invokeId },
       beforeSpawn: () => {

@@ -19,41 +19,19 @@
 
 import * as fs from 'fs';
 import * as path from 'path';
+import { createHash } from 'node:crypto';
+import workUnitAuthority from './work-unit-write-authority.cjs';
 import nativeRequest from './native-request.cjs';
-import goalSignal from './goal-execution-signal.cjs';
 
-/** Existing editor hook only: cooperative entry recovery, never a semantic per-request lock. */
-export function evaluateProjectEntry({ projectRoot, filePath, payload, env = process.env }) {
-  const frameworkRoot = path.join(projectRoot, 'framework');
-  if (goalSignal.hasGoalExecutionSignal(env)) return { decision: 'allow' };
+/** Surface the exact native user reference for clients whose shell lacks a session signal. */
+export function locateHookRequest({ projectRoot, payload }) {
   const transcript = payload?.transcript_path;
-  if (typeof transcript !== 'string' || !transcript) return { decision: 'allow', note: '原生transcript未提供；仅常驻指引与compile/request后验核对，不声称写前已核。' };
+  if (typeof transcript !== 'string' || !transcript) return undefined;
   try {
     const ref = `${transcript}${payload.prompt_id ? '#' + payload.prompt_id : ''}`;
     const session = nativeRequest.readNativeSession(ref, projectRoot, { sessionId: payload.session_id ?? payload.conversation_id, cwd: payload.cwd });
-    if (session.sessionId !== payload.session_id && session.sessionId !== payload.conversation_id) return { decision: 'allow', note: '原生session定位未核，写前检查降级。' };
-    return evaluateNativeProjectEntry({ session, projectRoot, filePath, frameworkRoot });
-  } catch {
-    return { decision: 'allow', note: '原生原件暂不可读/格式未支持，写前检查降级；compile/request仍须核来源，不能签完整请求通过。' };
-  }
-}
-
-/** One source-aware predicate shared by native hook shells; no additional entry or request state. */
-export function evaluateNativeProjectEntry({ session, projectRoot, filePath, frameworkRoot = path.join(projectRoot, 'framework'), env = process.env }) {
-    if (goalSignal.hasGoalExecutionSignal(env)) return { decision: 'allow' };
-    const rel = path.relative(projectRoot, path.resolve(projectRoot, filePath)).replace(/\\/g, '/');
-    if (!nativeRequest.productTarget(projectRoot, frameworkRoot, filePath, [], session.request.text.includes(rel))) return { decision: 'allow' };
-    if (session.userControlVerified === false) return { decision: 'allow', note: '原生包装授权与工具结果未核，写前检查降级；沿统一入口后验核对，不声称本次写前已核。' };
-    let sessionExempt = false;
-    for (const message of session.messages.filter(message => message.role === 'user' && session.userControlVerified !== false)) {
-      const control = nativeRequest.userControl(message.text);
-      if (control.revoke) sessionExempt = false;
-      if (control.session) sessionExempt = true;
-    }
-    const current = session.userControlVerified === false ? {} : nativeRequest.userControl(session.request.text);
-    if (sessionExempt || current.exempt) return { decision: 'allow', sessionRef: `${session.file}#${session.request.id}` };
-    if (nativeRequest.frontDoorLoaded(session, projectRoot, frameworkRoot)) return { decision: 'allow', sessionRef: `${session.file}#${session.request.id}` };
-    return { decision: 'deny', reason: '[Maison统一前门] 先完整读取根入口及 framework/docs/operations/project-entry.md，沿原请求继续本次写入；不需要用户重发需求。' };
+    if (session.sessionId === payload.session_id || session.sessionId === payload.conversation_id) return `${session.file}#${session.request.id}`;
+  } catch { /* An unreadable native envelope supplies no source reference. */ }
 }
 
 // --------------------------------------------------------------------------
@@ -176,6 +154,8 @@ export function isWriteAllowedPath(rel, policy) {
  * @returns {GuardDecision}
  */
 export function evaluateFrameworkWrite(input) {
+  const managed = verifyManagedWrite(input);
+  if (managed?.decision === 'deny') return managed;
   try {
     const projectRoot = path.resolve(input.projectRoot);
     const frameworkRoot = path.join(projectRoot, 'framework');
@@ -200,6 +180,34 @@ export function evaluateFrameworkWrite(input) {
   } catch {
     return { decision: 'allow' }; // 任何判定异常 fail-open；无查时扫描兜底
   }
+}
+
+/** Managed clients inherit the exact runner-issued request for tools that expose a target path. */
+function verifyManagedWrite({ projectRoot, filePath }) {
+  const signed = process.env.MAISON_MANAGED_WRITE_REQUEST;
+  if (!signed) return;
+  let reason = '本调用的签发写界原件不可核实';
+  try {
+    const ref = JSON.parse(signed);
+    const bytes = fs.readFileSync(ref.path);
+    if (createHash('sha256').update(bytes).digest('hex') === ref.sha256) {
+      const request = JSON.parse(bytes.toString('utf8'));
+      const boundary = request.write_boundary;
+      const physicalRoot = fs.realpathSync(projectRoot);
+      if (physicalRoot === fs.realpathSync(boundary.projectRoot)) {
+        const target = path.resolve(projectRoot, filePath);
+        let parent = target;
+        while (!fs.existsSync(parent) && path.dirname(parent) !== parent) parent = path.dirname(parent);
+        const physical = path.resolve(fs.realpathSync(parent), path.relative(parent, target));
+        const logicalTarget = path.resolve(boundary.projectRoot, path.relative(projectRoot, target));
+        const physicalTarget = path.resolve(boundary.projectRoot, path.relative(physicalRoot, physical));
+        if (workUnitAuthority.workUnitMayWritePath(boundary, logicalTarget, request.snapshot_options)
+          && workUnitAuthority.workUnitMayWritePath(boundary, physicalTarget, request.snapshot_options)) return;
+        reason = `目标超出本调用签发写权：${filePath}`;
+      }
+    }
+  } catch { /* The issued operation remains unresolved. */ }
+  return { decision: 'deny', reason: `[Maison 写保护] ${reason}。在原请求内交由相应写入责任方处理。` };
 }
 
 /** @param {string} target @returns {string} */

@@ -243,7 +243,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         { ts: '2026-06-10T12:00:00.000Z', type: 'run_start', chain: ['spec', 'plan', 'coding', 'review', 'ut', 'testing'] },
         {
           ts: '2026-06-10T12:00:01.000Z', type: 'phase_write_violation', phase: 'plan', fingerprint: 'fp',
-          violations: [{ path: 'doc/features/demo/spec/acceptance.yaml', owner: 'spec', pre_sha256: 'a', post_sha256: 'b' }],
+          violations: [{ path: 'doc/features/demo/spec/acceptance.yaml', owner: 'spec', pre_sha256: 'a', post_sha256: 'b', authority_confirmed: true }],
         },
         {
           ts: '2026-06-10T12:00:02.000Z', type: 'phase_backtrack_requested', phase: 'plan',

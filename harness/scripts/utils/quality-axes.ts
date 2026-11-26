@@ -21,7 +21,7 @@ import type { CheckResult, Phase } from './types';
 import type { CapabilityResolutionReport } from './capability-resolution';
 import { resolveVerdictFromChecks } from './report-generator';
 import { validateRepairCandidatesShape } from './repair-candidates';
-import { isBlockingCheck, isRequiredCheckGap, resolveCheckDisposition } from './check-disposition';
+import { isBlockingCheck, isRequiredCheckGap, resolveCheckDisposition, testingVisualEvidenceGap } from './check-disposition';
 
 export type AxisId = 'functional' | 'visual' | 'asset' | 'evidence';
 export const AXIS_IDS: readonly AxisId[] = ['functional', 'visual', 'asset', 'evidence'];
@@ -279,9 +279,8 @@ export function deriveQualityAxes(
     } else if (b.externalFails.length > 0) {
       verdict = 'UNVERIFIED';
       resolution = { class: 'external_dependency', owner: 'external', retry_phase: phase };
-    } else if (b.executed === 0) {
-      // 轴 applicable 但本 phase 零执行（如 spec 期 functional 测试未运行、
-      // 盲档下 visual 检查整体 SKIP）——如实 UNVERIFIED。
+    } else if (b.executed === 0 || (phase === 'testing' && id === 'visual' && testingVisualEvidenceGap(checks))) {
+      // 缺实际执行或适用视觉未取得合格对照时保留 UNVERIFIED。
       verdict = 'UNVERIFIED';
       resolution = { class: 'needs_fix', owner: 'agent', retry_phase: phase };
     } else {

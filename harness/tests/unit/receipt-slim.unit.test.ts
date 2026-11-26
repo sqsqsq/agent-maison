@@ -27,6 +27,9 @@ import { loadWorkflowSpec } from '../../workflow-loader';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { buildGoalManifestFromInput } from '../../scripts/utils/goal-manifest';
 import { createGoalRun } from '../../scripts/utils/goal-run-creation';
+import { resolvePhaseEvidenceManifest, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
+import { computeRunRequirementSha } from '../../scripts/utils/fidelity-shared';
+import { matchesUnitCase, selectedUnitCases, startCaseTiming, type UnitExecutionTiming } from '../utils/unit-case-selection';
 
 export interface UnitCaseResult {
   name: string;
@@ -59,23 +62,21 @@ interface SlimOpts {
   uncheckedBoxes?: boolean;
   /** t2 v2 负例：故意缺 schema 必填字段（手搓片段冒充） */
   dropRequiredKey?: string;
-  /** t2 v2 负例：summary.source_commit_sha 与回执/HEAD 不一致（旧件冒充） */
-  mismatchedSourceSha?: boolean;
-  /** t2 v3 负例：worktree_digest 与当前工作区状态不符（HEAD 不动源码已改） */
-  staleWorktreeDigest?: boolean;
-  /** t2 v4 负例（codex 第三轮阻断2）：summary 生成后改 untracked 源码**内容**（路径不变） */
+  /** Change a path actually used by this review. */
   dirtyUntrackedAfter?: boolean;
-  /** t2 v5 负例（codex 第四轮阻断1）：中文+空格路径的 untracked 内容 A→B（quotePath 转义绕过场景） */
+  /** Same edit is unrelated unless the review explicitly consumes the Unicode path. */
   dirtyUnicodeAfter?: boolean;
-  /** t2 v4 负例（codex 第三轮阻断2）：summary 生成后改根级构建配置（tracked root 输入） */
+  reviewUnicode?: boolean;
+  commitUnrelatedAfter?: boolean;
+  tamperSummaryAfter?: boolean;
+  legacyReceipt?: boolean;
   dirtyRootConfigAfter?: boolean;
   /** t2 v4 负例（codex 第三轮高优）：goal 环境 summary 带/不带 run_id */
   summaryRunId?: string;
   /** f9c2e6b4 t1：回执自报的 attempt 身份（省略 = 旧格式回执） */
   claimedAttemptId?: string;
-  /** t2 v6 负例（codex 第五轮 P1）：summary 侧写入哨兵值（no-git/unverifiable 等非 hex） */
+  /** Historical summary diagnostic available when Git could not be read. */
   sentinelWorktreeDigest?: string;
-  /** t2 v6 负例（codex 第五轮 P1）：校验前删除 .git——当前侧 no-git + HEAD 不可解析 */
   dropGitDirBeforeValidate?: boolean;
   /** runner-owned-machine-facts 正例：写一条**旧 run** 的账本行（且不覆盖 registry gate）——
    *  账本是跨 run 累积留痕，不再拥有 closure 否决权 */
@@ -150,17 +151,16 @@ function buildSlimProject(opts: SlimOpts, currentRunId?: string): { root: string
       'utf-8',
     );
   }
-  // t2 v4：根级构建配置（tracked）——worktree digest 必须把根配置输入纳入绑定
-  fs.writeFileSync(path.join(root, 'build-profile.json5'), '{ "app": { "sdk": "6.0" } }\n', 'utf-8');
+  const buildInput = 'build-profile.json5';
+  fs.writeFileSync(path.join(root, buildInput), '{ "app": { "sdk": "6.0" } }\n', 'utf-8');
 
   const sha = initGit(root);
 
-  // t2 v4：真实 untracked 产品源码（initGit 之后创建=不入 commit）——digest 必须哈希其内容，
-  // 否则"路径不变、内容从 A 改 B"不可见（codex 第三轮阻断2 实锤场景）。
+  // Both sources are untracked. The report explicitly selects the files it read.
+  const source = 'app/untracked-src.ets', unicode = 'app/中文 组件.ets';
   fs.mkdirSync(path.join(root, 'app'), { recursive: true });
-  fs.writeFileSync(path.join(root, 'app', 'untracked-src.ets'), 'const V = 1;\n', 'utf-8');
-  // t2 v5：中文+空格 untracked 路径（quotePath 默认转义——非 -z 实现会恒 unreadable 而绕过）
-  fs.writeFileSync(path.join(root, 'app', '中文 组件.ets'), 'const CN = 1;\n', 'utf-8');
+  fs.writeFileSync(path.join(root, source), 'const V = 1;\n', 'utf-8');
+  fs.writeFileSync(path.join(root, unicode), 'const CN = 1;\n', 'utf-8');
 
   for (const runId of new Set([opts.summaryRunId, currentRunId].filter((id): id is string => !!id))) {
     const manifest = buildGoalManifestFromInput({ feature: 'demo', adapter: 'claude', start_phase: PHASE, end_phase: PHASE,
@@ -171,15 +171,16 @@ function buildSlimProject(opts: SlimOpts, currentRunId?: string): { root: string
     const producerRunId = opts.summaryRunId ?? currentRunId, previousRunId = process.env.MAISON_GOAL_RUN_ID;
     if (producerRunId) process.env.MAISON_GOAL_RUN_ID = producerRunId; else delete process.env.MAISON_GOAL_RUN_ID;
     let summary: Record<string, unknown>;
+    const inputs = [source, buildInput, ...(opts.reviewUnicode ? [unicode] : [])];
     try {
-      const source = 'app/untracked-src.ets', content = fs.readFileSync(path.join(root, source), 'utf8');
+      const contextFiles = inputs.map(label => ({ label, kind: 'path' as const, content: fs.readFileSync(path.join(root, label), 'utf8') }));
       const report = generateScriptReport(HARNESS_ROOT, PHASE, 'demo', root, [{ id: 'fixture_current_source', category: 'structure',
-        description: 'current receipt fixture source read', severity: 'BLOCKER', status: opts.summaryVerdict === 'FAIL' || !content.trim() ? 'FAIL' : 'PASS',
-        details: `Read actual current source: ${source}`, affected_files: [source] }], FRAMEWORK_ROOT);
+        description: 'current receipt source and build inputs', severity: 'BLOCKER',
+        status: opts.summaryVerdict === 'FAIL' || contextFiles.some(file => !file.content.trim()) ? 'FAIL' : 'PASS',
+        details: `Read actual current inputs: ${inputs.join(', ')}`, affected_files: inputs }], FRAMEWORK_ROOT);
       const plan = resolveVerifierPlan({ phase: PHASE, track: 'full', runtimeMode: 'interactive', policy: { verifier: 'required' },
         workflowVerifierPrompt: workflowVerifierPrompt(loadWorkflowSpec(FRAMEWORK_ROOT, 'spec-driven'), PHASE) });
       const phaseRuleText = JSON.stringify(new SpecLoader(root, undefined, undefined, FRAMEWORK_ROOT).loadPhaseRule(PHASE));
-      const contextFiles = [{ label: source, kind: 'path' as const, content }];
       assembleAIPrompt(HARNESS_ROOT, root, PHASE, 'demo', contextFiles, JSON.stringify(report), phaseRuleText, undefined, undefined,
         FRAMEWORK_ROOT, { verifierPromptRel: plan.verifier_prompt! });
       const material = buildVerifierMaterialView({ projectRoot: root, feature: 'demo', phase: PHASE, frameworkRoot: FRAMEWORK_ROOT,
@@ -196,9 +197,7 @@ function buildSlimProject(opts: SlimOpts, currentRunId?: string): { root: string
     // Faults are applied after the real writer, without replacing its raw checks or quality projection.
     if (opts.summaryFeature) summary.feature = opts.summaryFeature;
     if (opts.staleFingerprint) summary.gate_fingerprint = 'v9.9.9:deadbeef0000';
-    if (opts.mismatchedSourceSha) summary.source_commit_sha = '0'.repeat(40);
     if (opts.sentinelWorktreeDigest) summary.worktree_digest = opts.sentinelWorktreeDigest;
-    else if (opts.staleWorktreeDigest) summary.worktree_digest = 'deadbeefdeadbeef';
     if (currentRunId && !opts.summaryRunId) delete summary.run_id;
     if (opts.dropRequiredKey) delete summary[opts.dropRequiredKey];
     if (opts.blockingWarnings === 'omit') delete summary.blocking_warnings;
@@ -206,11 +205,15 @@ function buildSlimProject(opts: SlimOpts, currentRunId?: string): { root: string
       summary.blocking_warnings = [{ id: 'scope_declaration', blocking_class: 'prd_scope', details_excerpt: 'rationale 为空', suggestion: '补齐 rationale' }];
     }
     fs.writeFileSync(path.join(reportsDir, 'summary.json'), JSON.stringify(summary, null, 2), 'utf-8');
+    writePhaseEvidenceManifest(root, resolvePhaseEvidenceManifest({
+      projectRoot: root, feature: 'demo', phase: PHASE, frameworkRoot: FRAMEWORK_ROOT, extraInputs: inputs,
+      requirementSha: producerRunId ? computeRunRequirementSha(root, 'demo', producerRunId) : null,
+    }));
   }
   const box = opts.uncheckedBoxes ? '[ ]' : '[x]';
   const receipt = [
     '---',
-    'receipt_schema: "2.0"',
+    ...(opts.legacyReceipt ? [] : ['receipt_schema: "2.0"']),
     'feature: "demo"',
     `phase: "${PHASE}"`,
     'agent_model: "test-model"',
@@ -237,8 +240,7 @@ function buildSlimProject(opts: SlimOpts, currentRunId?: string): { root: string
 
 function runCase(opts: SlimOpts, env?: Record<string, string | undefined>): ReturnType<typeof tryValidateReceipt> {
   const { root } = buildSlimProject(opts, env?.MAISON_GOAL_RUN_ID);
-  // t2 v4：summary/receipt 已定稿后再改工作区——重算 digest 必须抓到（真实 dirty 场景，
-  // 不再靠手写假摘要冒充）。
+  // Only post-publication mutations exercise freshness against the original bytes.
   if (opts.dirtyUntrackedAfter) {
     fs.writeFileSync(path.join(root, 'app', 'untracked-src.ets'), 'const V = 2;\n', 'utf-8');
   }
@@ -252,6 +254,17 @@ function runCase(opts: SlimOpts, env?: Record<string, string | undefined>): Retu
   }
   if (opts.dirtyRootConfigAfter) {
     fs.writeFileSync(path.join(root, 'build-profile.json5'), '{ "app": { "sdk": "6.1" } }\n', 'utf-8');
+  }
+  if (opts.commitUnrelatedAfter) {
+    fs.writeFileSync(path.join(root, 'parallel-change.txt'), 'independent work\n', 'utf8');
+    const args = ['commit', '-qm', 'parallel request', '--', 'parallel-change.txt'];
+    assert(spawnSync('git', ['add', '--', 'parallel-change.txt'], { cwd: root }).status === 0, 'stage independent change');
+    assert(spawnSync('git', args, { cwd: root }).status === 0, 'commit independent change');
+  }
+  if (opts.tamperSummaryAfter) {
+    const file = path.join(root, 'doc/features/demo', PHASE, 'reports/summary.json');
+    const summary = JSON.parse(fs.readFileSync(file, 'utf8'));
+    fs.writeFileSync(file, JSON.stringify({ ...summary, source_commit_sha: '0'.repeat(40) }, null, 2));
   }
   const savedEnv: Record<string, string | undefined> = {};
   if (env) {
@@ -339,63 +352,39 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
-    name: 't2 v2：summary.source_commit_sha 与回执/HEAD 不一致 → failed（旧件冒充被 run identity 拒）',
+    name: '实际输入回执：另一请求提交及未纳入本次 review 的工作区变动不使结论失效',
     run: () => {
-      const v = runCase({ mismatchedSourceSha: true });
-      assert(v.status === 'failed', `expected failed, got ${v.status}`);
+      const result = runCase({ commitUnrelatedAfter: true, dirtyUnicodeAfter: true });
+      assert(result.status === 'passed', `当前绑定仍有效：${result.message}`);
     },
   },
   {
-    name: 't2 v3：worktree_digest 失配 → failed（HEAD 不动、源码已改的 dirty worktree 旧件被拒）',
+    name: '实际输入回执：已签 summary 事后改写被原证据拒绝',
     run: () => {
-      const v = runCase({ staleWorktreeDigest: true });
-      assert(v.status === 'failed', `expected failed, got ${v.status}`);
+      const result = runCase({ tamperSummaryAfter: true });
+      assert(result.status === 'failed' && (result.message ?? '').includes('summary.json'), String(result.message));
     },
   },
   {
-    name: 't2 v4：untracked 源码内容 A→B（路径不变）→ failed（digest 哈希内容，非只看路径清单）',
+    name: '实际输入回执：相关源码、中文含空格路径和已引用的构建输入变化分别拒收',
     run: () => {
-      const v = runCase({ dirtyUntrackedAfter: true });
-      assert(v.status === 'failed', `expected failed, got ${v.status}`);
-      assert((v.message ?? '').includes('worktree'), `应命中 worktree 失配：${v.message}`);
+      for (const [options, input] of [
+        [{ dirtyUntrackedAfter: true }, 'app/untracked-src.ets'],
+        [{ dirtyUnicodeAfter: true, reviewUnicode: true }, 'app/中文 组件.ets'],
+        [{ dirtyRootConfigAfter: true }, 'build-profile.json5'],
+      ] as const) {
+        const result = runCase(options);
+        assert(result.status === 'failed' && (result.message ?? '').includes(input), `${input}：${result.status} ${result.message}`);
+      }
     },
   },
   {
-    name: 't2 v5：中文+空格 untracked 路径内容 A→B → failed（quotePath 转义不再绕过，-z 修复）',
+    name: '实际输入回执：历史无 Git 摘要与当前无 Git 不妨碍核原报告',
     run: () => {
-      const v = runCase({ dirtyUnicodeAfter: true });
-      assert(v.status === 'failed', `expected failed, got ${v.status}`);
-      assert((v.message ?? '').includes('worktree'), `应命中 worktree 失配：${v.message}`);
-    },
-  },
-  {
-    name: 't2 v4：根级构建配置（tracked root 输入）summary 后被改 → failed（根配置纳入绑定）',
-    run: () => {
-      const v = runCase({ dirtyRootConfigAfter: true });
-      assert(v.status === 'failed', `expected failed, got ${v.status}`);
-      assert((v.message ?? '').includes('worktree'), `应命中 worktree 失配：${v.message}`);
-    },
-  },
-  {
-    name: 't2 v6 fail-closed：summary 侧哨兵值（no-git）→ failed（哨兵不得进相等比较，两侧同错误常量假匹配被排除）',
-    run: () => {
-      const v = runCase({ sentinelWorktreeDigest: 'no-git' });
-      assert(v.status === 'failed', `expected failed, got ${v.status}`);
-      assert(
-        (v.message ?? '').includes('slim_summary_worktree_unverifiable'),
-        `应命中 worktree 无法核实 BLOCKER：${v.message}`,
-      );
-    },
-  },
-  {
-    name: 't2 v6 fail-closed：校验前 .git 被删（当前侧 no-git + HEAD 不可解析）→ failed（HEAD 校验不得静默跳过）',
-    run: () => {
-      const v = runCase({ dropGitDirBeforeValidate: true });
-      assert(v.status === 'failed', `expected failed, got ${v.status}`);
-      assert(
-        (v.message ?? '').includes('slim_summary_head_unverifiable'),
-        `应命中 HEAD 无法核实 BLOCKER：${v.message}`,
-      );
+      for (const options of [{ sentinelWorktreeDigest: 'no-git' }, { dropGitDirBeforeValidate: true }]) {
+        const result = runCase(options);
+        assert(result.status === 'passed', `当前原件绑定仍有效：${result.message}`);
+      }
     },
   },
   // ==========================================================================
@@ -576,6 +565,14 @@ const cases: Array<{ name: string; run: () => void }> = [
     },
   },
   {
+    name: '实际输入回执：旧格式同阶段回执声明了他 attempt 时仍拒绝',
+    run: () => {
+      const result = runCase({ omitSummary: true, legacyReceipt: true, claimedAttemptId: 'i3' },
+        { MAISON_GOAL_RUN_ID: 'r-123', MAISON_GOAL_ATTEMPT: 'i5', MAISON_GOAL_ATTEMPT_PHASE: PHASE });
+      assert(result.status === 'failed' && (result.message ?? '').includes('receipt_attempt_identity'), String(result.message));
+    },
+  },
+  {
     name: 'runner-owned-machine-facts：旧 run 账本行在场+registry gate 未覆盖 → 不再否决闭环（goal 态 passed）',
     run: () => {
       // 宿主实锤 run 20260815T083127Z-edfe38：账本 58 条旧 run 行 + 2 条初 run 已物化决议
@@ -652,15 +649,19 @@ const cases: Array<{ name: string; run: () => void }> = [
   },
 ];
 
-export function runAll(): UnitCaseResult[] {
+export function runSelectedCases(selector?: string) {
   const out: UnitCaseResult[] = [];
+  const timings: UnitExecutionTiming[] = [];
   for (const c of cases) {
+    if (!matchesUnitCase(c.name, selector)) continue;
+    const stop = startCaseTiming([c.name], timings);
     try {
       c.run();
       out.push({ name: c.name, ok: true });
     } catch (err) {
       out.push({ name: c.name, ok: false, error: (err as Error).stack ?? (err as Error).message });
-    }
+    } finally { stop(); }
   }
-  return out;
+  return selectedUnitCases(out, selector, timings);
 }
+export function runAll(): UnitCaseResult[] { return runSelectedCases().results; }

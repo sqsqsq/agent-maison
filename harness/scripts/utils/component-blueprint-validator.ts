@@ -128,8 +128,8 @@ function validateSmallBlueprintContent(blueprint: BlueprintRecord, context: Comp
   if (!context.projectRoot || !profileHasDesignLens(loadFrameworkConfig(context.projectRoot).project_profile.name)) {
     invalid('$', '当前profile没有已支持的蓝图design lens。');
   }
-  if (!intake.user?.id || !intake.user.text || !intake.baseline.base || intake.gaps.length || intake.attribution_unknown.length) {
-    invalid('$.provenance', '短内容可解析，但原生请求/准确基线或归属未核；不能签小型请求设计通过。');
+  if (!intake.user?.id || !intake.user.text) {
+    invalid('$.provenance', '短蓝图须能核实原用户请求。');
   }
   const expected = context.requestSourceItems ?? [], actual = currentScopeItems(blueprint);
   if (!expected.length || !actual.length) invalid('$.discovery.inputs.current_scope_items', '小型设计仍须绑定同一原request的真实用户来源。');

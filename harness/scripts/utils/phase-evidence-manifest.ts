@@ -228,7 +228,7 @@ export function currentEvidenceEntryHash(
   authorityReaders?: IdentityNeutralDigestReaders,
 ): string | null {
   const absPath = path.join(projectRoot, entry.path);
-  if (entry.facts_phase !== undefined) return factsEvidenceHash(absPath, entry.facts_phase);
+  if (entry.facts_phase !== undefined) return factsEvidenceHash(absPath, entry.facts_phase, entry.sha256);
   if (entry.identity_neutral !== undefined) {
     return entry.identity_neutral === IDENTITY_NEUTRAL_EVIDENCE
       ? identityNeutralEvidenceDigest(projectRoot, feature, absPath, authorityReaders) ?? null : null;
@@ -333,24 +333,25 @@ export function phaseEvidenceBusinessInputs(projectRoot: string, feature: string
     || !context.controlPaths.has(path.resolve(projectRoot, entry.path)) || context.businessPaths.has(path.resolve(projectRoot, entry.path)));
 }
 
-/** Keep the original invocation baseline intact; consumers use this view after evidence integrity checks. */
-export function factsBaselineBusinessDependencies(projectRoot: string, feature: string,
-  context: import('./context-facts').FactsInvocationContext, opts: EvidenceSemanticOptions = {}): import('./capability-resolution').ResolutionDependency[] {
-  const facts = resolveFactsAbsPath(projectRoot, feature);
-  const dependencies = (context.baseline?.dependencies ?? []).filter(dep => path.resolve(projectRoot, dep.path) !== facts);
-  if (!context.baseline) return dependencies;
-  const loaded = loadPhaseEvidenceManifest(projectRoot, feature, context.baseline.established_by);
-  if (!loaded?.integrityOk) return dependencies;
-  const inputs = phaseEvidenceBusinessInputs(projectRoot, feature, loaded.manifest, {
-    ...opts, factsContext: context, runId: opts.runId ?? ('run_id' in context.subject ? context.subject.run_id : undefined),
-  });
-  const retired = loaded.manifest.inputs.filter(entry => !inputs.includes(entry));
-  return dependencies.filter(dep => !retired.some(entry => path.resolve(dep.path) === path.resolve(projectRoot, entry.path)
-    && dep.exists === entry.exists && dep.sha256 === entry.sha256));
+/** Legacy facts may have captured run controls that the same original manifest proves are diagnostic. */
+function legacyFactsDependencies(projectRoot: string, feature: string, opts: EvidenceSemanticOptions): import('./capability-resolution').ResolutionDependency[] {
+  const facts = opts.factsContext;
+  const baseline = facts?.baseline;
+  if (!facts || !baseline) return [];
+  const document = resolveFactsAbsPath(projectRoot, feature, facts);
+  const original = loadPhaseEvidenceManifest(projectRoot, feature, baseline.established_by);
+  const dependencies = baseline.dependencies.filter(dep => path.resolve(dep.path) !== document);
+  if (!original?.integrityOk) return dependencies;
+
+  const runId = opts.runId ?? ('run_id' in facts.subject ? facts.subject.run_id : undefined);
+  const business = new Set(phaseEvidenceBusinessInputs(projectRoot, feature, original.manifest, { ...opts, runId }));
+  const diagnostic = original.manifest.inputs.filter(entry => !business.has(entry));
+  return dependencies.filter(dep => !diagnostic.some(entry =>
+    path.join(projectRoot, entry.path) === path.resolve(dep.path) && entry.exists === dep.exists && entry.sha256 === dep.sha256));
 }
 
-function factsEvidenceHash(absPath: string, phase: string): string | null {
-  try { return factsPhaseFingerprint(fs.readFileSync(absPath, 'utf8'), phase); }
+function factsEvidenceHash(absPath: string, phase: string, recorded?: string | null): string | null {
+  try { return factsPhaseFingerprint(fs.readFileSync(absPath, 'utf8'), phase, recorded); }
   catch { return null; }
 }
 
@@ -515,48 +516,28 @@ export function resolvePhaseEvidenceManifest(opts: ResolveManifestOptions): Phas
     const hash = isFacts ? factsEvidenceHash(absPath, String(phase)) : stagedHashes.get(rel) ?? neutral ?? sha256File(absPath);
     entryMap.set(rel, { path: rel, role, sha256: hash, exists: hash !== null, ...(isFacts ? { facts_phase: String(phase) } : {}), ...(neutral ? { identity_neutral: IDENTITY_NEUTRAL_EVIDENCE } : {}), ...(ownerPhase ? { owner_phase: ownerPhase } : {}) });
   };
-  let observedSourceHash: ReturnType<typeof createObservedSourceHashReader> | undefined;
   const addBoundInput = (dep: import('./capability-resolution').ResolutionDependency): void => {
-    const rel = toPosixRel(projectRoot, dep.path);
-    const owner = opts.factsContext?.source_owners?.[rel];
-    if (owner === String(phase)) {
-      addEntry(dep.path, 'output', String(phase));
-      return;
-    }
     if (sha256File(dep.path) !== dep.sha256 || fs.existsSync(dep.path) !== dep.exists) {
-      const runId = opts.factsContext?.subject && 'run_id' in opts.factsContext.subject ? opts.factsContext.subject.run_id : undefined;
-      observedSourceHash ??= createObservedSourceHashReader(projectRoot, feature, { frameworkRoot: opts.frameworkRoot, runId });
-      if (!observedSourceHash({ path: rel, sha256: dep.sha256, exists: dep.exists, role: 'input' }, '')) throw new Error(`input binding stale: ${dep.path}`);
+      throw new Error(`input binding stale: ${dep.path}`);
     }
-    addEntry(dep.path, 'input', owner);
+    const relative = toPosixRel(projectRoot, dep.path);
+    addEntry(dep.path, 'input', opts.factsContext?.source_owners?.[relative]);
   };
-
+  const projectInput = (dep: import('./capability-resolution').ResolutionDependency): boolean => isInsideProjectRoot(projectRoot, dep.path)
+    && !(opts.frameworkRoot && path.resolve(opts.frameworkRoot) !== path.resolve(projectRoot) && isInsideProjectRoot(opts.frameworkRoot, dep.path));
   if (opts.resolvedInputs) {
     for (const value of Object.values(opts.resolvedInputs.values)) {
-      const deps = value.state === 'resolved' ? value.binding.dependencies : value.attempts.flatMap(a => a.dependencies);
+      const deps = value.state === 'resolved' ? value.binding.dependencies : value.attempts.flatMap(attempt => attempt.dependencies);
       for (const dep of deps) {
-        if (!isInsideProjectRoot(projectRoot, dep.path) || (opts.frameworkRoot && path.resolve(opts.frameworkRoot) !== path.resolve(projectRoot) && isInsideProjectRoot(opts.frameworkRoot, dep.path))) continue;
-        addBoundInput(dep);
+        if (projectInput(dep)) addBoundInput(dep);
       }
     }
   }
-  if (opts.factsContext) {
-    const factsPath = resolveFactsAbsPath(projectRoot, feature, opts.factsContext);
-    addEntry(factsPath, isFactsEstablishingPhase(String(phase), opts.factsContext) ? 'output' : 'input');
-    for (const source of opts.factsContext.source_paths) {
-      const owner = opts.factsContext.source_owners?.[source];
-      addEntry(path.resolve(projectRoot, source), owner === String(phase) ? 'output' : 'input', owner);
-    }
-    for (const [source, owner] of Object.entries(opts.factsContext.source_owners ?? {})) {
-      if (owner === String(phase) && !opts.factsContext.source_paths.includes(source) && fs.existsSync(path.resolve(projectRoot, source))) {
-        addEntry(path.resolve(projectRoot, source), 'output', owner);
-      }
-    }
-    if (opts.factsContext.baseline) for (const dep of factsBaselineBusinessDependencies(projectRoot, feature, opts.factsContext, opts)) {
-      const rel = toPosixRel(projectRoot, dep.path);
-      if (opts.factsContext.source_owners?.[rel] === String(phase)) addEntry(dep.path, 'output', String(phase));
-      else addBoundInput(dep);
-    }
+  if (!opts.resolvedInputs) for (const dep of legacyFactsDependencies(projectRoot, feature, opts)) {
+    if (projectInput(dep)) addBoundInput(dep);
+  }
+  if (opts.factsContext && (isFactsEstablishingPhase(String(phase), opts.factsContext) || opts.factsContext.baseline?.established_by === String(phase))) {
+    addEntry(resolveFactsAbsPath(projectRoot, feature, opts.factsContext), 'output');
   }
   for (const name of inputNames) {
     addEntry(resolveFeatureArtifact(projectRoot, feature, name, opts.featurePathOpts).actualPath, 'input');
@@ -664,11 +645,8 @@ export function phaseEvidenceManifestCandidatePaths(opts: {
       }
     }
     for (const name of opts.resolvedInputs.context.required_outputs) add(toPosixRel(projectRoot, resolveFeatureArtifact(projectRoot, feature, name, opts.featurePathOpts).actualPath));
-    if (opts.factsContext) {
+    if (opts.factsContext && (isFactsEstablishingPhase(String(phase), opts.factsContext) || opts.factsContext.baseline?.established_by === String(phase))) {
       add(toPosixRel(projectRoot, resolveFactsAbsPath(projectRoot, feature, opts.factsContext)));
-      for (const source of opts.factsContext.source_paths) add(toPosixRel(projectRoot, path.resolve(projectRoot, source)));
-      for (const source of Object.keys(opts.factsContext.source_owners ?? {})) add(toPosixRel(projectRoot, path.resolve(projectRoot, source)));
-      for (const dep of factsBaselineBusinessDependencies(projectRoot, feature, opts.factsContext, opts)) add(toPosixRel(projectRoot, dep.path));
     }
     return out;
   }
@@ -807,7 +785,7 @@ export interface PhaseStalenessResult {
   receipt_changed: boolean;
   /** tampered/完整性问题的机器原因 */
   integrity_errors?: string[];
-  /** 因上游非 fresh 被传染（自身证据可能未变） */
+  /** Compatibility with older freshness observations. New recomputation uses no blanket propagation. */
   propagated_from?: string;
 }
 
@@ -887,93 +865,12 @@ export function verifyPhaseEvidenceManifestWithStagedOutputs(input: {
     : { phase: input.phase, verdict: 'fresh', changed_paths: [], receipt_changed: false };
 }
 
-/** Same owned-write transition proof for freshness and facts re-admission, even while the owner still fails. */
-export function createObservedSourceHashReader(projectRoot: string, feature: string, opts: EvidenceSemanticOptions & {
-  ownershipEvents?: readonly import('./goal-runner-phase').GoalRunEvent[];
-  includeAuthorArtifacts?: boolean;
-} = {}):
-  (entry: EvidenceEntry, manifestPhase: string, excludedOwnerPhase?: string) => { exists: boolean; sha256: string | null } | null {
-  const sourceTransitions = new Map<string, Array<{ phase: string; before: string | null; after: string | null }>>();
-  const evidenceRunId = opts.runId;
-  if (evidenceRunId) {
-    try {
-      const { loadGoalManifestFromRun } = require('./goal-manifest') as typeof import('./goal-manifest');
-      const { loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
-      const { executionRequestForInvoke } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
-      const { resolvePhasePathOwnership } = require('./phase-write-boundary') as typeof import('./phase-write-boundary');
-      const { workUnitMayWritePath } = require('./repair-responsibility') as typeof import('./repair-responsibility');
-      const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
-      const manifest = loadGoalManifestFromRun(projectRoot, evidenceRunId, { feature });
-      const runDir = path.resolve(projectRoot, manifest.report_dir);
-      const events = opts.ownershipEvents ?? loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
-      const framework = opts?.frameworkRoot ?? guessFrameworkRoot(projectRoot);
-      if (framework) {
-        const { resolveFactsPhaseOwnedSources } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
-        const allowedByPhase = new Map<string, Set<string>>();
-        for (const [index, event] of events.entries()) {
-          if (event.type !== 'phase_write_observed' || !event.phase || !event.invoke_id) continue;
-          const start = [...events.slice(0, index)].reverse().find(row => row.type === 'agent_invoke_start' && row.phase === event.phase && row.invoke_id === event.invoke_id);
-          const context = start?.facts_context;
-          if (!context || !('run_id' in context.subject) || context.subject.run_id !== evidenceRunId || context.subject.feature !== feature) continue;
-          const signed = event.phase === 'work-unit-author'
-            ? executionRequestForInvoke(runDir, event.invoke_id)?.request : undefined;
-          const boundary = signed?.write_boundary;
-          const end = signed && events.find(row => row.type === 'agent_invoke_end' && row.invoke_id === event.invoke_id);
-          if (event.phase === 'work-unit-author' && (!start || !signed || boundary?.executionRole !== 'author'
-            || !end || !invocationCompleted({ ...end, exitCode: end.exit_code })
-            || signed.context.runId !== evidenceRunId || signed.context.feature !== feature
-            || signed.context.phase !== start.phase || signed.context.owner.owner_id !== start.owner_id
-            || signed.context.owner.epoch !== start.owner_epoch
-            || path.resolve(signed.context.projectRoot) !== path.resolve(projectRoot)
-            || path.resolve(signed.context.runDir) !== runDir || signed.pre_snapshot?.failureReason !== null
-            || events.some(row => row.type === 'phase_write_violation' && row.invoke_id === event.invoke_id))) continue;
-          if (!boundary && !allowedByPhase.has(event.phase)) {
-            const candidates = events.filter(row => row.type === 'phase_write_observed' && row.phase === event.phase)
-              .flatMap(row => (row as { owned?: Array<{ path: string }> }).owned ?? []);
-            allowedByPhase.set(event.phase, resolveFactsPhaseOwnedSources({ projectRoot, feature, runId: evidenceRunId,
-              frameworkRoot: framework, phase: event.phase, authorityReaders: opts.authorityReaders }, { ...context,
-              source_owners: { ...context.source_owners, ...Object.fromEntries(candidates.map(row => [row.path, event.phase!])) } }));
-          }
-          const owned = (event as unknown as { owned?: Array<{ path: string; pre_sha256: string | null; post_sha256: string | null }> }).owned ?? [];
-          const hash = (value: unknown): value is string | null => value === null || typeof value === 'string' && /^[a-f0-9]{64}$/i.test(value);
-          for (const write of owned) {
-            if (!hash(write.pre_sha256) || !hash(write.post_sha256)) continue;
-            const signedOwner = boundary && resolvePhasePathOwnership(boundary, write.path);
-            const allowed = boundary
-              ? signedOwner?.status === 'unique' && signedOwner.roles.some(role => role.kind === 'source'
-                || opts.includeAuthorArtifacts && role.kind === 'artifact')
-                && workUnitMayWritePath(boundary, write.path)
-                && (signed!.pre_snapshot!.entries.find(entry => entry.path === write.path)?.sha256 ?? null) === write.pre_sha256
-              : allowedByPhase.get(event.phase)?.has(write.path);
-            if (!allowed) continue;
-            const transitions = sourceTransitions.get(write.path) ?? [];
-            transitions.push({ phase: signedOwner?.owner ?? event.phase, before: write.pre_sha256, after: write.post_sha256 });
-            sourceTransitions.set(write.path, transitions);
-          }
-        }
-      }
-    } catch { /* Unavailable run identity grants no additional source ownership. */ }
-  }
-  return (entry, manifestPhase, excludedOwnerPhase) => {
-    // Old manifests may lack a resource owner. Existing authorized write events supply
-    // the same fact without rewriting the historical manifest or trusting a new file hash.
-    let expected = entry.sha256;
-    let advanced = false;
-    for (const change of sourceTransitions.get(entry.path) ?? []) {
-      if (change.phase !== manifestPhase && change.phase !== excludedOwnerPhase && change.before === expected) { expected = change.after; advanced = true; }
-    }
-    return advanced && expected === sha256File(path.join(projectRoot, entry.path))
-      ? { exists: expected !== null, sha256: expected } : null;
-  };
-}
-
 /**
  * 阶段输入、状态评估与完成核验共用的重算：逐阶段——
  *   ① manifest schema 完整性 + aggregate 重算（改条目留旧 aggregate → tampered，
  *      codex 五轮 P0）；
  *   ② 环境与当前需求重算；③ 同源业务输入/输出逐项核对。
- * 任一非 fresh 沿 chain 传染下游。missing=无 manifest；tampered=记录完整性失配——
- * 消费方语义：preflight 拒启、completion verify 非 VALID；本函数只报事实不定裁决。
+ * 按每个阶段实际记录的业务输入、输出和规则判断。
  */
 export function recomputePhaseEvidenceStaleness(
   projectRoot: string,
@@ -983,43 +880,10 @@ export function recomputePhaseEvidenceStaleness(
 ): PhaseStalenessResult[] {
   opts = { ...opts, authorityReaders: opts?.authorityReaders ?? createIdentityNeutralDigestReaders() };
   const results: PhaseStalenessResult[] = [];
-  let upstreamBad: string | null = null;
-  const pendingOwnerPaths = new Set(opts?.pendingOwnerPaths ?? []);
-  // A live checker may use its admitted owner; read-only consumers require an observed write.
-  const pendingOwners = new Set<string>(opts?.pendingOwnerPhase ? [opts.pendingOwnerPhase] : []);
-  let evidenceRunId = opts?.runId;
-  if (!evidenceRunId && chain.length) {
-    try { evidenceRunId = evidenceRequirementContext(projectRoot, feature, chain[0], opts ?? {}).runId; } catch { /* Independent evidence has no run authority. */ }
-  }
-  const observedSourceHash = createObservedSourceHashReader(projectRoot, feature, { ...opts, runId: evidenceRunId });
-  const ownedOutputIsCurrent = (entry: EvidenceEntry, manifestPhase: string): boolean => {
-    if (observedSourceHash(entry, manifestPhase)) return true;
-    if (pendingOwnerPaths.has(entry.path)) return true;
-    if (!entry.owner_phase || entry.owner_phase === manifestPhase) return false;
-    if (pendingOwners.has(entry.owner_phase)) return true;
-    const owner = loadPhaseEvidenceManifest(projectRoot, feature, entry.owner_phase);
-    // The owner validates its own result. A later failure there must not reopen an upstream
-    // observation when the declared output still has the exact bytes that owner recorded.
-    return !!owner?.integrityOk && owner.manifest.outputs.some(output =>
-      output.path === entry.path && output.owner_phase === entry.owner_phase
-      && evidenceEntryMatchesCurrentFile(projectRoot, output, feature, opts?.authorityReaders));
-  };
-
   for (const phase of chain) {
-    if (upstreamBad) {
-      results.push({
-        phase,
-        verdict: 'stale',
-        changed_paths: [],
-        receipt_changed: false,
-        propagated_from: upstreamBad,
-      });
-      continue;
-    }
     const loaded = loadPhaseEvidenceManifest(projectRoot, feature, phase);
     if (!loaded) {
       results.push({ phase, verdict: 'missing', changed_paths: [], receipt_changed: false });
-      upstreamBad = phase;
       continue;
     }
     // ① schema+aggregate 完整性
@@ -1031,11 +895,7 @@ export function recomputePhaseEvidenceStaleness(
         receipt_changed: false,
         integrity_errors: loaded.integrityErrors,
       });
-      upstreamBad = phase;
       continue;
-    }
-    for (const entry of [...loaded.manifest.inputs, ...loaded.manifest.outputs]) {
-      if (entry.owner_phase && pendingOwners.has(entry.owner_phase)) pendingOwnerPaths.add(entry.path);
     }
     // ② plan 07a41ec6（codex review P0）：回执指针退出证据链——manifest 的 schema/aggregate/条目哈希已自证完整性，
     //    回执是闭环后的人读投影（可被 harness 随时重生成），不再作为 freshness 锚。
@@ -1068,17 +928,15 @@ export function recomputePhaseEvidenceStaleness(
         changed_paths: envChanged.map((c) => `<environment:${c}>`),
         receipt_changed: false,
       });
-      upstreamBad = phase;
       continue;
     }
     const { manifest } = loaded;
     const changed = new Set<string>();
     for (const entry of [...phaseEvidenceBusinessInputs(projectRoot, feature, manifest, opts), ...manifest.outputs]) {
-      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry, feature, opts?.authorityReaders) && !ownedOutputIsCurrent(entry, phase)) changed.add(entry.path);
+      if (!evidenceEntryMatchesCurrentFile(projectRoot, entry, feature, opts?.authorityReaders)) changed.add(entry.path);
     }
     if (changed.size > 0) {
       results.push({ phase, verdict: 'stale', changed_paths: [...changed], receipt_changed: false });
-      upstreamBad = phase;
     } else {
       results.push({ phase, verdict: 'fresh', changed_paths: [], receipt_changed: false });
     }

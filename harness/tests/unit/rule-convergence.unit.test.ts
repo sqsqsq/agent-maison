@@ -123,7 +123,7 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
     projected.components[0].asset_selection!.resolution = 'reuse';
     assert(componentProjectionErrors(root, projected, cu).some(message => message.includes('不一致')));
   }) },
-  { name: '1b91ba gate and status share authorized source writes without rolling spec/plan back', run: () => withProject(({ root, frameworkRoot }) => {
+  { name: '1b91ba gate and status both require fresh bytes for actual spec/plan inputs', run: () => withProject(({ root, frameworkRoot }) => {
     // Adapt only the copied environment to today's checker; historical input hashes and events remain intact.
     for (const phase of ['spec', 'plan'] as const) {
       const file = path.join(root, featureRel, phase, 'reports/phase-evidence-manifest.json');
@@ -137,11 +137,11 @@ const cases: Array<{ name: string; run(): Promise<void> }> = [
     const gate = recomputePhaseEvidenceStaleness(root, feature, ['spec', 'plan'], { ...options, pendingOwnerPhase: 'coding' });
     const status = recomputePhaseEvidenceStaleness(root, feature, ['spec', 'plan'], options);
     assert.deepEqual(status, gate, 'assess/recovery cannot use a different ownership fact');
-    assert(status.every(item => item.verdict === 'fresh'), JSON.stringify(status));
+    assert(status.every(item => item.verdict === 'stale' && item.changed_paths.length > 0), JSON.stringify(status));
     const resource = '02-Feature/WalletMain/src/main/resources/base/element/string.json';
     fs.appendFileSync(path.join(root, resource), '\n ');
     const changed = recomputePhaseEvidenceStaleness(root, feature, ['spec', 'plan'], options);
-    assert(changed.some(item => item.changed_paths.includes(resource)), 'an unobserved write is not an authorized transition');
+    assert(changed.some(item => item.changed_paths.includes(resource)), 'a referenced resource change is included in the same actual freshness checks');
   }) },
   { name: '1b91ba planned UT files belong to UT, not coding', run: () => withProject(({ root, context }) => {
     const files = partitionConstructionFiles(root, context.resolvedProfile.profileDir, context.featureSpec.contracts!);

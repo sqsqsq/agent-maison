@@ -1235,7 +1235,7 @@ const projectionCases: TestCase[] = [
         { type: 'run_start' },
         {
           type: 'phase_write_violation', phase: 'plan', fingerprint: 'fp-write',
-          violations: [{ path: 'doc/features/f/spec/acceptance.yaml', owner: 'spec', pre_sha256: 'a', post_sha256: 'b' }],
+          violations: [{ path: 'doc/features/f/spec/acceptance.yaml', owner: 'spec', pre_sha256: 'a', post_sha256: 'b', authority_confirmed: true }],
         },
         {
           type: 'phase_backtrack_requested', phase: 'plan', to_phase: 'spec',
@@ -1249,6 +1249,26 @@ const projectionCases: TestCase[] = [
       assert(recovery.recovery?.changed_paths[0]?.pre_sha256 === 'a', 'backtrack 投影须保留安全 pre/post hash');
       assert(recovery.recovery?.backtracks_used === 1 && recovery.recovery?.backtracks_limit === 2,
         '恢复诊断须携预算事实');
+      const window = [
+        { type: 'run_start' },
+        { type: 'phase_write_violation', phase: 'coding', invoke_id: 'old-i1', violations: [{ path: 'src/user-edit.ts', window: 'execution_window' }] },
+        { type: 'phase_backtrack_requested', reason: 'phase_write_violation', invoke_id: 'old-i1', phase: 'coding', to_phase: 'spec', run_disposition: 'RECOVERY_PENDING' },
+      ];
+      const stop = { halt_reason: 'unauthorized_source_mutation', run_disposition: 'TERMINAL' };
+      const historical = reduceRunState([
+        ...window,
+        { type: 'phase_halt', phase: 'coding', invoke_id: 'old-i1', ...stop },
+        { type: 'run_end', status: 'HALTED', ...stop },
+      ]);
+      assert(historical.recovery === undefined && historical.run_disposition === 'RESUME_READY', JSON.stringify(historical));
+      for (const next of [
+        [{ type: 'phase_halt', phase: 'coding', invoke_id: 'another-i2', ...stop }],
+        [{ type: 'agent_invoke_start', phase: 'coding', invoke_id: 'another-i2' }, { type: 'phase_halt', phase: 'coding', ...stop }],
+        [{ type: 'phase_halt', phase: 'coding', invoke_id: 'old-i1', ...stop }, { type: 'phase_halt', phase: 'coding', invoke_id: 'old-i1', ...stop }],
+      ]) {
+        const current = reduceRunState([...window, ...next, { type: 'run_end', status: 'HALTED', ...stop }]);
+        assert(current.recovery?.action === 'halt' && current.run_disposition === 'TERMINAL', JSON.stringify(current));
+      }
       // 真终局仍是 TERMINAL
       for (const status of ['CHAIN_SLICE_COMPLETED', 'COMPLETED'] as const) {
         const st = reduceRunState([

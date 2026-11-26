@@ -10,7 +10,6 @@ export { partitionConstructionFiles } from './repair-responsibility';
 export { workUnitProtectedRecordPaths } from './repair-responsibility';
 export type { PhaseWriteDomainKind, PhaseWriteMatchKind, PhaseWriteDomain, PhaseWriteBoundaryResolution, ResolvePhaseWriteBoundaryOptions } from './repair-responsibility';
 
-function toPosix(value: string): string { return value.replace(/\\/g, '/'); }
 const normalizeRelative = normalizeResponsibilityPath;
 
 /** Complete ownership is read separately; this snapshot freezes the actual unit's write domains. */
@@ -136,20 +135,23 @@ export function capturePhaseInvocationSnapshot(
     runnerPreflightPath = normalizeRelative(resolution.projectRoot, harnessPreflightPath(resolution.projectRoot));
   }
   const explicitlyIncluded = (rel: string): boolean => included.has(rel) || immutableInputs.some(prefix => prefixMatches(rel, prefix));
+  const readFailure = (rel: string, operation: string, error: unknown): string | null =>
+    !resolution.executionRole || explicitlyIncluded(rel) || prefixMatches(rel, 'framework')
+      ? `${operation} failed: ${rel}: ${(error as Error).message}` : null;
   const excludedByRuntime = (rel: string): boolean =>
     (runtimeExcluded.some(prefix => prefixMatches(rel, prefix)) && !(resolution.executionRole && explicitlyIncluded(rel)))
     || (!explicitlyIncluded(rel) && !ownedPrefixes.some(prefix => prefixMatches(rel, prefix))
       && (resolution.executionRole === 'verifier' ? /(?:^|\/)(?:goal-runs|context)(?:\/|$)/.test(rel)
         : isRunnerOwnedOrSharedPath(rel) || rel === runnerPreflightPath));
   const visit = (abs: string, requiredRoot: boolean): string | null => {
+    const rel = normalizeRelative(resolution.projectRoot, abs);
     let stat: fs.Stats;
     try {
       stat = fs.lstatSync(abs);
     } catch (error) {
       if (!requiredRoot && (error as NodeJS.ErrnoException).code === 'ENOENT') return null;
-      return `lstat failed: ${toPosix(path.relative(resolution.projectRoot, abs))}: ${(error as Error).message}`;
+      return readFailure(rel, 'lstat', error);
     }
-    const rel = normalizeRelative(resolution.projectRoot, abs);
     if (rel.split('/').some((segment) => SNAPSHOT_EXCLUDED_SEGMENTS.has(segment))) return null;
     if (excludedByRuntime(rel)) return null;
     if (stat.isSymbolicLink()) {
@@ -160,7 +162,7 @@ export function capturePhaseInvocationSnapshot(
         }
         return null;
       } catch (error) {
-        return `readlink failed: ${rel}: ${(error as Error).message}`;
+        return readFailure(rel, 'readlink', error);
       }
     }
     if (stat.isDirectory()) {
@@ -168,7 +170,7 @@ export function capturePhaseInvocationSnapshot(
       try {
         children = fs.readdirSync(abs).sort();
       } catch (error) {
-        return `readdir failed: ${rel}: ${(error as Error).message}`;
+        return readFailure(rel, 'readdir', error);
       }
       for (const child of children) {
         const failure = visit(path.join(abs, child), true);
@@ -184,7 +186,7 @@ export function capturePhaseInvocationSnapshot(
       }
       return null;
     } catch (error) {
-      return `read failed: ${rel}: ${(error as Error).message}`;
+      return readFailure(rel, 'read', error);
     }
   };
 
@@ -247,6 +249,115 @@ export function phaseWriteWindows(pre: PhaseInvocationSnapshot, binding: PhaseIn
   if (returned.kind === 'unverifiable') return returned;
   return { kind: 'checked', beforeBinding: prior?.kind === 'changed' ? prior.changes : [],
     returned: returned.kind === 'changed' ? returned.changes : [], window: binding ? 'execution_window' : 'unverified' };
+}
+
+/** A window can invalidate signed inputs without attributing the edit to the caller. */
+export function affectsInvocationAuthority(
+  resolution: Pick<PhaseWriteBoundaryResolution, 'projectRoot' | 'immutableInputPaths'>,
+  file: string,
+  options?: { includeFiles?: readonly string[]; ownedPrefixes?: readonly string[] },
+): boolean {
+  const relative = normalizeRelative(resolution.projectRoot, file);
+  if (relative === 'framework' || relative.startsWith('framework/')) return true;
+  const matches = (files: readonly string[] | undefined): boolean =>
+    files?.some(candidate => prefixMatches(relative, normalizeRelative(resolution.projectRoot, candidate))) ?? false;
+  return matches(resolution.immutableInputPaths) || matches(options?.includeFiles);
+}
+
+export function invocationWriteConflicts(
+  resolution: PhaseWriteBoundaryResolution,
+  observed: ReturnType<typeof phaseWriteWindows>,
+  options?: { includeFiles?: readonly string[]; ownedPrefixes?: readonly string[] },
+  observedWrites: ReadonlySet<string> = new Set(),
+  invocation?: { phase: string; events: readonly GoalRunEvent[]; invokeId: string },
+) {
+  const windows: Pick<Extract<ReturnType<typeof phaseWriteWindows>, { kind: 'checked' }>, 'beforeBinding' | 'returned' | 'window'> =
+    observed.kind === 'checked' ? observed : { beforeBinding: [], returned: [], window: 'unverified' };
+  const changed = [...windows.beforeBinding, ...windows.returned]
+    .filter(change => !(invocation && isProducedPhaseChange(resolution.projectRoot, invocation.phase, change, invocation))
+      && affectsInvocationAuthority(resolution, change.path, options)
+      && !workUnitMayWritePath(resolution, change.path))
+    .map(change => ({ ...change, ...resolvePhasePathOwnership(resolution, change.path),
+      violation: 'signed_input_drift' as 'signed_input_drift' | 'outside_authority',
+      authority_confirmed: false,
+      window: windows.beforeBinding.includes(change) ? 'before_binding' as const : windows.window }));
+  for (const file of observedWrites) {
+    if (!resolution.executionRole && !affectsInvocationAuthority(resolution, file)) continue;
+    if (workUnitMayWritePath(resolution, file, options)) continue;
+    const delta = windows.returned.find(change => change.path === file);
+    changed.push({ ...(delta ?? { path: file, how: 'modified', preSha256: null, postSha256: null }),
+      ...resolvePhasePathOwnership(resolution, file), violation: 'outside_authority', authority_confirmed: true, window: windows.window });
+  }
+  return changed;
+}
+
+export function readInvocationWritePaths(projectRoot: string, adapter: string, streamPath: string): Set<string> {
+  try { return completedInvocationWritePaths(projectRoot, adapter, fs.readFileSync(streamPath)); }
+  catch { return new Set(); }
+}
+
+/** Only native writes whose result identifies the same operation establish a writer. */
+export function completedInvocationWritePaths(projectRoot: string, adapter: string, stream: string | Buffer | undefined): Set<string> {
+  const files = new Set<string>();
+  const calls = new Map<string, { result?: boolean; file?: unknown }>();
+  const add = (file: unknown): void => {
+    if (typeof file !== 'string' || !file) return;
+    try { files.add(normalizeRelative(projectRoot, file)); } catch { /* Other workspaces are outside this path view. */ }
+  };
+  const call = (id: unknown, tool: unknown, input: any): void => {
+    if (typeof id !== 'string') return;
+    if (calls.has(id)) { calls.set(id, { result: false }); return; }
+    const edit = typeof tool === 'string' && /^(?:write|edit|multiedit|notebookedit|delete|write_file|edit_file|replace_file|delete_file)$/i.test(tool);
+    calls.set(id, { file: edit ? input?.file_path ?? input?.path ?? input?.notebook_path : undefined });
+  };
+  const result = (id: unknown, ok: boolean): void => {
+    const pair = typeof id === 'string' ? calls.get(id) : undefined;
+    if (pair) pair.result = pair.result === undefined && ok;
+  };
+  for (const line of stream?.toString().split(/\r?\n/) ?? []) {
+    let row: any;
+    try { row = JSON.parse(line); } catch { continue; }
+    if (adapter === 'claude' || adapter === 'codeagent') {
+      if (row?.parent_tool_use_id || row?.isSidechain || row?.agentId || !Array.isArray(row?.message?.content)) continue;
+      for (const part of row.message.content) {
+        if (row.type === 'assistant' && part?.type === 'tool_use') call(part.id, part.name, part.input);
+        if (row.type === 'user' && part?.type === 'tool_result') result(part.tool_use_id, !part.is_error);
+      }
+    } else if (adapter === 'deepseek-harness') {
+      if (row?.type === 'tool_call') call(row.callId, row.tool, row.input);
+      if (row?.type === 'tool_result') result(row.callId, row.status === 'completed' && !row.error);
+    } else if (adapter === 'codex' && row?.type === 'item.completed' && row.item?.type === 'file_change'
+      && row.item.status === 'completed' && Array.isArray(row.item.changes)) {
+      for (const change of row.item.changes) add(change?.path);
+    } else if (adapter === 'opencode' && row?.type === 'tool_use' && row.part?.state?.status === 'completed' && !row.part.state.error) {
+      const { normalizeOpenCodeToolInput } = require('../../../agents/shared/opencode-native-session.cjs') as {
+        normalizeOpenCodeToolInput(input: unknown): Record<string, unknown>;
+      };
+      call(row.part.callID, row.part.tool, normalizeOpenCodeToolInput(row.part.state.input));
+      result(row.part.callID, true);
+    }
+  }
+  for (const pair of calls.values()) if (pair.result) add(pair.file);
+  return files;
+}
+
+/** Historical time-window labels are observations. Explicitly established writes retain their disposition. */
+export function hasConfirmedPhaseWriteViolation(events: readonly GoalRunEvent[], invokeId: string): boolean {
+  return events.some(event => {
+    if (event.type !== 'phase_write_violation' || event.invoke_id !== invokeId) return false;
+    const violations = (event as { violations?: unknown }).violations;
+    return Array.isArray(violations) && violations.some(row => row?.authority_confirmed === true);
+  });
+}
+
+/** Modern writers already restrict this observation to the invocation's signed bytes. */
+export function hasSignedPhaseInputDrift(events: readonly GoalRunEvent[], invokeId: string): boolean {
+  return events.some(event => {
+    if (event.type !== 'phase_write_violation' || event.invoke_id !== invokeId) return false;
+    const violations = (event as { violations?: unknown }).violations;
+    return Array.isArray(violations) && violations.some(row =>
+      row?.violation === 'signed_input_drift' && row.authority_confirmed === false);
+  });
 }
 
 export interface PhaseWriteViolation extends PhaseInvocationChange, PhasePathOwnership {
@@ -404,7 +515,7 @@ export function replayUtOwnedWrites(
   };
   for (const event of events as ReadonlyArray<Record<string, unknown>>) {
     if (event.type === 'phase_write_violation') {
-      for (const row of rows(event.violations)) voidPath(row.path, event.phase);
+      for (const row of rows(event.violations).filter(row => (row as { authority_confirmed?: boolean }).authority_confirmed === true)) voidPath(row.path, event.phase);
       continue;
     }
     if (event.type !== 'phase_write_observed') continue;
@@ -456,6 +567,7 @@ export function renderPhaseWriteBoundaryGuidance(
 
 interface RecordedPhaseWriteConflict {
   before: string | null;
+  after: string | null | undefined;
   restorable: boolean;
   start?: GoalRunEvent;
   owner?: string;
@@ -470,7 +582,7 @@ function recordedPhaseWriteConflicts(events: readonly GoalRunEvent[], projectRoo
   for (const event of events as readonly Record<string, any>[]) {
     if (event.type === 'agent_invoke_start' && event.invoke_id) starts.set(event.invoke_id, event);
     if (event.type === 'phase_write_violation' && Array.isArray(event.violations)) {
-      const rows = event.violations as Array<{ path?: unknown; violation?: unknown; pre_sha256?: unknown; window?: PhaseWriteWindow; owner?: unknown }>;
+      const rows = event.violations as Array<{ path?: unknown; violation?: unknown; pre_sha256?: unknown; post_sha256?: unknown; window?: PhaseWriteWindow; owner?: unknown; authority_confirmed?: boolean }>;
       const start = starts.get(event.invoke_id);
       const purpose = start && 'purpose' in start && typeof start.purpose === 'string' ? start.purpose : undefined;
       const author = !!start?.phase && (require('./goal-phase-executor') as typeof import('./goal-phase-executor'))
@@ -478,12 +590,15 @@ function recordedPhaseWriteConflicts(events: readonly GoalRunEvent[], projectRoo
       const uncertain = new Set(rows.filter(row => row.window !== undefined && row.window !== 'execution_window').map(row => row.path));
       for (const row of rows) {
         if (typeof row.path !== 'string' || row.pre_sha256 !== null && typeof row.pre_sha256 !== 'string') continue;
+        if (row.authority_confirmed !== true && !prefixMatches(row.path, 'framework')) continue;
         const selfViolation = row.violation === 'outside_authority' || row.violation === 'wrong_phase' && ownRecoveries.has(event.invoke_id);
         if (!row.window && !selfViolation) continue;
-        const restorable = selfViolation && (!row.window || row.window === 'execution_window' && author && !uncertain.has(row.path));
+        const restorable = row.authority_confirmed === true && selfViolation && row.window === 'execution_window' && author && !uncertain.has(row.path)
+          && typeof row.pre_sha256 === 'string';
         const previous = conflicts.get(row.path);
         if (!previous || !!start && previous.start === start && row.window === 'before_binding') {
-          conflicts.set(row.path, { before: row.pre_sha256, restorable, start,
+          conflicts.set(row.path, { before: row.pre_sha256,
+            after: row.post_sha256 === null || typeof row.post_sha256 === 'string' ? row.post_sha256 : undefined, restorable, start,
             owner: typeof row.owner === 'string' ? row.owner : undefined, observedAt: event.ts });
         } else if (!restorable) previous.restorable = false;
       }
@@ -521,10 +636,17 @@ export function unresolvedPhaseWrites(projectRoot: string, events: readonly Goal
   return new Map([...recordedPhaseWriteConflicts(events, projectRoot)].filter(([file, conflict]) => {
     const absolute = path.resolve(projectRoot, file);
     if (!absolute.startsWith(path.resolve(projectRoot) + path.sep)) return true;
-    if (!fs.existsSync(absolute)) return conflict.before !== null;
-    if (!fs.lstatSync(absolute).isFile() || fs.lstatSync(absolute).isSymbolicLink()) return true;
+    if (!fs.existsSync(absolute)) {
+      if (conflict.after !== null) conflict.restorable = false;
+      return conflict.before !== null;
+    }
+    if (!fs.lstatSync(absolute).isFile() || fs.lstatSync(absolute).isSymbolicLink()) {
+      conflict.restorable = false;
+      return true;
+    }
     const current = sha256Buffer(fs.readFileSync(absolute));
     if (current === conflict.before) return false;
+    if (current !== conflict.after) conflict.restorable = false;
     if (!authority || conflict.restorable || !conflict.observedAt
       || !conflict.owner || !/^(spec|prd|plan|design|coding|review|ut|testing)$/.test(conflict.owner)) return true;
     const { loadPhaseEvidenceManifest } = require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest');

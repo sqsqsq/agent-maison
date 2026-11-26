@@ -576,7 +576,7 @@ export function deriveRequestBlueprintSkillInput(projectRoot: string, request: i
     const acceptance = selected.acceptance && structuredClone(selected.acceptance);
     if (acceptance) {
       const criteria = asRecords(acceptance.criteria);
-      if (request.blueprint.acceptance_ids.some(id => !criteria.some(item => item.id === id))) throw new Error('request references acceptance IDs absent from the current blueprint');
+      if (request.phase !== 'review' && request.blueprint.acceptance_ids.some(id => !criteria.some(item => item.id === id))) throw new Error('request references acceptance IDs absent from the current blueprint');
       acceptance.criteria = criteria.filter(item => request.blueprint!.acceptance_ids.includes(String(item.id)));
       projectAcceptanceStructure(projectRoot, resolved.blueprint, selected.selected, acceptance, file => {
         if (!dependencies.some(dep => dep.path === file)) dependencies.push({ path: file, exists: fs.existsSync(file), sha256: fs.existsSync(file) ? digest(file) : null, role: 'artifact' });

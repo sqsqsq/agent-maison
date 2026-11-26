@@ -51,7 +51,7 @@ export function designDeliveryNextStep(input: {
     type: 'compact_design_required' as const, feature,
     reason: '同源判定为小型；在同一蓝图完成本请求设计，不创建 CU 或初始设计 Goal。',
     materials: { requirement: intake.user.text, session_ref: intake.session_ref, requirement_source_files: input.requirementSourceFiles ?? [] },
-    next: '同一作者在本请求自己的 component-blueprint.yaml 写本次目标、验收 ID、已知文件和必要局部选择；同请求未完成设计原位续写。调用同一 checker 准备来源并校验，后续 review/UT 复用返回的原 request_file。',
+    next: '沿同一 checker 准备原请求的设计地址与来源；在该地址写目标、验收 ID、已知文件和必要局部选择，续用同一请求的草稿和 checker 校验，后续 review/UT 复用返回的原 request_file。',
     steps: [{ skill: 'component-design', command: `npm run check:component-blueprint -- --project-root ${JSON.stringify(projectRoot)} --blueprint <actual-blueprint-id> --session-ref ${JSON.stringify(intake.session_ref)} --prepare-source --json` }],
   };
 
@@ -68,7 +68,7 @@ export function designDeliveryNextStep(input: {
     ? ['--requirement-file', input.requirementSourceFiles[0]]
     : ['--requirement', input.requirement ?? ''];
   const unknown = !managed && intake?.policy.selected === 'unknown'
-    ? '档位未知，按完整设计推进；如属小改，可先完整读取相关来源，把七项按下列例句发在正常可见助手文本，再调用同一入口；勿等最后总结。值和路径须按本请求实际调研替换：“Q1=否，Q2=否，Q3=否，依赖结果=否，跨部件=否，预期明确=是，做法唯一=否。依据：<已读需求相对路径>、<已读源码相对路径>。”无需等待用户或自动重调。'
+    ? '档位未知，按完整设计推进；如属小改，可先核对当前相关来源，把七项按下列例句发在正常可见助手文本，再调用同一入口；勿等最后总结。值和路径须按本请求实际调研替换：“Q1=否，Q2=否，Q3=否，依赖结果=否，跨部件=否，预期明确=是，做法唯一=否。依据：<当前可读需求相对路径>、<当前可读源码相对路径>。”无需等待用户或自动重调。'
     : '';
   const transport = intake?.control.transport?.mode ?? 'attended';
   const launch = `npx ts-node scripts/goal-mode-entry.ts --project-root ${JSON.stringify(projectRoot)} --prepare-run --run-mode attended --feature ${JSON.stringify(feature)} --adapter <active-adapter> <requirement-arguments>${intake ? ' --session-ref <session-ref>' : ''}`;

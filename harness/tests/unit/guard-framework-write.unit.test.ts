@@ -12,6 +12,7 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { spawnSync } from 'child_process';
+import { createHash } from 'crypto';
 import { pathToFileURL } from 'url';
 
 import { detectRepoLayout, frameworkAbs } from '../../repo-layout';
@@ -48,7 +49,7 @@ function mkConsumerProject(prefix = 'guard-fw-'): string {
     path.join(fw, 'specs', 'runtime-artifact-policy.json'),
   );
   fs.copyFileSync(CORE_ABS, path.join(fw, 'agents', 'shared', 'guard-framework-write-core.mjs'));
-  for (const name of ['native-request.cjs', 'goal-execution-signal.cjs']) fs.copyFileSync(frameworkAbs(LAYOUT, `agents/shared/${name}`), path.join(fw, 'agents/shared', name));
+  for (const name of ['native-request.cjs', 'goal-execution-signal.cjs', 'work-unit-write-authority.cjs']) fs.copyFileSync(frameworkAbs(LAYOUT, `agents/shared/${name}`), path.join(fw, 'agents/shared', name));
   return root;
 }
 
@@ -57,7 +58,7 @@ interface HookRun {
   stderr: string;
 }
 
-function runHook(projectRoot: string, toolInput: Record<string, unknown>): HookRun {
+function runHook(projectRoot: string, toolInput: Record<string, unknown>, env?: NodeJS.ProcessEnv): HookRun {
   const payload = JSON.stringify({
     hook_event_name: 'PreToolUse',
     tool_name: 'Write',
@@ -67,7 +68,7 @@ function runHook(projectRoot: string, toolInput: Record<string, unknown>): HookR
   const r = spawnSync(process.execPath, [HOOK_ABS], {
     input: payload,
     encoding: 'utf-8',
-    env: { ...process.env, CLAUDE_PROJECT_DIR: projectRoot },
+    env: { ...process.env, CLAUDE_PROJECT_DIR: projectRoot, ...env },
     shell: false,
   });
   return { exit: r.status, stderr: r.stderr ?? '' };
@@ -99,7 +100,29 @@ async function loadCore(): Promise<CoreModule> {
 
 const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
-    name: 'CodeAgent native transcript rejects first edit, recovers after production entry Read and still protects framework',
+    name: 'managed author and verifier edits enforce the same issued path domains before writing',
+    run() {
+      const root = mkConsumerProject('guard-managed-');
+      try {
+        const requestPath = path.join(root, 'request-e1.json');
+        const signed = (executionRole: 'author' | 'verifier') => {
+          const request = JSON.stringify({ write_boundary: { projectRoot: root, executionRole, verifierResultPath: 'result.md',
+            immutableInputPaths: ['src/spec.md'], domains: [{ match: 'prefix', path: 'src' }] } });
+          fs.writeFileSync(requestPath, request);
+          return { MAISON_MANAGED_WRITE_REQUEST: JSON.stringify({ path: requestPath, sha256: createHash('sha256').update(request).digest('hex') }) };
+        };
+        const write = (file: string, env: NodeJS.ProcessEnv) => runHook(root, { file_path: path.join(root, file) }, env).exit;
+        const author = signed('author');
+        assert(write('src/new.ts', author) === 0, 'authorized author could not edit its own implementation');
+        assert(write('src/spec.md', author) === 2 && write('other/edit.ts', author) === 2, 'managed author write boundary was bypassed');
+        const verifier = signed('verifier');
+        assert(write('result.md', verifier) === 0 && write('src/new.ts', verifier) === 2, 'independent verifier could write other than its result');
+        assert(write('src/new.ts', author) === 2, 'changed request bytes no longer match the issued hash');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    },
+  },
+  {
+    name: 'CodeAgent native transcript supports the first authorized edit and still protects framework',
     run: () => {
       const root = mkConsumerProject('guard-codeagent-');
       try {
@@ -119,7 +142,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         const run = (toolInput = edit) => spawnSync(process.execPath, [hook], { cwd: root, env, encoding: 'utf8', input: JSON.stringify({
           hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: toolInput, cwd: root, session_id: 'codeagent-hook-test', transcript_path: file,
         }) });
-        const denied = run(); assert(denied.status === 2 && denied.stderr.includes('先完整读取根入口及 framework/docs/operations/project-entry.md'), `${denied.status}: ${denied.stderr} ${denied.stdout}`);
+        const first = run(); assert(first.status === 0, `${first.status}: ${first.stderr} ${first.stdout}`);
         const content = fs.readFileSync(entryPath, 'utf8');
         rows.push({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'entry-read', name: 'Read', input: { file_path: entryPath } }] } },
           { type: 'user', toolUseResult: { type: 'text', file: { filePath: entryPath, content, startLine: 1, numLines: content.split('\n').length, totalLines: content.split('\n').length } },
@@ -187,7 +210,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
           return result.stdout.trim() ? JSON.parse(result.stdout) : {};
         };
         const patch = '*** Begin Patch\n*** Update File: src/probe.js\n@@\n-before\n+after\n*** End Patch';
-        const denied = run(patch); assert(denied.hookSpecificOutput?.permissionDecision === 'deny' && denied.hookSpecificOutput.permissionDecisionReason.includes('先完整读取根入口及 framework/docs/operations/project-entry.md'), JSON.stringify(denied));
+        const first = run(patch); assert(first.hookSpecificOutput?.permissionDecision !== 'deny', JSON.stringify(first));
         for (const signal of signals) assert(!run(patch, { [signal]: '1' }).hookSpecificOutput?.permissionDecision, `${signal} did not reuse the shared author predicate`);
         const protectedPatches = [
           '*** Delete File: framework/skills/protected.md',
@@ -207,10 +230,10 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         fs.copyFileSync(frameworkAbs(LAYOUT, 'docs/operations/project-entry.md'), entryPath);
         rows.push({ type: 'response_item', payload: { type: 'function_call', name: 'exec_command', call_id: 'entry-read', arguments: JSON.stringify({ cmd: 'Get-Content -Raw framework/docs/operations/project-entry.md', workdir: root }) } },
           { type: 'response_item', payload: { type: 'function_call_output', call_id: 'entry-read', output: JSON.stringify({ exit_code: 0, chunk_id: 'entry', output: fs.readFileSync(entryPath, 'utf8') }) } }); flush();
-        const allowed = run(patch); assert(!allowed.hookSpecificOutput?.permissionDecision && allowed.hookSpecificOutput?.additionalContext.includes('real-user-fixture'), JSON.stringify(allowed));
-        assert(!run('*** Update File: src/probe.js\n*** Move to: src/renamed.js\n*** Add File: src/new.js').hookSpecificOutput?.permissionDecision, 'ordinary multi-target move did not recover after read');
+        const allowed = run(patch); assert(!allowed.hookSpecificOutput?.permissionDecision, JSON.stringify(allowed));
+        assert(!run('*** Update File: src/probe.js\n*** Move to: src/renamed.js\n*** Add File: src/new.js').hookSpecificOutput?.permissionDecision, 'ordinary multi-target move was blocked');
         const gap = run(patch, {}, root, 'missing-transcript');
-        assert(!gap.hookSpecificOutput?.permissionDecision && gap.hookSpecificOutput?.additionalContext.includes('降级'), 'unreadable native source was falsely signed or blocked');
+        assert(!gap.hookSpecificOutput?.permissionDecision, 'unreadable native source blocked an ordinary edit');
         assert(!run('unrecognized input').hookSpecificOutput?.permissionDecision, 'unsupported patch invented enforcement');
       } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },

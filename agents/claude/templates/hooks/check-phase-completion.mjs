@@ -133,111 +133,20 @@ export function readStateMachineFromConfig(projectRoot) {
   }
 }
 
-export function evaluateSessionStaleness(state, currentSid, gracePeriodMs, ttlMs, now) {
-  const updatedAtMs = parseTimestampMs(state?.updated_at);
-  const ageMs = updatedAtMs == null ? Number.POSITIVE_INFINITY : Math.max(0, now - updatedAtMs);
-  const stateSid =
-    typeof state?.session_id === 'string' && state.session_id.trim() ? state.session_id.trim() : null;
-
-  // 分支 1：state 已盖章
-  if (stateSid) {
-    if (currentSid && currentSid === stateSid) {
-      return {
-        kind: 'fresh-current',
-        isStale: false,
-        sameSession: true,
-        shouldStamp: false,
-        reasonHuman: '',
-      };
-    }
-    if (currentSid && currentSid !== stateSid) {
-      return {
-        kind: 'stale-cross-session',
-        isStale: true,
-        sameSession: false,
-        shouldStamp: false,
-        reasonHuman: `state 由另一个会话（session_id=${truncateSid(stateSid)}）记录，本次会话 session_id=${truncateSid(currentSid)}`,
-      };
-    }
-    // currentSid 缺失（hook 协议异常或未来 cli adapter 不传）→ 用 ttl 兜底
-    if (ageMs <= ttlMs) {
-      return {
-        kind: 'fresh-current',
-        isStale: false,
-        sameSession: true, // 保守视作同会话；没法精确判断
-        shouldStamp: false,
-        reasonHuman: '',
-      };
-    }
-    return {
-      kind: 'stale-ttl-expired',
-      isStale: true,
-      sameSession: false,
-      shouldStamp: false,
-      reasonHuman: `payload 未携带 session_id，且 state.updated_at 距今超过 ttl（${formatDuration(ttlMs)}）`,
-    };
-  }
-
-  // 分支 2：state 未盖章（runner 刚写完，hook 还没第一次回填 session_id）
-  if (currentSid) {
-    if (ageMs <= gracePeriodMs) {
-      // 视作"runner 刚写完 state，本次 stop 是同会话第一次触发 hook"——盖章
-      return {
-        kind: 'fresh-unstamped',
-        isStale: false,
-        sameSession: true,
-        shouldStamp: true,
-        reasonHuman: '',
-      };
-    }
-    // 超 grace：state 写得太久，又没盖章过，更可能是上一会话残留
-    return {
-      kind: 'stale-legacy-no-sid',
-      isStale: true,
-      sameSession: false,
-      shouldStamp: false,
-      reasonHuman: `state 未携带 session_id，且距今超过 grace_period（${formatDuration(gracePeriodMs)}），视为前一次会话遗留`,
-    };
-  }
-
-  // currentSid 也缺失：双双没 session_id → 用 ttl 兜底
-  if (ageMs <= ttlMs) {
-    return {
-      kind: 'fresh-current',
-      isStale: false,
-      sameSession: true,
-      shouldStamp: false,
-      reasonHuman: '',
-    };
+export function evaluateSessionStaleness(state, currentSid) {
+  const stateSid = typeof state?.session_id === 'string' ? state.session_id.trim() : '';
+  if (currentSid && stateSid && currentSid === stateSid) {
+    return { kind: 'fresh-current', isStale: false, sameSession: true, shouldStamp: false, reasonHuman: '' };
   }
   return {
-    kind: 'stale-ttl-expired',
+    kind: currentSid && stateSid ? 'stale-cross-session' : 'stale-legacy-no-sid',
     isStale: true,
     sameSession: false,
     shouldStamp: false,
-    reasonHuman: `state 与 hook payload 均未携带 session_id，state.updated_at 距今超过 ttl（${formatDuration(ttlMs)}）`,
+    reasonHuman: '当前原生会话与该请求没有可核的会话绑定。',
   };
 }
 
-function parseTimestampMs(s) {
-  if (typeof s !== 'string' || !s.trim()) return null;
-  const t = Date.parse(s);
-  return Number.isFinite(t) ? t : null;
-}
-
-function truncateSid(sid) {
-  if (!sid) return '(unknown)';
-  return sid.length > 12 ? `${sid.slice(0, 8)}…${sid.slice(-3)}` : sid;
-}
-
-function formatDuration(ms) {
-  if (ms < 60 * 1000) return `${Math.round(ms / 1000)} 秒`;
-  if (ms < 60 * 60 * 1000) return `${(ms / (60 * 1000)).toFixed(1)} 分钟`;
-  return `${(ms / (60 * 60 * 1000)).toFixed(1)} 小时`;
-}
-
-
-/** Read-only CLI projection; the hook neither reconstructs evidence nor signs a conclusion. */
 export function readCurrentCompletion(projectRoot, state) {
   const feature = typeof state?.feature === 'string' ? state.feature.trim() : '';
   if (!feature || feature === '_global') return null;
@@ -285,8 +194,7 @@ async function main() {
   const state = readJSONSafe(path.resolve(projectRoot, readStateFileRelFromConfig(projectRoot) ?? 'framework/harness/state/.current-phase.json'));
   if (!state || typeof state.feature !== 'string' || state.feature === '_global') return;
   const sid = typeof payload?.session_id === 'string' ? payload.session_id.trim() : null;
-  const { gracePeriodMs, ttlMs } = readStateMachineFromConfig(projectRoot);
-  const stale = evaluateSessionStaleness(state, sid, gracePeriodMs, ttlMs, Date.now());
+  const stale = evaluateSessionStaleness(state, sid);
   if (stale.isStale) {
     process.stderr.write(`[Stop Hook] 历史会话记录只读保留；本次没有承接该原请求：${stale.reasonHuman}\n`);
     return;

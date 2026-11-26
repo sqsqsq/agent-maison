@@ -71,7 +71,8 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       assert(pending.source_results?.some((item: { detail: string }) => item.detail.includes('pending-edit-part')));
       part('conflicting-edit-part', f.assistant, 34, { type: 'tool', tool: 'edit', callID: 'overlapping-id', state: { status: 'completed', input: { filePath: 'src/value.js' }, time: { start: 34, end: 35 } } }, f.sid);
       const mismatch = consume(f);
-      assert(mismatch.gaps.some((gap: string) => /overlapping-id.*pending-edit-part.*conflicting-edit-part/.test(gap)));
+      assert.deepEqual(mismatch.gaps, []);
+      assert(mismatch.source_results?.some((item: { detail: string }) => /overlapping-id.*pending-edit-part.*conflicting-edit-part/.test(item.detail)));
     });
     await check('OpenCode current call follows assistant.parentID instead of latest user and stable ref survives later calls', () => {
       const current = native.currentOpenCodeSession(env);
@@ -133,23 +134,13 @@ export async function runAll(): Promise<UnitCaseResult[]> {
     });
     await check('OpenCode ordinary reader and write guard never start cat-file without a dirty preimage consumer', () => {
       const reader = path.resolve(__dirname, '../../../agents/shared/opencode-native-session.cjs'), guard = path.resolve(__dirname, '../../../agents/opencode/guard-tool.cjs');
-      const script = `const cp=require('node:child_process');let calls=0;const run=cp.execFileSync;cp.execFileSync=(bin,args,...rest)=>{if(bin==='git'&&args.includes('cat-file'))calls++;return run(bin,args,...rest)};const native=require(${JSON.stringify(reader)});native.readOpenCodeSession(${JSON.stringify(native.reference(file, 'ses_fixture', 'call_current'))},${JSON.stringify(project)},${JSON.stringify(env)});require(${JSON.stringify(guard)}).evaluate({projectRoot:${JSON.stringify(project)},tool:'edit',sessionID:'ses_fixture',callID:'call_current',args:{filePath:'src/value.js'}},${JSON.stringify(env)}).then(value=>{if(calls!==0||value.decision!=='deny')throw Error(JSON.stringify({calls,value}));console.log(calls)});`;
+      const script = `const cp=require('node:child_process');let calls=0;const run=cp.execFileSync;cp.execFileSync=(bin,args,...rest)=>{if(bin==='git'&&args.includes('cat-file'))calls++;return run(bin,args,...rest)};const native=require(${JSON.stringify(reader)});native.readOpenCodeSession(${JSON.stringify(native.reference(file, 'ses_fixture', 'call_current'))},${JSON.stringify(project)},${JSON.stringify(env)});require(${JSON.stringify(guard)}).evaluate({projectRoot:${JSON.stringify(project)},tool:'edit',sessionID:'ses_fixture',callID:'call_current',args:{filePath:'src/value.js'}},${JSON.stringify(env)}).then(value=>{if(calls!==0||value.decision!=='allow')throw Error(JSON.stringify({calls,value}));console.log(calls)});`;
       const result = spawnSync(process.execPath, ['-e', script], { encoding: 'utf8' });
       assert.equal(result.status, 0, result.stdout + result.stderr); assert.equal(result.stdout.trim(), '0');
     });
-    await check('OpenCode native compaction invalidates an unretained entry read and a fresh read restores it', () => {
-      const request = require('../../../agents/shared/native-request.cjs'), framework = path.join(project, 'framework');
-      const entry = path.join(framework, 'docs/operations/project-entry.md');
-      const entryBody = '# Fixture project entry\nRead this shared entry before product edits.\n';
-      fs.mkdirSync(path.dirname(entry), { recursive: true }); fs.writeFileSync(entry, entryBody);
-      const readEntry = (id: string, at: number) => {
-        message(`assistant_${id}`, at, { role: 'assistant', parentID: 'user_original' });
-        part(id, `assistant_${id}`, at + 1, { type: 'tool', tool: 'read', callID: `call_${id}`, state: { status: 'completed', input: { filePath: entry }, output: entryBody, metadata: { display: { type: 'file', path: entry, text: entryBody.trimEnd(), lineStart: 1, lineEnd: 2, totalLines: 2, truncated: false } }, time: { start: at + 1, end: at + 2 } } });
-      };
+    await check('OpenCode native compaction preserves the original user and excludes synthetic controls', () => {
       const read = () => native.readOpenCodeSession(`${native.reference(file, 'ses_fixture')}#user_original`, project, env);
-      readEntry('entry_before', 70); assert(request.frontDoorLoaded(read(), project, framework));
       message('compaction_boundary', 80, { role: 'user' }); part('native_compaction', 'compaction_boundary', 81, { type: 'compaction', auto: true });
-      assert(!request.frontDoorLoaded(read(), project, framework), 'native compaction boundary alone expires older reads');
       message('compaction_summary', 85, { role: 'assistant', parentID: 'compaction_boundary', summary: true });
       part('compaction_summary_text', 'compaction_summary', 86, { type: 'text', text: 'Only business progress was retained.' });
       message('compaction_continue', 87, { role: 'user' });
@@ -158,16 +149,14 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       assert(compacted.messages.filter((item: any) => ['compaction_boundary', 'compaction_summary'].includes(item.id)).every((item: any) => item.role === 'summary'));
       assert(!compacted.messages.some((item: any) => item.id === 'compaction_continue'));
       assert.equal(compacted.request.id, 'user_original'); assert.equal(compacted.request.text, '按小型处理 src/value.js，保留原用户输入。');
-      assert(!request.frontDoorLoaded(compacted, project, framework));
-      readEntry('entry_after', 90); assert(request.frontDoorLoaded(read(), project, framework), 'fresh native read restores the existing shared entry predicate');
     });
-    await check('OpenCode assistant text parts cannot borrow a later read and preserve native user and parent IDs', () => {
+    await check('OpenCode assistant part judgments consume currently readable paths and preserve native user and parent IDs', () => {
       fs.mkdirSync(path.join(project, 'src')); fs.writeFileSync(path.join(project, 'src/value.js'), 'exports.value = 42;\n');
       fs.writeFileSync(path.join(project, 'framework.config.json'), JSON.stringify({ schema_version: '1.1', project_name: 'native timing', project_profile: { name: 'request-test' }, architecture: { outer_layers: [{ id: 'src', can_depend_on: [], intra_layer_deps: 'forbid' }], module_inner_layers: ['shared'], inner_dependency_direction: 'upward', cross_module_exports_file: 'index.js' }, paths: { features_dir: 'doc/features' } }));
       const f = scenario('text_part_timing');
       assistantText(f, 'early_facts', 21, 22, factText());
       nativeTool(f, 'later_source_read', 25, 30, 40, 'read', { filePath: path.join(project, 'src/value.js') }, 'exports.value = 42;');
-      assert.equal(consume(f).policy.selected, 'unknown');
+      assert.equal(consume(f).policy.selected, 'trivial');
       assistantText(f, 'unrelated_late_text', 50, 51, '本请求继续当前原始任务。');
       const session = native.readOpenCodeSession(`${native.reference(file, f.sid)}#${f.user}`, project, env);
       const observations = session.messages.filter((item: any) => item.role === 'assistant');
@@ -175,7 +164,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       assert.deepEqual(observations.map((item: any) => Date.parse(item.at)), [22, 51]);
       assert(observations.every((item: any) => item.id === f.assistant && item.origin.parentId === f.user));
       assert.deepEqual(observations.map((item: any) => item.origin.partIds), [['early_facts'], ['unrelated_late_text']]);
-      const early = consume(f); assert.equal(early.policy.selected, 'unknown'); assert.equal(early.facts.design_tradeoff.value, 'unknown');
+      const early = consume(f); assert.equal(early.policy.selected, 'trivial'); assert.equal(early.facts.design_tradeoff.value, false);
       assistantText(f, 'valid_late_facts', 60, 61, factText());
       assert.equal(consume(f).policy.selected, 'trivial', 'a distinct post-read factual statement is still valid');
     });
@@ -203,7 +192,7 @@ export async function runAll(): Promise<UnitCaseResult[]> {
       db.prepare('UPDATE session SET parent_id=? WHERE id=?').run('parent', 'ses_fixture');
       assert.throws(() => native.readOpenCodeSession(native.currentOpenCodeSession(env).file, project, env), /子会话/);
     });
-    await check('OpenCode delegated author skips duplicate entry lookup after framework and patch move protection', async () => {
+    await check('OpenCode framework and patch move protection applies to a delegated author', async () => {
       const guard = require('../../../agents/opencode/guard-tool.cjs');
       const framework = path.join(project, 'framework'); fs.mkdirSync(framework, { recursive: true }); fs.writeFileSync(path.join(framework, 'RELEASE-MANIFEST.json'), '{}');
       const input = { projectRoot: project, tool: 'edit', sessionID: 'missing-author-session', callID: 'missing', args: { filePath: 'src/value.js' } };

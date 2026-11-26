@@ -20,7 +20,7 @@ import {
   validateQualityAxes,
 } from '../../scripts/utils/quality-axes';
 import { resolveVerdictFromChecks } from '../../scripts/utils/report-generator';
-import { collectCleanPassIssues, collectDisclosedCompletionIssues } from '../../scripts/utils/verify-feature-completion';
+import { collectCleanPassIssues, collectDisclosedCompletionIssues, resolveCompletionDisposition } from '../../scripts/utils/verify-feature-completion';
 import { clearFrameworkConfigCache, receiptDirPath } from '../../config';
 import { ensureConsumerFrameworkTree } from '../utils/layout-test-helper';
 import type { CheckResult } from '../../scripts/utils/types';
@@ -54,6 +54,7 @@ function chk(partial: Partial<CheckResult> & { id: string }): CheckResult {
 
 const UI_OPTS = { phase: 'testing', visualApplicable: true, assetApplicable: true } as const;
 const NON_UI_OPTS = { phase: 'testing', visualApplicable: false, assetApplicable: false } as const;
+const VISUAL_EVIDENCE = { kind: 'visual_diff', channel_evidence_usable: true };
 
 async function withTmpProject<T>(fn: (root: string) => T | Promise<T>): Promise<T> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'quality-axes-'));
@@ -81,7 +82,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     run: () => {
       const checks = [
         chk({ id: 'coding_compile' }),
-        chk({ id: 'visual_diff' }),
+        chk({ id: 'visual_diff', structured: VISUAL_EVIDENCE }),
         chk({ id: 'asset_materialization_sanity' }),
         chk({ id: 'device_test_run' }),
       ];
@@ -94,6 +95,38 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assertEq(l.release_readiness, 'READY', 'release');
       assertEq(l.completion_status, 'COMPLETE', 'completion');
     },
+  },
+  {
+    name: 'testing reuse and debt disclosure do not replace a qualified visual comparison',
+    run: async () => withTmpProject(root => {
+      const opts = { ...UI_OPTS, assetApplicable: false };
+      const supporting = [chk({ id: 'device_test_run' }), chk({ id: 'visual_diff_capture' }), chk({ id: 'visual_debt_disclosure' }), chk({ id: 'coding_compile' })];
+      const noComparison = chk({ id: 'visual_diff', status: 'WARN', severity: 'MAJOR', details: '没有视觉对照报告' });
+      for (const gate of [noComparison, chk({ id: 'visual_diff', status: 'SKIP' }), chk({ id: 'visual_diff',
+        structured: { ...VISUAL_EVIDENCE, channel_evidence_usable: false } })]) {
+        const lattice = deriveSummaryVerdictLattice([...supporting, gate], opts);
+        assertEq(lattice.quality_axes.visual.verdict, 'UNVERIFIED', '视觉证据仍待补');
+        assertEq(lattice.projected_verdict, 'PASS', '已有功能证据允许完成');
+        assertEq(lattice.release_readiness, 'BLOCKED', '发布保留真实视觉缺口');
+      }
+      const qualified = { ...noComparison, structured: VISUAL_EVIDENCE };
+      const ready = deriveSummaryVerdictLattice([...supporting, qualified], opts);
+      assertEq(ready.release_readiness, 'READY', '已有合格视觉证据的 advisory WARN 不阻断发布');
+      assertEq(deriveSummaryVerdictLattice([...supporting, noComparison], NON_UI_OPTS).release_readiness, 'READY', '不适用视觉不影响发布');
+
+      const legacySummary = { schema_version: '1.2', verdict: 'PASS', report_validity: ready.report_validity,
+        release_readiness: ready.release_readiness, completion_status: ready.completion_status, quality_axes: ready.quality_axes,
+        assurance: 'full', capability_resolutions: [], capability_resolution_contract_fingerprint: null,
+        closure_status: 'closed', closure_commit: { schema_version: '1.0' } };
+      for (const endpoint of ['request', 'feature-completion'] as const) {
+        const read = (gate: CheckResult) => resolveCompletionDisposition({ projectRoot: root, feature: 'demo', chain: ['testing'], endpoint,
+          currentResults: [{ phase: 'testing', summary: legacySummary, checks: [...supporting, gate] }] });
+        const disposition = read(noComparison);
+        assertTrue(disposition.completionEligible && !disposition.releaseReady && disposition.releaseBlocking.some(problem =>
+          problem.id === 'quality_axis_verified' && problem.action === 'disclose'), '历史 READY 须按合格原检查保留发布债务');
+        assertTrue(read(qualified).releaseReady, '已有合格比较的旧结论仍可发布');
+      }
+    }),
   },
   {
     name: '非外部 BLOCKER FAIL → 轴 FAIL(needs_fix, retry=当前 phase) / advance FAIL / INCOMPLETE 标签',
@@ -167,7 +200,7 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assertEq(ut.asset.applicable, false, 'ut asset applicable=false');
       assertEq(validateQualityAxes(ut).length, 0, `schema 不变量：${validateQualityAxes(ut).join('；')}`);
       // testing 期：asset 零映射保持 applicable+UNVERIFIED（applyAssetAxisInheritance 的入口条件）
-      const testing = deriveQualityAxes([chk({ id: 'visual_diff' })], UI_OPTS);
+      const testing = deriveQualityAxes([chk({ id: 'visual_diff', structured: VISUAL_EVIDENCE })], UI_OPTS);
       assertEq(testing.visual.verdict, 'PASS', 'testing visual 有检查照常');
       assertEq(testing.asset.applicable, true, 'testing asset 仍 applicable');
       assertEq(testing.asset.verdict, 'UNVERIFIED', 'testing asset 零映射仍 UNVERIFIED');

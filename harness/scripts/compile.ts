@@ -8,8 +8,8 @@ import { tryLoadProfileCodingHost, type ProjectCompileResult } from '../profile-
 import { detectRepoLayout, resolveProbeFrameworkRoot } from '../repo-layout';
 import { ensurePersonalSetup } from './utils/personal-setup-gate';
 import { standaloneReportDir } from './utils/standalone-report-dir';
-import { intakeIdentity, readRequestIntake, resolveRequestSessionReference, type RequestIntake } from './utils/request-intake';
-import { deriveContentImpact } from './utils/content-impact';
+import { intakeIdentity, readRequestIntake, resolveRequestSessionReference, requestTargetFingerprint, type RequestIntake } from './utils/request-intake';
+import { compareRequestContent, deriveContentImpact } from './utils/content-impact';
 import { readDesignVerificationRequest, requestTestingScope } from './utils/automatic-request';
 import { selectBlueprintRequestContent } from './utils/blueprint-skill-projection';
 import type { AcceptanceSpec } from './utils/types';
@@ -18,6 +18,8 @@ import { SpecLoader } from './utils/spec-loader';
 import { loadPhaseRuleWithOverlays } from '../profile-loader';
 import { isBlockingCheck, isRequiredCheckGap } from './utils/check-disposition';
 import { realProjectPath } from './utils/project-relative-path';
+import { readRequestCompileHap, readRequestExecutionInputs, type RequestBuildArtifact, type RequestExecutionInputs } from './utils/request-execution-inputs';
+import { computeGateFingerprint } from './utils/gate-fingerprint';
 
 export function runCompile(options: { projectRoot: string; reportDir?: string; frameworkRoot?: string; sessionRef?: string; requestFile?: string; targets?: string[]; architectureOnly?: boolean }): ProjectCompileResult & { reportDir: string; intake?: RequestIntake; intakeGap?: string; contentImpact?: ReturnType<typeof deriveContentImpact>; next?: string[]; architectureAnalyzed: number } {
   const projectRoot = fs.realpathSync(options.projectRoot);
@@ -33,8 +35,9 @@ export function runCompile(options: { projectRoot: string; reportDir?: string; f
   let design: ReturnType<typeof readDesignVerificationRequest> | undefined;
   if (options.requestFile) {
     if (options.sessionRef) throw new Error('编译的 --request-file 已绑定原生来源');
-    design = readDesignVerificationRequest(projectRoot, frameworkRoot, options.requestFile, { targets: options.targets });
+    design = readDesignVerificationRequest(projectRoot, frameworkRoot, options.requestFile, { targets: options.targets, compile: !options.architectureOnly });
     intake = design.intake;
+    intakeGap = design.source.originGap;
   } else {
     const location = resolveRequestSessionReference(options.sessionRef, projectRoot);
     intakeGap = location.gap;
@@ -42,32 +45,68 @@ export function runCompile(options: { projectRoot: string; reportDir?: string; f
       intake = readRequestIntake({ projectRoot, frameworkRoot, sessionRef: location.sessionRef, explicitTargets: options.targets });
       const original = `doc/reports/request/${intakeIdentity(intake)}/component-design/request.json`;
       if (intake.policy.selected === 'small' && fs.existsSync(path.resolve(projectRoot, original))) {
-        design = readDesignVerificationRequest(projectRoot, frameworkRoot, original, { targets: options.targets });
+        design = readDesignVerificationRequest(projectRoot, frameworkRoot, original, { targets: options.targets, compile: !options.architectureOnly });
         intake = design.intake;
+        intakeGap = design.source.originGap;
       }
     } catch (error) { intakeGap = String(error); }
   }
-  const files = (intake?.targets ?? options.targets ?? []).map(file => path.relative(projectRoot, realProjectPath(projectRoot, file, 'architecture target')).replace(/\\/g, '/'));
+  const files = ([...new Set([...(design?.targets ?? intake?.targets ?? []), ...(options.targets ?? [])])]).map(file => path.relative(projectRoot, realProjectPath(projectRoot, file, 'architecture target')).replace(/\\/g, '/'));
+  const requestFile = design && path.relative(projectRoot, design.file).replace(/\\/g, '/');
+  const contentFingerprint = requestTargetFingerprint(projectRoot, files);
   const architectureAnalyzed = files.filter(file => /\.(?:ets|[cm]?[jt]sx?)$/.test(file) && fs.existsSync(path.resolve(projectRoot, file)) && fs.statSync(path.resolve(projectRoot, file)).isFile()).length;
   if (intake?.control.excluded.includes(options.architectureOnly ? 'architecture' : 'compile')) throw new Error('用户已明确排除此能力；本次未执行');
   const stamp = `${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}`;
-  const reportDir = standaloneReportDir(projectRoot, frameworkRoot, options.reportDir ?? `doc/reports/compile/${stamp}`);
+  const reportDir = standaloneReportDir(projectRoot, frameworkRoot, options.reportDir ?? (design
+    ? path.relative(projectRoot, path.join(design.source.reportDir, options.architectureOnly ? 'architecture' : 'compile')).replace(/\\/g, '/')
+    : `doc/reports/compile/${stamp}`));
+  const reportPath = path.join(reportDir, 'compile-report.json');
+  let priorCompile: { execution_inputs?: RequestExecutionInputs; execution_artifact?: RequestBuildArtifact } | undefined;
+  if (fs.existsSync(reportPath)) {
+    const previous = JSON.parse(fs.readFileSync(reportPath, 'utf8'));
+    const prior = previous.intake_context;
+    const ownedLegacy = requestFile && prior && intake && prior.session_id === intake.session_id && prior.user?.id === intake.user.id
+      && (path.resolve(reportDir, '..', 'request.json') === design!.file);
+    if (previous.request_file !== requestFile && !ownedLegacy) throw new Error('编译报告目录属于另一请求');
+    priorCompile = previous;
+  }
   const setup = ensurePersonalSetup(projectRoot, {
     requiredPrerequisites: new Set(options.architectureOnly ? [] : resolvedProfile.personalPrerequisites?.['coding.compile'] ?? []),
   });
   if (!setup.ok) throw new Error(setup.message);
   fs.mkdirSync(reportDir, { recursive: true });
   const context = { projectRoot, frameworkRoot, harnessRoot: path.join(frameworkRoot, 'harness'), resolvedProfile, reportDir };
+  const boundExecution = Boolean(requestFile && !options.architectureOnly);
+  const executionInputs = boundExecution ? readRequestExecutionInputs(projectRoot, frameworkRoot, 'compile', files) : undefined;
+  const beforePackage = executionInputs && readRequestCompileHap(projectRoot, resolvedProfile.profileDir);
   const result: ProjectCompileResult = options.architectureOnly ? { checks: [], execution: { executed: false } } : host!.compileProject!(context);
   if (files.length && !intake?.control.excluded.includes('architecture')) {
     const phaseRule = loadPhaseRuleWithOverlays('coding', new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadPhaseRule('coding'), resolvedProfile);
     result.checks.push(...checkArchitectureFiles(projectRoot, files, phaseRule), ...(host?.checkProjectArchitecture?.({ ...context, files, phaseRule }) ?? []));
   }
   if (options.architectureOnly && !files.length) throw new Error('架构检查需要本请求实际文件或显式 --target，不签空集通过');
-  const contentImpact = intake ? deriveContentImpact(projectRoot, intake) : undefined;
+  if (requestTargetFingerprint(projectRoot, files) !== contentFingerprint) {
+    const { requestFailure } = require('./utils/request-phase') as typeof import('./utils/request-phase');
+    result.checks.push(requestFailure('request_execution_inputs_changed', '所选目标在编译过程中已变化，执行记录仍对应开始时的输入'));
+  }
+  if (boundExecution && result.execution?.executed
+    && (!executionInputs || executionInputs.sha256 !== readRequestExecutionInputs(projectRoot, frameworkRoot, 'compile', files)?.sha256)) {
+    const { requestFailure } = require('./utils/request-phase') as typeof import('./utils/request-phase');
+    result.checks.push(requestFailure('request_execution_inputs_changed', executionInputs
+      ? `实际编译期间所用模块或构建输入发生变化：${executionInputs.scope.join('、')}`
+      : '本次实际编译已记录，模块或构建输入尚未核实'));
+  }
+  const checkedPackage = executionInputs && result.execution?.executed && result.execution.exitCode === 0
+    && !result.checks.some(check => isBlockingCheck(check) || isRequiredCheckGap(check))
+    ? readRequestCompileHap(projectRoot, resolvedProfile.profileDir) : null;
+  const executionArtifact = checkedPackage && (checkedPackage.sha256 !== beforePackage?.sha256
+    || priorCompile?.execution_inputs?.sha256 === executionInputs?.sha256
+      && priorCompile?.execution_artifact?.sha256 === checkedPackage.sha256) ? checkedPackage : null;
+  if (intake) intake = { ...intake, targets: files, content_fingerprint: contentFingerprint };
+  const comparison = compareRequestContent(projectRoot, design?.baseline);
+  const contentImpact = intake ? deriveContentImpact(projectRoot, intake, design?.baseline, comparison) : undefined;
   const acceptance = design?.blueprint && selectBlueprintRequestContent(design.blueprint).acceptance as unknown as AcceptanceSpec | undefined;
-  const device = acceptance && requestTestingScope(projectRoot, intake, acceptance, design!.binding!.acceptance_ids);
-  const requestFile = design && path.relative(projectRoot, design.file).replace(/\\/g, '/');
+  const device = acceptance && requestTestingScope(projectRoot, intake, acceptance, design!.binding!.acceptance_ids, design?.baseline);
   const families = new Set(contentImpact?.filter(impact => !impact.excluded_by_user).map(impact => impact.verification_family));
   if (device?.required) families.add('testing');
   const next = intake && !intake.control.exempt ? [...families].map(family => {
@@ -77,8 +116,12 @@ export function runCompile(options: { projectRoot: string; reportDir?: string; f
     if (intake.policy.selected === 'small') return `npm run check -- ${project} --phase ${family} ${requestFile ? origin : '--request-file <原 component-design request_file>'} --prepare-request`;
     return `npm run check:${family} -- ${project} ${origin}`;
   }) : [];
-  fs.writeFileSync(path.join(reportDir, 'compile-report.json'), JSON.stringify({ ...result, architecture_analyzed: architectureAnalyzed,
-    ...(intake ? { intake_context: intake, content_impact: contentImpact } : {}), ...(intakeGap ? { intake_gap: intakeGap } : {}),
+  fs.writeFileSync(reportPath, JSON.stringify({ ...result, architecture_analyzed: architectureAnalyzed,
+    ...(intake ? { intake_context: intake, content_impact: contentImpact } : {}),
+    ...(requestFile ? { request_file: requestFile, baseline: design!.baseline, targets: files, content_fingerprint: contentFingerprint } : {}),
+    ...(executionInputs ? { execution_inputs: executionInputs, gate_fingerprint: computeGateFingerprint(frameworkRoot, 'coding') } : {}),
+    ...(executionArtifact ? { execution_artifact: executionArtifact } : {}),
+    ...(comparison.executed ? { comparison_candidates: comparison.entries } : { comparison_gap: comparison.error }), ...(intakeGap ? { intake_gap: intakeGap } : {}),
     ...(device ? { device_acceptance_ids: device.items.map(item => item.id) } : {}),
     next: contentImpact?.map(impact => ({ kind: impact.kind, verification: impact.verification, verification_family: impact.verification_family, excluded_by_user: impact.excluded_by_user })) }, null, 2) + '\n');
   return { ...result, reportDir, architectureAnalyzed, ...(intake ? { intake, contentImpact, next } : {}), ...(intakeGap ? { intakeGap } : {}) };

@@ -87,8 +87,8 @@
    cd framework/harness && npx ts-node harness-runner.ts --execute-verifier --phase <phase> --feature <feature>
    ```
 
-3. **签发和报告**：适用性由 profile、workflow 与 evidence policy 决定。签发既覆盖正常 PASS，也覆盖已有实质证据的诊断 FAIL（`run_verifier_for_repair`）。没有 request 时按 NEXT 恢复相关输入或执行条件。执行器先复用有效报告或可恢复原答，再派确有缺项的独立上下文；按原 request 的 `prompt_path` 让 verifier 读取材料，可在 request 前附已签复核范围。执行器在派发、绑定和交回时观察写界，只接收带当前 subject 的合规完整报告。越界报告拒收，实际文件改动交原责任方核对并恢复。作者不另派、不改核验材料、不手写正式报告。独核结论与产品脚本状态分别保留。
-4. **生产型子 agent**：派发时列出真实写界，要求先读取目标，目标不存在时交回缺口，完成后交回实际修改清单与自验命令输出。阶段执行者用 `git diff` 和工具结果对账；正式门禁交原 writer。
+3. **签发和报告**：适用性由 profile、workflow 与 evidence policy 决定。签发既覆盖正常 PASS，也覆盖已有实质证据的诊断 FAIL（`run_verifier_for_repair`）。没有 request 时按 NEXT 恢复相关输入或执行条件。执行器先复用有效报告或可恢复原答，再派确有缺项的独立上下文；按原 request 的 `prompt_path` 让 verifier 读取材料，可在 request 前附已签复核范围。执行器核独立身份、签发用途、受保护输入和报告原件。已证实越权或失去独立性才拒收相关结论。并行手改保留在工作区，受影响的结论由原责任方按当前字节重核。作者不另派、不改核验材料、不手写正式报告。独核结论与产品脚本状态分别保留。
+4. **生产型子 agent**：派发时列出真实写界。执行者检查当前目标，补丁与当前字节冲突时重读、合并并保留用户修正。交回实际成果、自验与具体欠项，正式门禁交原 writer。
 5. **环境能力**：判定 hvigor、SDK 或设备缺口前，先运行对应探测（如 `detect-deveco.ts --json` 或 `check-personal-setup.ts --ensure`）并引用其结果。按 `HARNESS_PREFLIGHT` 处置并保留当前缺口，条件恢复后重进原请求。
 6. **同一 owner 与等待纪律**：保留准确的原请求、身份与 SID；原会话不可续时，由原协调器按原件恢复专用上下文。等待正式核验时使用请求的时限与清理预留设置工具 timeout，可先做无关工作。继续时用原执行或观察命令，禁止另建等待器或重复 report。 `--revalidate` 只进行机械重验。
 
@@ -139,22 +139,7 @@
 
 **全局阶段豁免**：`init`/`catalog`/`glossary`/`docs` 四个全局阶段（无 `--feature` 参数，哨兵值 `_global`）不在本节判据范围。这些阶段没有 feature 维度回执模板，harness-runner 不为它们写 `.current-phase.json`，Stop hook 也对 `state.phase` 是这四值之一时一律放行。详见 `check-init.ts` 头部"元阶段三件套刻意不对称"段落。
 
-**会话边界与跨会话遗留**（v2.8 起）：`.current-phase.json` 是全局单槽，跨 cli 重启不会自动清理；Stop hook 在判定前先做会话边界检查：
-
-| state.session_id | 当前 cli session_id | 行为 |
-|-----------------|---------------------|------|
-| 与当前 sid 一致 | 存在 | 走闭环判定，未闭环 → exit 2 阻断（同会话遗留） |
-| 与当前 sid 不一致 | 存在 | advisory + exit 0（不阻断，跨会话遗留） |
-| 未盖章（null）+ state 在 grace_period 内 | 存在 | 视为同会话刚跑完，hook 第一次回填 sid 后走闭环判定 |
-| 未盖章（null）+ state 超 grace_period | 存在 | advisory + exit 0（视为前一会话遗留） |
-| state 已盖章 + payload 缺 sid + 在 ttl 内 | — | 保守视作同会话，走闭环判定 |
-| state 已盖章 + payload 缺 sid + 超 ttl | — | advisory + exit 0 |
-
-时间常量在 `framework.config.json` 的 `state_machine` 段配置，默认值见 `framework/harness/config.ts` `DEFAULT_STATE_MACHINE`。
-
-用户/agent 在哪个时机会看到什么文案：同会话未闭环→"继续/放弃二选一"中性提示，给出补齐 4 步与 `--clear-state` 出口；跨会话遗留→仅一条 stderr advisory（"检测到遗留状态文件，已放行；如需清理执行 --clear-state"），不注入 prompt 也不阻断；agent 见到此 advisory 时不应主动接管旧任务——继续做用户当前要求的事即可。
-
-清理出口：`cd framework/harness && npx ts-node harness-runner.ts --clear-state`（无确认，直接删 `.current-phase.json`；历史 verdict/脚本报告/verifier 产出通常在同一 feature 阶段的 `reports/` 子目录，完成回执在实例 features_dir 下）。
+**会话边界与跨会话遗留**：Claude Code／CodeAgent Stop 只在当前原生会话与状态中已有绑定一致时，调用原 Feature／run 的 `assess`，转述该请求的当前结论及续接命令。缺绑定或跨会话的状态保留原样。时间接近、未盖章或没有原生 SID 不选定旧请求，也不需要清理旧状态。
 
 **跨会话恢复（Resume·BLOCKER）**：新会话、framework 升级后、或用户说「继续 `<feature>`/做下一阶段」时，在进入 Skill 工作前须先对齐闭环态：
 

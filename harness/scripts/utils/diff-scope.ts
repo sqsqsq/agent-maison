@@ -2,12 +2,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { createHash } from 'crypto';
+import { resolveProbeFrameworkRoot } from '../../repo-layout';
 import { loadFrameworkConfig, getOuterLayerIds } from '../../config';
 import { loadCatalog, findModule } from './catalog-parser';
-import { diffChangedFilesWithStatus, resolveEffectiveDiffBaseline, readFileAtRef, type StatusDiffEntry } from './git-diff';
+import { diffChangedFilesWithStatus, readFileAtRef, type StatusDiffEntry } from './git-diff';
 import { parseScope } from './scope-parser';
 import { isInsideProjectRoot, validateProjectRelativePath } from './project-relative-path';
-import type { ContractsSpec, ContextFileEntry } from './types';
+import type { ContractsSpec, ContextFileEntry, FeatureSpec } from './types';
 import type { ResolvedPhaseInputs } from './capability-resolution';
 
 // --------------------------------------------------------------------------
@@ -175,18 +176,93 @@ export function resolveImplementationScope(projectRoot: string, feature: string,
     explicit, requirement };
 }
 
+/** Default to HEAD against current bytes; the frozen run start is a historical reference. */
+export function readCurrentImplementationDiff(projectRoot: string, runId?: string) {
+  const { resolveHarnessDiffBaseRef } = require('./phase-state') as typeof import('./phase-state');
+  return diffChangedFilesWithStatus({ projectRoot, baseRef: (!runId ? resolveHarnessDiffBaseRef() : undefined) ?? 'HEAD' });
+}
+
+/** Review material comes from the requirement's signed references and actual resolver dependencies. */
+export function implementationPathSelector(projectRoot: string, contracts?: Pick<ContractsSpec, 'files' | 'modules'>,
+  resolvedInputs?: ResolvedPhaseInputs, modules: readonly { package_path?: string }[] = contracts?.modules ?? []): (file: string) => boolean {
+  const rel = (file: string) => path.relative(projectRoot, path.resolve(projectRoot, file)).replace(/\\/g, '/');
+  const bound = Object.values(resolvedInputs?.values ?? {}).flatMap(input => input.state === 'resolved'
+    && input.binding.source.kind === 'derive' && ['derive.codebase', 'derive.test-targets'].includes(input.binding.source.provider_id)
+    ? input.binding.dependencies.filter(dep => dep.role === 'derive' && isInsideProjectRoot(projectRoot, dep.path)).map(dep => rel(dep.path)) : []);
+  const files = new Set([...(contracts?.files ?? []).map(rel), ...bound]);
+  const modulePrefixes = modules.flatMap(module => module.package_path ? [toDirPrefix(rel(module.package_path))] : []);
+  return file => files.size > 0 ? files.has(rel(file)) : isUnderLayerDir(rel(file), modulePrefixes);
+}
+
+export function coveredReviewPaths(report: string, candidates: readonly string[]): string[] {
+  const { getSectionContent } = require('./markdown-parser') as typeof import('./markdown-parser');
+  const scope = (getSectionContent(report, '审查范围') ?? '').replace(/\\/g, '/');
+  return candidates.filter(file => {
+    const escaped = file.replace(/\\/g, '/').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`(?<![\\w./-])(?:\\./)?${escaped}(?![\\w./-])`).test(scope);
+  });
+}
+
+/** Files explicitly used by the typed design or named in this feature's review coverage. */
+export function implementationReviewReferences(projectRoot: string, feature: string, options: {
+  frameworkRoot?: string; resolvedInputs?: ResolvedPhaseInputs; featureSpec?: Pick<FeatureSpec, 'feature' | 'referenceClosure'>;
+} = {}): string[] {
+  if (options.featureSpec && options.featureSpec.feature !== feature) throw new Error('review reference feature subject mismatch');
+  const { SpecLoader } = require('./spec-loader') as typeof import('./spec-loader');
+  const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+  const { getSectionContent } = require('./markdown-parser') as typeof import('./markdown-parser');
+  const reportFile = resolveFeatureArtifact(projectRoot, feature, 'review-report.md').actualPath;
+  const spec = options.featureSpec ?? new SpecLoader(projectRoot, undefined, undefined,
+    options.frameworkRoot ?? resolveProbeFrameworkRoot(projectRoot)).loadFeatureSpec(feature, options.resolvedInputs);
+  const references = new Set(spec.referenceClosure?.references.map(reference => reference.path) ?? []);
+  try {
+    const report = fs.readFileSync(reportFile, 'utf8');
+    const coverage = getSectionContent(report, '审查范围') ?? '';
+    for (const token of coverage.match(/`[^`\r\n]+`|[^\s,;:，。；、：|<>(){}"'`]+/g) ?? []) {
+      const file = token.replace(/^`|`$/g, '').replace(/\\/g, '/');
+      if (!file.includes('/') || !path.posix.extname(file)) continue;
+      try {
+        const relative = path.posix.normalize(validateProjectRelativePath(projectRoot, file, 'review reference'));
+        const absolute = path.resolve(projectRoot, relative);
+        const stat = fs.statSync(absolute, { throwIfNoEntry: false });
+        if (!stat || stat.isFile() && isInsideProjectRoot(fs.realpathSync(projectRoot), fs.realpathSync(absolute))) references.add(relative);
+      } catch { /* Unusable text references are not source bindings. */ }
+    }
+  } catch { /* Existing report and input readers still diagnose missing review evidence. */ }
+  return [...references].sort();
+}
+
+export function featureReviewCoverageDisclosure(projectRoot: string, feature: string): string {
+  const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
+  let report = '';
+  try { report = fs.readFileSync(resolveFeatureArtifact(projectRoot, feature, 'review-report.md').actualPath, 'utf8'); }
+  catch { /* No readable coverage was declared. */ }
+  return reviewCoverageDisclosure(projectRoot, [], report);
+}
+
+export function reviewCoverageDisclosure(projectRoot: string, reviewedPaths: readonly string[], reviewReport?: string): string {
+  const diff = diffChangedFilesWithStatus({ projectRoot, baseRef: 'HEAD' });
+  const reviewed = new Set(reviewedPaths.map(file => path.relative(projectRoot, path.resolve(projectRoot, file)).replace(/\\/g, '/')));
+  const changed = [...new Set(diff.entries.flatMap(entry => [entry.path, ...(entry.oldPath ? [entry.oldPath] : [])]))];
+  if (reviewReport) for (const file of coveredReviewPaths(reviewReport, changed)) reviewed.add(file);
+  const pending = changed.filter(file => !reviewed.has(file)).sort();
+  return '未纳入本次 review 的工作区改动：' + (!diff.executed ? '路径未取得' : pending.length ? pending.join('、') : '无');
+}
+
 /** Actual changed files plus existing planning references; never persisted as another inventory. */
-export function implementationFiles(projectRoot: string, feature: string, contracts?: Pick<ContractsSpec, 'files' | 'modules'>,
-  runId?: string, changes?: readonly StatusDiffEntry[] | null): string[] {
-  if (changes === undefined) try {
-    const baseline = resolveEffectiveDiffBaseline(projectRoot, feature, runId);
-    changes = baseline.available ? diffChangedFilesWithStatus({ projectRoot, baseRef: baseline.baseSha }).entries : null;
-  } catch { /* Input-only consumers keep their readable references; the diff gate diagnoses an unavailable baseline. */ }
-  const layerPrefixes = [...layerDirPrefixes(projectRoot), ...projectImplementationModules(projectRoot, contracts?.modules).map(module => toDirPrefix(module.package_path))];
+export function implementationFiles(projectRoot: string, _feature: string, contracts?: Pick<ContractsSpec, 'files' | 'modules'>,
+  runId?: string, changes?: readonly StatusDiffEntry[] | null, reviewReferences: readonly string[] = []): string[] {
+  const explicitReview = changes !== undefined;
+  if (changes === undefined) changes = readCurrentImplementationDiff(projectRoot, runId).entries;
+  const inScope = implementationPathSelector(projectRoot, contracts);
+  const reviewRefs = new Set(reviewReferences);
+  const modules = implementationPathSelector(projectRoot, undefined, undefined, contracts?.modules);
+  const fallback = !contracts?.files?.length && !contracts?.modules?.length ? layerDirPrefixes(projectRoot) : [];
+  const relevant = (file: string) => explicitReview || inScope(file) || reviewRefs.has(file) || modules(file) || isUnderLayerDir(file, fallback);
+
   const files = new Set(contracts?.files ?? []);
   for (const entry of changes ?? []) {
-    if (isUnderLayerDir(entry.path, layerPrefixes)) files.add(entry.path);
-    if (entry.oldPath && isUnderLayerDir(entry.oldPath, layerPrefixes)) files.add(entry.oldPath);
+    if (relevant(entry.path) || entry.oldPath && relevant(entry.oldPath)) files.add(entry.path);
   }
   return [...files].map(file => validateProjectRelativePath(projectRoot, file, 'implementation input'))
     .filter(file => fs.existsSync(path.join(projectRoot, file)) && fs.statSync(path.join(projectRoot, file)).isFile()).sort();
@@ -204,23 +280,32 @@ export function readImplementationReviewChanges(projectRoot: string, feature: st
   modules?: Array<{ name?: string; package_path?: string }>; preimagesOnly?: boolean;
 } = {}): ImplementationReviewChanges | null {
   try {
-    const baseline = resolveEffectiveDiffBaseline(projectRoot, feature, options.runId);
-    if (!baseline.available) return null;
-    const diff = diffChangedFilesWithStatus({ projectRoot, baseRef: baseline.baseSha });
+    const diff = readCurrentImplementationDiff(projectRoot, options.runId);
     if (!diff.executed || !diff.baseSha) return null;
     const candidates = options.preimagesOnly ? diff.entries.filter(entry => entry.status === 'D' || entry.status === 'R') : diff.entries;
-    if (!candidates.length) return { entries: [], contextFiles: [], preimages: [] };
     const { decodeTextFile, SpecLoader } = require('./spec-loader') as typeof import('./spec-loader');
-    const modules = options.modules ?? new SpecLoader(projectRoot, undefined, undefined, options.frameworkRoot)
-      .loadFeatureSpec(feature, options.resolvedInputs).contracts?.modules;
-    const prefixes = [...layerDirPrefixes(projectRoot), ...projectImplementationModules(projectRoot, modules).map(module => toDirPrefix(module.package_path))];
-    const entries = candidates.filter(entry => isUnderLayerDir(entry.path, prefixes)
-      || !!entry.oldPath && isUnderLayerDir(entry.oldPath, prefixes));
+    const frameworkRoot = options.frameworkRoot ?? resolveProbeFrameworkRoot(projectRoot);
+    const featureSpec = new SpecLoader(projectRoot, undefined, undefined, frameworkRoot).loadFeatureSpec(feature, options.resolvedInputs);
+    const contracts = featureSpec.contracts;
+    const modules = options.modules ?? contracts?.modules ?? [];
+    const inScope = implementationPathSelector(projectRoot, contracts, options.resolvedInputs, modules);
+    const references = new Set(implementationReviewReferences(projectRoot, feature, { featureSpec }));
+    const moduleChanges = implementationPathSelector(projectRoot, undefined, undefined, modules);
+    const legacyPrefixes = !contracts?.files?.length && !modules.length ? layerDirPrefixes(projectRoot) : [];
+    const scopedHistory = !options.runId && diff.baseRef !== 'HEAD';
+    const used = (file: string) => inScope(file) || references.has(file) || isUnderLayerDir(file, legacyPrefixes)
+      || scopedHistory && moduleChanges(file);
+    const entries = candidates.filter(entry => used(entry.path) || !!entry.oldPath && used(entry.oldPath));
     const preimages: ImplementationReviewChanges['preimages'] = [];
     const contextFiles: ContextFileEntry[] = [];
     const root = fs.realpathSync(projectRoot);
+    if (!options.preimagesOnly) {
+      const nearby = candidates.filter(entry => !used(entry.path) && moduleChanges(entry.path)).map(entry => entry.path);
+      if (nearby.length) contextFiles.push({ label: '(implementation review candidates)', content:
+        '合同模块内还有这些差异。核查实际调用、注册或共享输入，仅把本次实际采用的文件写入审查范围：\n' + nearby.join('\n') });
+    }
     if (entries.length && !options.preimagesOnly) contextFiles.push({ label: '(actual implementation changes)', kind: 'text',
-      content: '基线 diff 供审查，不直接证明由本阶段写入；归属以现有调用观察为准，不接管其它任务的既有改动。\n'
+      content: '逐项核对当前实现、验收条件和实际调用方。\n'
         + entries.map(entry => entry.status + ': ' + (entry.oldPath ? entry.oldPath + ' -> ' : '') + entry.path).join('\n') });
     for (const entry of entries) {
       const prior = entry.status === 'D' ? entry.path : entry.oldPath;

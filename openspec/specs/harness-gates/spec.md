@@ -628,8 +628,12 @@ harness-runner 的 personal-setup 前置校验失败时 MUST 在退出前输出�
 `diff_within_scope` 与 spec 的 Scope 声明章节校验在 small 档 MUST 保持与 standard 一致，MUST NOT 随 scale 降级。
 
 #### Scenario: small 档越界照拦
-- **WHEN** small 档 feature 的 coding diff 触及 out_of_scope 模块
+- **WHEN** small 档 feature 的实际交付触及原请求明确排除的模块，或已证实有未经授权的操作
 - **THEN** `diff_within_scope` BLOCKER FAIL（与 standard 行为一致）
+
+#### Scenario: 同工作区并行需求
+- **WHEN** 另一个请求修改与本次验收无依赖的 out_of_scope 文件
+- **THEN** 当前请求保持原范围和验收处置，报告披露本次未审查的路径
 
 > **Enforced by:** `harness/scripts/check-coding.ts`, `specs/phase-rules/coding-rules.yaml`
 

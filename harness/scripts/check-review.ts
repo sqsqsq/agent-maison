@@ -1,5 +1,5 @@
 import { executeCheck } from './utils/check-execution';
-import { implementationFiles } from './utils/diff-scope';
+import { implementationFiles, implementationReviewReferences, coveredReviewPaths, readImplementationReviewChanges } from './utils/diff-scope';
 // ============================================================================
 // Review 阶段脚本 Harness — check-review.ts
 // ============================================================================
@@ -47,6 +47,7 @@ import { checkUpstreamVerdictGate } from './utils/upstream-verdict-gate';
 import { checkChangeUnitFeatureProjection } from './utils/change-unit-feature-projection';
 import { resolveRequestInputs } from './utils/capability-resolution';
 import { realProjectPath } from './utils/project-relative-path';
+import { resolveCurrentScopeSource } from './utils/blueprint-requirement-traceability';
 
 // --------------------------------------------------------------------------
 // Helpers
@@ -77,7 +78,11 @@ function loadDesign(ctx: CheckContext): string | null {
 
 function reviewTargetFiles(ctx: CheckContext<'feature' | 'request'>): string[] {
   if (ctx.subject === 'request') return ctx.request.targets.files;
-  if (!ctx.resolvedInputs) return implementationFiles(ctx.projectRoot, ctx.feature, ctx.featureSpec.contracts, process.env.MAISON_GOAL_RUN_ID?.trim());
+  if (!ctx.resolvedInputs) {
+    const references = implementationReviewReferences(ctx.projectRoot, ctx.feature,
+      { frameworkRoot: ctx.frameworkRoot, featureSpec: ctx.featureSpec });
+    return implementationFiles(ctx.projectRoot, ctx.feature, ctx.featureSpec.contracts, process.env.MAISON_GOAL_RUN_ID?.trim(), undefined, references);
+  }
   const code = ctx.resolvedInputs.values.code;
   return code?.state === 'resolved' && Array.isArray(code.value) ? code.value.map((file: { path: string }) => file.path) : [];
 }
@@ -779,9 +784,11 @@ function checkReviewScopeToDesign(ctx: CheckContext<'feature' | 'request'>, repo
   if (ctx.resolvedInputs) {
     const contracts = ctx.subject === 'request' ? new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot).loadRequestArtifacts(ctx.resolvedInputs).contracts : ctx.featureSpec.contracts;
     if (!contracts) return [];
-    const scope = getSectionContent(report, '审查范围') ?? '';
-    const targets = reviewTargetFiles(ctx);
-    const missing = targets.filter(file => !scope.includes(file));
+    const originals = ctx.subject === 'feature' ? readImplementationReviewChanges(ctx.projectRoot, ctx.feature,
+      { frameworkRoot: ctx.frameworkRoot, resolvedInputs: ctx.resolvedInputs, preimagesOnly: true })?.preimages ?? [] : [];
+    const targets = [...new Set([...reviewTargetFiles(ctx), ...originals.map(entry => entry.path)])];
+    const covered = new Set(coveredReviewPaths(report, targets));
+    const missing = targets.filter(file => !covered.has(file));
     return [{ id: 'review_scope_to_design', category: 'traceability', severity: 'BLOCKER', status: missing.length ? 'FAIL' : 'PASS', description: '审查范围覆盖实际施工输入', details: missing.length ? missing.join('\n') : `已覆盖 ${targets.length} 个实际目标；契约与蓝图语义由独立审查逐项对照。`, ...(missing.length ? { suggestion: '读取并审查绑定契约的目标文件，在报告中列明实际覆盖范围。' } : {}) }];
   }
   if (ctx.subject === 'request') return [];
@@ -846,6 +853,37 @@ function checkReviewScopeToDesign(ctx: CheckContext<'feature' | 'request'>, repo
     details: `${uncovered.length}/${designModules.length} 个 plan.md 模块未在审查范围中提及：${uncovered.join('、')}`,
     suggestion: '请确认审查范围是否应覆盖 plan.md 中的所有模块。',
   }];
+}
+
+function checkRequestAcceptanceReview(ctx: CheckContext<'request'>, report: string): CheckResult[] {
+  if (!ctx.request.blueprint) return [];
+  const artifacts = new SpecLoader(ctx.projectRoot, undefined, undefined, ctx.frameworkRoot).loadRequestArtifacts(ctx.resolvedInputs!);
+  const ids = [...new Set([...ctx.request.blueprint.acceptance_ids, ...(artifacts.acceptance?.boundaries ?? []).map(item => item.id),
+    ...(artifacts.acceptance?.performance ?? []).map(item => item.id)])];
+  const current = new Set([...(artifacts.acceptance?.criteria ?? []), ...(artifacts.acceptance?.boundaries ?? []),
+    ...(artifacts.acceptance?.performance ?? [])].map(item => item.id));
+  const inputs = [ctx.request.requested_result, ...(ctx.request.intake_context?.user_messages ?? []).map(message => message.text),
+    ...(ctx.request.requirement_sources ?? []).map(file => resolveCurrentScopeSource(ctx.projectRoot, file).bytes.toString('utf8'))];
+  const normalize = (text: string) => text.trim().replace(/^[`“「"]|[`”」"]$/g, '').replace(/\s+/g, ' ');
+  const sources = inputs.map(normalize);
+  const section = getSectionContent(report, '原请求验收对照') ?? '';
+  const table = extractTables(section).find(item => ['验收项', '原用户依据', '当前承诺', '结论', '差异'].every(key => item.headers.includes(key)));
+  const problems = ids.flatMap(id => {
+    const matching = table?.rows.filter(row => normalize(row[table.headers.indexOf('验收项')] ?? '') === id) ?? [];
+    if (matching.length !== 1 || !table) return [`${id} 缺少一条对照原用户请求的审查结论`];
+    const row = matching[0];
+    const quote = normalize(row[table.headers.indexOf('原用户依据')] ?? '');
+    const verdict = normalize(row[table.headers.indexOf('结论')] ?? '');
+    const detail = normalize(row[table.headers.indexOf('差异')] ?? '');
+    if (quote.length < 2 || !sources.some(text => text.includes(quote))) return [`${id} 引用与原用户请求或已绑定需求不符：${quote}`];
+    if (!current.has(id) || verdict !== '保持') return [`${id} 原用户依据「${quote}」：${detail || '当前蓝图缺失该验收或未核实承诺完整'}`];
+    if (!normalize(row[table.headers.indexOf('当前承诺')] ?? '')) return [`${id} 尚未记录当前条件、预期或验收层级`];
+    return [];
+  });
+  return [{ id: 'review_scope_to_design', category: 'traceability', severity: 'BLOCKER',
+    status: problems.length ? 'FAIL' : 'PASS', description: '专项审查逐项对照原用户请求',
+    details: problems.length ? problems.join('\n') : `已核对 ${ids.join('、')} 的原用户依据和当前验收。`,
+    ...(problems.length ? { suggestion: '恢复原用户要求的条件、预期行为和验收层级，再由本请求的审查责任方复核当前版本。' } : {}) }];
 }
 
 // --------------------------------------------------------------------------
@@ -1062,7 +1100,7 @@ const checker: PhaseChecker = {
       const scope = getSectionContent(report, '审查范围') ?? '';
       const missing = ctx.request.targets.files.filter(file => !scope.includes(file));
       if (missing.length) results.push({ id: 'review_request_scope', category: 'traceability', severity: 'BLOCKER', status: 'FAIL', description: '审查范围未覆盖请求目标', details: missing.join(', '), suggestion: '按本次目标与基线审查全部指定文件，并在范围中列出真实目标。' });
-      results.push(...checkReviewScopeToDesign(ctx, report), ...checkConventionsCoverage(ctx, report));
+      results.push(...checkReviewScopeToDesign(ctx, report), ...checkRequestAcceptanceReview(ctx as CheckContext<'request'>, report), ...checkConventionsCoverage(ctx, report));
       return results;
     }
     const loadedReport = loadReviewReport(ctx);

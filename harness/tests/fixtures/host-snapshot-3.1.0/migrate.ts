@@ -12,6 +12,7 @@ import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir } fr
 import { resolveWorkflowSpec } from '../../../workflow-loader';
 import { resolveSuccessorExecutionScope } from '../../../scripts/utils/feature-execution-scope';
 import { loadEffectiveExecutionScope } from '../../../scripts/utils/goal-run-creation';
+import { computeGateFingerprint } from '../../../scripts/utils/gate-fingerprint';
 import { assessFeature } from '../../../scripts/utils/feature-assessment';
 import { resolveChangeUnitExpectedExecution } from '../../../scripts/utils/change-unit-completion';
 import { EMPTY_LEDGER_TEST, checksDisplayedBankRows, publishRequestedVerifier, readDeliveredVerifierRequest, signedVerifierDraftPath, writeSpecMaterials, writeCuSpecMaterials, writeTestPlan } from '../../unit/real-chain.unit.test';
@@ -21,7 +22,8 @@ import { publishFixtureVerifierEvidence } from '../../utils/verifier-evidence-fi
 import { runGoalRuntimeChain } from '../../unit/goal-runner-testing-integrity.unit.test';
 import { preserveRuntimeTestEvidence } from '../../utils/runtime-test-control';
 import { executionRequestForInvoke, stageVerifierHandbacks } from '../../../scripts/utils/session-execution-handoff';
-import { resolveCompletionDisposition } from '../../../scripts/utils/verify-feature-completion';
+import { resolveCompletionDisposition, type FeatureCompletion } from '../../../scripts/utils/verify-feature-completion';
+import { loadPhaseEvidenceManifest } from '../../../scripts/utils/phase-evidence-manifest';
 import { codingTestPreservation } from '../../../scripts/utils/repair-responsibility';
 import { ensureFakeDeveco } from '../../unit/successor-exit.unit.test';
 import { git, provisionFrameworkUnder, synthesizeTestChainProfile } from '../../utils/real-chain-host';
@@ -297,6 +299,15 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string, deviceGa
     s.frameworkRoot, manifest.requirement, sourceRun, manifest.fidelity);
   assert(successorScope?.phase_chain.length, 'the actual original request must have a nonempty current successor scope');
   const chain = successorScope.phase_chain;
+  const staleGates = chain.flatMap(phase => {
+    const file = path.join(featurePhaseReportsDir(s.root, feature, phase, s.frameworkRoot), 'summary.json');
+    if (!fs.existsSync(file)) return [];
+    const old = JSON.parse(fs.readFileSync(file, 'utf8')).gate_fingerprint;
+    const current = computeGateFingerprint(s.frameworkRoot, phase);
+    assert(current, `迁移须能计算当前门禁指纹：${phase}`);
+    return old && old !== current ? [{ phase, file, old, current }] : [];
+  });
+  assert(staleGates.some(gate => gate.phase === 'review'), 'the preserved snapshot must exercise a changed gate fingerprint');
   const p = snapshotProject(s, feature);
   const evidenceFiles = ['context/facts.md', 'acceptance.yaml', 'contracts.yaml', 'spec/spec.md'].map(file => featureFilePath(s.root, feature, file));
   const returned: ReturnedDrafts = new Map();
@@ -358,6 +369,36 @@ export async function migrateHostSnapshot(s: Snapshot, feature: string, deviceGa
   assert.equal(probe.exitCode, 0, JSON.stringify({ events: probe.events.slice(-5), checks: failureChecks }));
   assert(after.complete, JSON.stringify({ record: after.record, obligations: after.obligations.filter(o => o.status === 'uncovered') }));
   assert(after.record.state === 'ok' && after.record.run_id, '新完成必须仍可信并有 run 身份');
+  const completion = JSON.parse(fs.readFileSync(featureFilePath(s.root, feature, `goal-runs/${after.record.run_id}/feature-completion.json`), 'utf8')) as FeatureCompletion;
+  for (const gate of staleGates) {
+    const currentReport = JSON.parse(fs.readFileSync(gate.file, 'utf8'));
+    assert.equal(currentReport.run_id, after.record.run_id, `阶段报告须来自真实重核的后继：${gate.phase}`);
+    assert.equal(currentReport.verdict, 'PASS', `阶段检查须实际通过：${gate.phase}`);
+    assert.equal(currentReport.gate_fingerprint, gate.current, `阶段报告须使用当前发布件门禁：${gate.phase}`);
+    const evidence = loadPhaseEvidenceManifest(s.root, feature, gate.phase);
+    assert(evidence?.integrityOk && evidence.manifest.environment.gate_fingerprint === gate.current, `后继须有当前阶段证据：${gate.phase}`);
+    const accepted = completion.phases.find(phase => phase.phase === gate.phase);
+    assert(accepted?.run_id === after.record.run_id && accepted.gate_fingerprint === gate.current
+      && accepted.evidence_manifest_aggregate === evidence.manifest.aggregate_sha256, `完成原件须接受同一份当前阶段证据：${gate.phase}`);
+    for (const file of [gate.file, path.join(path.dirname(gate.file), 'script-report.json')]) {
+      assert(evidence.manifest.outputs.some(entry => path.resolve(s.root, entry.path) === file && entry.sha256 === hash(file)),
+        `阶段证据须绑定实际报告原件：${file}`);
+    }
+    const verified = typeof currentReport.verifier_subject_id === 'string' ? loadVerifierEvidenceForSubject(
+      s.root, feature, gate.phase, currentReport.verifier_subject_id, { frameworkRoot: s.frameworkRoot }) : undefined;
+    const verifier = verified?.ok && verified.evidence.verdict === 'PASS' || currentReport.verifier_closure?.mode === 'completed_with_prior_review';
+    const passed = probe.events.some((start, startIndex) => {
+      if (start.type !== 'harness_start' || start.phase !== gate.phase || !start.invoke_id) return false;
+      const sameInvocation = (event: typeof start) => event.phase === gate.phase && event.invoke_id === start.invoke_id;
+      const endIndex = probe.events.findIndex((event, index) => index > startIndex && event.type === 'harness_end' && sameInvocation(event));
+      const end = probe.events[endIndex];
+      // A raw PASS awaiting independent review returns 1 until the verifier evidence is accepted.
+      if (!end || end.timed_out !== false || (end.exit_code !== 0 && !(end.exit_code === 1 && verifier))) return false;
+      return probe.events.slice(endIndex + 1).some(event => event.type === 'phase_verdict' && sameInvocation(event)
+        && event.stale_summary === false && event.verdict === 'PASS' && event.harness_exit === end.exit_code);
+    });
+    assert(passed, `失效的阶段门禁必须走实际阶段重核：${gate.phase} ${gate.old}`);
+  }
   if (feature === SNAPSHOT_CU_FEATURE) {
     const deviceDuty = (scope: typeof successorScope | null | undefined) =>
       scope?.obligations.find(fact => fact.kind === 'device-evidence')?.applicability;

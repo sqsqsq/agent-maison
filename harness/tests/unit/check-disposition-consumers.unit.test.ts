@@ -47,12 +47,17 @@ import { createGoalRun } from '../../scripts/utils/goal-run-creation';
 import { resolvePhaseHarnessVerdict } from '../../scripts/utils/goal-runner-phase';
 import { __testing_buildTestingRunStatusResult } from '../../scripts/check-testing';
 import { validateLiteSchema } from '../../scripts/utils/lite-json-schema';
-import { featureFilePath, featurePhaseReportsDir, clearFrameworkConfigCache } from '../../config';
+import { featureFilePath, featurePhaseReportsDir, clearFrameworkConfigCache, loadFrameworkConfig } from '../../config';
+import { loadResolvedProfile } from '../../profile-loader';
+import { prepareExplicitRequest, readRequestScriptConclusion } from '../../scripts/utils/capability-resolution-entry-input';
+import { resolveRequestInputs } from '../../scripts/utils/capability-resolution';
+import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { readFeatureFrozenScope, featureEffectiveScope } from '../../scripts/utils/feature-execution-scope';
 import { executionScopeFingerprint } from '../../scripts/utils/execution-scope';
 import { buildCorrectionState, writeCorrectionState } from '../../scripts/utils/correction-state';
 import { runAdhocCorrection } from '../../scripts/utils/correction-commands';
 import { makeVerifierProject, rmDir } from '../utils/verifier-project-fixture';
+import { completedCheckResultsFromOutput } from '../../scripts/utils/verify-feature-completion';
 import { setupRunlessProject } from './execution-scope.unit.test';
 import type { CheckResult, HarnessRunSummary, RequestCheckContext, ScriptReport } from '../../scripts/utils/types';
 import type { UnitCaseResult } from '../run-unit';
@@ -242,12 +247,19 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
         { match: { id: 'ctx_gate' }, protects: 'ledger_shape', basis: 'test', consequence: 'c' },
         { match: { id: 'p4_ledger_gate' }, protects: 'ledger_shape', basis: 'test', consequence: 'c' },
       ];
-      const root = fs.mkdtempSync(path.join(os.tmpdir(), 'p4-native-'));
+      const { root, frameworkRoot } = setupRunlessProject({ chain: ['review'] });
       try {
         fs.mkdirSync(path.join(root, 'doc', 'features', 'f'), { recursive: true });
         fs.writeFileSync(path.join(root, 'doc', 'features', 'f', 'compat.yaml'), [
           'schema_version: "1.0"', 'feature: f', 'exempt_checks: ["ctx_*"]', 'reason: "legacy"', 'scheduled_backfill_by: "2099-06-01"', '',
         ].join('\n'));
+        const source = 'src/demo/value.ts';
+        seedGit(root);
+        fs.writeFileSync(path.join(root, source), 'export const value: number = 42;\n');
+        const requestFile = 'doc/requests/disposition.json';
+        fs.mkdirSync(path.join(root, 'doc/requests'), { recursive: true });
+        fs.writeFileSync(path.join(root, requestFile), JSON.stringify({ schema_version: '1.0', phase: 'review',
+          requested_result: 'Review the selected value', targets: { files: [source], tests: [] }, baseline: { base: 'HEAD', head: 'WORKTREE' } }));
         for (const table of [[], ledger]) {
           withDispositionTableForTest(table, () => {
             // 报告合法性：只看失败不看级别，也不看去向表
@@ -258,19 +270,28 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
             assert.deepStrictEqual(stats.appliedIds, ['ctx_gate'], `compat 判据变了（表 ${table.length}）`);
             assert.strictEqual(results[0].status, 'WARN');
             // Request shares disclosures; other failures retain its stricter policy.
-            const reportDir = path.join(root, 'req', String(table.length));
-            const ctx = {
-              phase: 'coding', projectRoot: root, reportDir,
-              request: { request_sha256: 'a'.repeat(64), requested_result: 'r', baseline: null, bindings: [] },
-              resolvedInputs: { values: {} },
-            } as unknown as RequestCheckContext;
+            const reportDir = `doc/reports/disposition-${table.length}`;
+            const request = prepareExplicitRequest({ projectRoot: root, frameworkRoot, phase: 'review', requestFile, reportDir });
+            fs.mkdirSync(request.reportDir, { recursive: true });
+            fs.writeFileSync(request.inputs.review_report, REVIEW_REPORT_STATS_BROKEN);
+            const ctx: RequestCheckContext = { subject: 'request', phase: request.phase, projectRoot: root, frameworkRoot,
+              frameworkRel: 'framework', harnessRoot: path.join(frameworkRoot, 'harness'), reportDir: request.reportDir, request,
+              phaseRule: new SpecLoader(root, undefined, undefined, frameworkRoot).loadPhaseRule(request.phase),
+              resolvedProfile: loadResolvedProfile(root, loadFrameworkConfig(root), frameworkRoot),
+              resolvedInputs: resolveRequestInputs(root, frameworkRoot, request),
+              factsContext: { subject: { request_sha256: request.request_sha256, report_dir: reportDir },
+                first_phase: 'review', source_paths: [source], required_input_snippets: [] },
+            };
             assert.strictEqual(generateRequestScriptReport(ctx, [check('p4_ledger_gate', 'BLOCKER', 'FAIL')]).verdict, table.length ? 'PASS' : 'FAIL');
-            const requestSummary = JSON.parse(fs.readFileSync(path.join(reportDir, 'summary.json'), 'utf8'));
+            const result = readRequestScriptConclusion(root, frameworkRoot, request);
+            assert.strictEqual(result.reportFile, path.join(request.reportDir, 'script-report.json'));
+            assert.strictEqual(result.summary.verdict, table.length ? 'PASS' : 'FAIL');
+            const requestSummary = JSON.parse(fs.readFileSync(path.join(request.reportDir, 'summary.json'), 'utf8'));
             assert.strictEqual(requestSummary.disclosed_failures.length, table.length ? 1 : 0);
             assert.strictEqual(generateRequestScriptReport(ctx, [check('p4_major_gate', 'MAJOR', 'FAIL')]).verdict, 'FAIL');
           });
         }
-      } finally { rmDir(root); }
+      } finally { rmDir(root); clearFrameworkConfigCache(); }
     },
   },
   {
@@ -500,38 +521,52 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
   {
     name: 'A8 adhoc correction：结论与退出码不变（真实 git 工程）；A1 adhoc 包装 id 按声明处置',
     run: async () => {
-      for (const variant of ['fail', 'pass'] as const) {
-        const { root, frameworkRoot } = setupRunlessProject({ chain: ['coding'] });
-        const harnessRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'p4-adhoc-h-'));
-        try {
-          if (variant === 'fail') {
-            const configPath = path.join(root, 'framework.config.json');
-            const config = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-            config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
-            fs.writeFileSync(configPath, JSON.stringify(config));
+      const { root, frameworkRoot } = setupRunlessProject({ chain: ['coding'] });
+      try {
+        const source = 'src/demo/value.ts';
+        const configPath = path.join(root, 'framework.config.json');
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        config.project_profile = { name: 'hmos-app', sub_variant: 'app' };
+        fs.writeFileSync(configPath, JSON.stringify(config));
+        clearFrameworkConfigCache();
+        seedGit(root);
+        const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+        writeCorrectionState(root, { ...buildCorrectionState({ feature: null, root_layer: 'src', touched_layers: ['src'], revalidate: [],
+          base_commit: head, request_text: 'fix', enforcement_tier: 'soft_rule_only' }), target_files: [source] });
+        for (const expected of ['INCOMPLETE', 'FAIL', 'PASS'] as const) {
+          if (expected === 'FAIL') {
+            const ide = path.join(root, 'test-ide');
+            const node = path.join(ide, 'tools/node', path.basename(process.execPath));
+            const driver = path.join(ide, 'tools/hvigor/bin/hvigorw.js');
+            for (const dir of [path.dirname(node), path.dirname(driver), path.join(ide, 'sdk')]) fs.mkdirSync(dir, { recursive: true });
+            try { fs.linkSync(process.execPath, node); } catch { fs.copyFileSync(process.execPath, node); }
+            fs.writeFileSync(driver, `const {spawnSync} = require('node:child_process');\n`
+              + `const run = spawnSync(process.execPath, [${JSON.stringify(require.resolve('typescript/bin/tsc'))}, '--strict', '--skipLibCheck', '--noEmit', ${JSON.stringify(source)}], { stdio: 'inherit' });\n`
+              + `if (run.status === 0) console.log('BUILD SUCCESSFUL in 1 s');\nprocess.exitCode = run.status ?? 1;\n`);
+            fs.writeFileSync(path.join(root, 'framework.local.json'), JSON.stringify({ schema_version: '1.0', agent_adapter: 'generic',
+              toolchain: { devEcoStudio: { installPath: ide, hvigorBin: driver } } }));
+            fs.writeFileSync(path.join(root, 'build-profile.json5'), JSON.stringify({ app: { products: [{ name: 'default' }] },
+              modules: [{ name: 'demo', srcPath: './src/demo' }] }));
             clearFrameworkConfigCache();
           }
-          seedGit(root);
-          const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
-          writeCorrectionState(root, buildCorrectionState({
-            feature: null, root_layer: 'src', touched_layers: ['src'], revalidate: [], base_commit: head, request_text: 'fix', enforcement_tier: 'soft' as never,
-          }));
-          if (variant === 'fail') fs.writeFileSync(path.join(root, 'src/demo/value.ts'), 'export const value: number = 42;\n');
-          const exit = await runAdhocCorrection(root, harnessRoot, frameworkRoot);
+          fs.writeFileSync(path.join(root, source), `export const value: number = ${expected === 'FAIL' ? '"wrong"' : '42'};\n`);
           const reportsDir = path.join(root, 'doc', 'reports', '_adhoc');
-          const report = JSON.parse(fs.readFileSync(path.join(reportsDir, fs.readdirSync(reportsDir)[0], 'correction-report.json'), 'utf-8')) as { verdict: string; results: CheckResult[] };
-          const declaredBlocking = report.results.filter(r => r.status === 'FAIL' && r.severity === 'BLOCKER');
-          assert.strictEqual(report.verdict, declaredBlocking.length ? 'FAIL' : 'PASS', `${variant}: 结论须等于声明计数`);
-          assert.strictEqual(exit, declaredBlocking.length ? 1 : 0, `${variant}: 退出码`);
-          assert.strictEqual(report.verdict, variant === 'fail' ? 'FAIL' : 'PASS', `${variant}: ${JSON.stringify(report.results.map(r => [r.id, r.status, r.severity]))}`);
-          if (variant === 'fail') {
-            const wrapped = report.results.find(r => r.id === 'adhoc_coding_compile');
-            assert(wrapped && wrapped.status === 'FAIL', JSON.stringify(report.results.map(r => r.id)));
-            assert.deepStrictEqual(resolveCheckDisposition(wrapped!), { action: 'block', entry: null }, 'A1：包装 id 按声明阻断');
-          }
+          const prior = new Set(fs.existsSync(reportsDir) ? fs.readdirSync(reportsDir) : []);
+          const exit = await runAdhocCorrection(root, HARNESS_ROOT, frameworkRoot);
+          const published = fs.readdirSync(reportsDir).filter(dir => !prior.has(dir));
+          assert.strictEqual(published.length, 1);
+          const report = JSON.parse(fs.readFileSync(path.join(reportsDir, published[0], 'correction-report.json'), 'utf8')) as { verdict: string; results: CheckResult[] };
+          assert.strictEqual(report.verdict, expected, JSON.stringify(report.results));
+          assert.strictEqual(report.verdict, resolveVerdictFromChecks(report.results));
+          assert.strictEqual(exit, expected === 'PASS' ? 0 : 1, `${expected}: 退出码`);
+          const wrapped = report.results.find(r => r.id === 'adhoc_coding_compile');
+          assert(wrapped && wrapped.status === (expected === 'PASS' ? 'PASS' : 'FAIL'), JSON.stringify(report.results));
+          if (expected === 'INCOMPLETE') assert.strictEqual(wrapped.failure_kind, 'project_build_environment_inconsistent');
+          if (expected === 'FAIL') assert.match(wrapped.details, /TS2322/);
+          if (expected !== 'PASS') assert.deepStrictEqual(resolveCheckDisposition(wrapped), { action: 'block', entry: null }, 'A1：包装 id 按声明阻断');
           for (const r of report.results) assert.strictEqual(isBlockingCheck(r), r.status === 'FAIL' && r.severity === 'BLOCKER', `A1：${r.id}`);
-        } finally { rmDir(root); rmDir(harnessRoot); clearFrameworkConfigCache(); }
-      }
+        }
+      } finally { rmDir(root); clearFrameworkConfigCache(); }
     },
   },
   // ---- 第二批（t4、t5）：披露登记的公开入口、归因与恢复出口 ----
@@ -579,45 +614,37 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
     },
   },
   {
-    name: '第二批 披露：探索账本两条经真实 CLI review——结论与退出码改变；无有效baseline的旧facts schema须真实重建',
+    name: '真实 CLI review 不按研究计数或编辑方式裁决，有效事实仍须就绪',
     run: () => {
       const ledger = runReviewCli(REVIEW_REPORT_CLEAN, {
-        searches_performed_estimate: 1, touches_layers: ['src', 'data', 'domain'], exploration_mode: 'subagent', subagents_used: 'not_available',
+        files_inspected_count: 0, searches_performed_estimate: 0, decisions_unlocked: [],
+        touches_layers: ['src', 'data', 'domain'], exploration_mode: 'subagent', subagents_used: 'not_available',
       });
       try {
-        const raw = (ledger.script?.checks ?? []).filter(c => c.status === 'FAIL').map(c => `${c.id}/${c.severity}`).sort();
-        assert.deepStrictEqual(raw, ['context_exploration_searches_min/BLOCKER', 'context_exploration_subagents_used/BLOCKER'], `前提：只有两条探索账本原始 FAIL\n${ledger.cli.out}`);
-        assert.strictEqual(ledger.cli.status, 0, ledger.cli.out);
+        assert(ledger.cli.out.includes('Verdict: PASS'), ledger.cli.out);
         assert.strictEqual(ledger.summary?.verdict, 'PASS');
-        assert.deepStrictEqual(ledger.summary?.disclosed_failures?.map(d => d.id).sort(), ['context_exploration_searches_min', 'context_exploration_subagents_used']);
-        assert.strictEqual(ledger.summary?.completion_status, 'COMPLETE_WITH_GAPS');
+        assert.strictEqual(ledger.summary?.blocker_count, 0);
+        assert.strictEqual(ledger.cli.status, 1, '没有独核时公开出口仍报告未完成');
+        assert.strictEqual(ledger.summary?.closure_status, 'open');
+        const current = completedCheckResultsFromOutput(ledger.cli.out).find(result => result.phase === 'review');
+        assert.deepStrictEqual(current?.evaluation.disposition.completionBlocking.map(problem => problem.id), ['attestation_present']);
+        const retired = new Set(['context_exploration_files_inspected_min', 'context_exploration_searches_min',
+          'context_exploration_subagents_used']);
+        assert(ledger.script?.checks.every(check => !retired.has(check.id)), ledger.cli.out);
+        const decisions = ledger.script?.checks.find(check => check.id === 'context_exploration_decisions_unlocked');
+        if (decisions?.status === 'FAIL') {
+          assert(ledger.summary?.disclosed_failures?.some(check => check.id === decisions.id), ledger.cli.out);
+        }
       } finally { ledger.cleanup(); }
-      const version = runReviewCli(REVIEW_REPORT_CLEAN, { schema_version: '1.0' });
-      try {
-        assert.notStrictEqual(version.cli.status, 0, '链首建立阶段仍被拦住');
-        assert(version.cli.out.includes('context_exploration_facts_input_context'), `按事实调用契约拒收，不能误导为修改capability contract：\n${version.cli.out}`);
-      } finally { version.cleanup(); }
-    },
-  },
-  {
-    // plan 3abca824 t4（A7）：review 是首个实际建立阶段、无 baseline；每次只触发一条候选原始 FAIL。
-    // delta 缺节、空节的公开入口证据在 real-chain-seams RC-8c / RC-8d（goal 真实链路，plan 为非建立阶段）。
-    name: 'P5 第二批 披露：自报文件数、未列解锁决策经真实 CLI review——原始 FAIL 仍在，退出码 0、结论 PASS、进披露清单',
-    run: () => {
-      for (const [label, overrides, id] of [
-        ['文件数', { files_inspected_count: 1 }, 'context_exploration_files_inspected_min'],
-        ['decisions', { decisions_unlocked: [] }, 'context_exploration_decisions_unlocked'],
+      for (const [facts, id] of [
+        [{ schema_version: '1.0' }, 'context_exploration_facts_input_context'],
+        [{ ready_to_produce: false }, 'context_exploration_facts_ready'],
       ] as const) {
-        const r = runReviewCli(REVIEW_REPORT_CLEAN, overrides);
+        const incomplete = runReviewCli(REVIEW_REPORT_CLEAN, facts);
         try {
-          const raw = (r.script?.checks ?? []).filter(c => c.status === 'FAIL').map(c => `${c.id}/${c.severity}`).sort();
-          assert.deepStrictEqual(raw, [`${id}/BLOCKER`], `${label} 前提：完整检查结果里只有这一条原始 FAIL\n${r.cli.out}`);
-          assert.strictEqual(r.cli.status, 0, `${label}：退出码\n${r.cli.out}`);
-          assert(r.cli.out.includes('Verdict: PASS'), `${label}：控制台结论\n${r.cli.out}`);
-          assert.strictEqual(r.summary?.verdict, 'PASS', label);
-          assert.deepStrictEqual(r.summary?.disclosed_failures?.map(d => d.id), [id], label);
-          assert.strictEqual(r.summary?.completion_status, 'COMPLETE_WITH_GAPS', label);
-        } finally { r.cleanup(); }
+          assert.notStrictEqual(incomplete.cli.status, 0, incomplete.cli.out);
+          assert(incomplete.cli.out.includes(id), incomplete.cli.out);
+        } finally { incomplete.cleanup(); }
       }
     },
   },

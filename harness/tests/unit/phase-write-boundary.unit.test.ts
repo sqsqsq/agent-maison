@@ -9,6 +9,7 @@ import {
   capturePhaseInvocationSnapshot,
   classifyPhaseInvocationChanges,
   diffPhaseInvocationSnapshots,
+  completedInvocationWritePaths,
   resolvePhasePathOwnership,
   resolvePhaseWriteBoundary,
   renderPhaseWriteBoundaryGuidance,
@@ -115,6 +116,25 @@ function resolve(root: string, phaseOrder: readonly string[] = CHAIN, executionR
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
 
+  run(results, 'OpenCode completed edit consumes the native filePath; unpaired or failed operations prove no write', () => {
+    const root = makeHost();
+    try {
+      const filePath = 'src/one edited.ts';
+      const event = (callID: string, status: string, target: string, tool = 'edit') => JSON.stringify({
+        type: 'tool_use', sessionID: 'ses_fixture', part: { type: 'tool', tool, callID, state: { status, input: { filePath: target } } },
+      });
+      const stream = [
+        event('call-1', 'running', filePath),
+        event('call-1', 'completed', filePath),
+        event('call-2', 'error', 'src/failed.ts'),
+        event('call-3', 'running', 'src/incomplete.ts'),
+        event('call-4', 'completed', 'src/read.ts', 'read'),
+      ].join('\n');
+      const actual = [...completedInvocationWritePaths(root, 'opencode', stream)];
+      assert(actual.length === 1 && actual[0] === filePath, JSON.stringify(actual));
+    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+  });
+
   run(results, '77105c47 framework review recovery records only the projection after real sources recover', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'blueprint-review-recovery-'));
     fs.cpSync(path.join(__dirname, '../fixtures/component-blueprint/valid'), root, { recursive: true });
@@ -131,7 +151,7 @@ export function runAll(): UnitCaseResult[] {
       const before = 'a'.repeat(64);
       const conflict = (file: string, pre_sha256: string, ts = '2026-11-24T12:00:00Z') => ({
         type: 'phase_write_violation' as const, phase: 'initial-design-decomposition', invoke_id: 'i17', ts,
-        violations: [{ path: relative(file), pre_sha256, violation: 'outside_authority' }],
+        violations: [{ path: relative(file), pre_sha256, violation: 'outside_authority', authority_confirmed: true }],
       });
       const violation = conflict(projection, before);
       const events = [violation, conflict(f.blueprintFile, hash(blueprint))];
@@ -178,17 +198,19 @@ export function runAll(): UnitCaseResult[] {
     } finally { fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   });
 
-  run(results, '3ec91fa7 externally changed phase output requires fresh exact proof from its declared owner', () => {
+  run(results, 'time-window-only drift does not block recovery; a proven unauthorized edit still requires current owner proof', () => {
     const root = makeHost();
     try {
       const file = `doc/features/${FEATURE}/spec/spec.md`;
       const hash = (value: string) => createHash('sha256').update(value).digest('hex');
       const events = [{ type: 'phase_write_violation', phase: 'work-unit-author', invoke_id: 'older-call', ts: '2026-11-19T12:00:00Z',
         violations: [{ path: file, pre_sha256: hash('previous signed bytes'), post_sha256: hash('untrusted'), owner: 'spec',
-          violation: 'signed_input_drift', window: 'before_binding' }] }];
+          violation: 'signed_input_drift', window: 'before_binding', authority_confirmed: false }] }];
       const current = { feature: FEATURE, frameworkRoot: FRAMEWORK_ROOT };
-      const blocked = () => unresolvedPhaseWrites(root, events, current).has(file);
       write(root, file, 'new authority bytes');
+      assert(!unresolvedPhaseWrites(root, events, current).size, 'historical time windows cannot establish writer identity');
+      events[0].violations = [{ ...events[0].violations[0], violation: 'outside_authority', authority_confirmed: true }];
+      const blocked = () => unresolvedPhaseWrites(root, events, current).has(file);
       assert(blocked(), 'changing the hash does not resolve the conflict');
       const report = (name: string) => path.relative(root, path.join(featurePhaseReportsDir(root, FEATURE, 'spec', FRAMEWORK_ROOT), name));
       write(root, report('summary.json'), JSON.stringify({ verdict: 'PASS', closure_status: 'closed' }));
@@ -253,7 +275,7 @@ export function runAll(): UnitCaseResult[] {
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   });
 
-  run(results, 'absent watch root is an empty preimage; creation is observed and read failures remain unverifiable', () => {
+  run(results, 'absent watch root is observable; permission failure matters for signed inputs only', () => {
     const root = makeHost();
     const boundary = { ...resolve(root, CHAIN, 'verifier'), protectedRoots: ['not-created'] };
     const nativeFs = require('fs') as typeof import('fs');
@@ -272,7 +294,10 @@ export function runAll(): UnitCaseResult[] {
         return Reflect.apply(descriptor.value, nativeFs, [file, ...args]);
       } });
       const denied = capturePhaseInvocationSnapshot(boundary);
-      assert(!!denied.failureReason && diffPhaseInvocationSnapshots(before, denied).kind === 'unverifiable', 'permission failure must not become a clean empty snapshot');
+      assert(!denied.failureReason, 'an unrelated unreadable tree cannot reject a handback');
+      const signed = capturePhaseInvocationSnapshot({ ...boundary, immutableInputPaths: ['not-created'] });
+      assert(!!signed.failureReason && diffPhaseInvocationSnapshots(before, signed).kind === 'unverifiable',
+        'an unreadable signed input cannot be treated as a clean snapshot');
     } finally { Object.defineProperty(nativeFs, 'lstatSync', descriptor); fs.rmSync(root, { recursive: true, force: true }); }
   });
 

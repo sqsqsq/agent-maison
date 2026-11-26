@@ -257,10 +257,24 @@ export function writeA21473ReplayAuthor(root: string, frameworkRoot: string, con
   }
   if (!fs.existsSync(facts) || inputsOnly) {
     const code = inputs.filter(file => /\.(ets|ts)$/.test(file));
+    const findings = [
+      { file: '01-Product/Phone/src/main/ets/pages/index.ets', markers: ['buildBankCardSelectionPage', 'buildAddCardResultPage', 'CardPackPage'],
+        fact: '同一个路由入口分发选卡页、开卡结果页，并保留 CardPackPage 分支', impact: '原首页与银行卡页面的跳转可以沿现有栈恢复' },
+      { file: '04-BusinessBase/AccountManager/src/main/ets/domain/service/AccountService.ets', markers: ['async getMockPhone(): Promise<string>'],
+        fact: '账户服务公开返回手机号的 getMockPhone 异步接口', impact: 'OTP 页面从原账号责任方读取手机号' },
+      { file: CARD_CORE, markers: ['canSubmit(): boolean', 'this.code', 'this.store.saveCard(card)'],
+        fact: '提交检查验证码状态，保存结果取自仓储返回值', impact: '验证码和真实保存结果决定成功、失败分支的验收' },
+    ];
+    const codeFacts = findings.map(({ file, markers, fact, impact }) => {
+      assert(code.includes(file), `research admits the source of ${fact}`);
+      const source = fs.readFileSync(path.join(root, file), 'utf8');
+      assert(markers.every(marker => source.includes(marker)), `current source must support ${fact}`);
+      return `| ${file} | ${fact} | ${impact} |`;
+    });
     write(root, path.relative(root, facts), '---\n' + YAML.stringify({ schema_version: '1.1', feature: context.feature, run_id: context.runId,
       established_by: context.factsContext.first_phase, ready_to_produce: true, has_blocker_coverage_risk: false, exploration_mode: 'sequential',
       key_inputs_read: inputs, source_code_paths: code, files_inspected_count: inputs.length, searches_performed_estimate: 6, subagents_used: 'none',
-      decisions_unlocked: ['original bank-card request and current repair'] }) + '---\n## Code Facts\n' + code.slice(0, 10).map(file => `- ${file}: ${fs.readFileSync(path.join(root, file), 'utf8').split('\n')[0]}\n`).join(''));
+      decisions_unlocked: ['复用原入口与账号服务，按实际验证码和保存结果验证开卡'] }) + '---\n## Code Facts\n| 路径 | 事实 | 影响 |\n|---|---|---|\n' + codeFacts.join('\n') + '\n');
   }
   for (const phase of context.chain) researchSnapshotFacts(root, facts, phase, context.factsContext);
   // Check construction addresses before expensive tools; this is not execution or completion proof.

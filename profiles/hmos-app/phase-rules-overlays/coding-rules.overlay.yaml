@@ -450,16 +450,10 @@ traceability_checks:
 
   diff_within_scope:
     description: >
-      git diff 中涉及的所有位于架构层目录下（由 framework.config.json
-      的 outer_layers[].id 构造的顶层前缀集合）的文件，其路径前缀必须属于
-      plan.in_scope_modules 对应的 package_path 之一。
-      越界文件即 BLOCKER，用于阻止 coding 默默扩大改动范围。
-      非模块文件（doc/、specs/、skills/、harness/、adapter 在实例根落地的点号开头配置目录、根配置等）
-      视为框架性变更，不纳入本检查。
+      本次实现及实际依赖须符合原请求明确的范围和操作权限。Git 差异提供对照，
+      范围以契约、已解析依赖和经确认的具体操作核实。独立 review 核对删除、
+      重命名、实际调用方和契约。并行修改只进入相应请求；真实越权仍阻断。
     severity: BLOCKER
     rule:
-      source: "plan.md > Scope 声明与继承 > yaml.in_scope_modules"
-      layer_prefixes: "framework.config.json > architecture.outer_layers[].id"
-      module_paths: "contracts.yaml > modules[].package_path"
-      diff_base_ref: "未设置时默认 working（当前工作区/暂存/未跟踪 vs HEAD）；$HARNESS_DIFF_BASE_REF 可设为 HEAD~1、分支名或 SHA 以纳入已提交差异"
-      validate: "all(changed_files, f => not_under_layer_dir(f) or f.starts_with_any(allowed_package_paths))"
+      source: "原用户请求、当前契约及实际依赖"
+      diff_base_ref: "默认比较 HEAD 与当前字节，显式历史比较沿用户指定区间"

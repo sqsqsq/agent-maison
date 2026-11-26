@@ -905,6 +905,7 @@ export function readPhaseChecks(projectRoot: string, feature: string, phase: str
 export interface CurrentRequestDispositionOptions {
   endpoint: 'request';
   projectRoot: string;
+  frameworkRoot?: string;
   request: import('./capability-resolution-entry-input').PreparedRequest;
   checks?: readonly DispositionCheck[];
   summary?: { verdict?: string };
@@ -977,15 +978,14 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
   if ('request' in opts) {
     let checks = opts.checks;
     let summary = opts.summary;
+    let missingResult: string | undefined;
     if (checks === undefined) {
       try {
-        const report = JSON.parse(fs.readFileSync(path.join(opts.request.reportDir, 'script-report.json'), 'utf8')) as {
-          request_sha256?: string; targets?: import('./capability-resolution-entry-input').PreparedRequest['bindings']; checks?: DispositionCheck[]; summary?: { verdict?: string };
-        };
-        if (report.request_sha256 === opts.request.request_sha256 && JSON.stringify(report.targets) === JSON.stringify(opts.request.bindings) && Array.isArray(report.checks)) {
-          checks = report.checks; summary = report.summary;
-        }
-      } catch { /* 无当前请求结果就是待验证，不回读无关Feature材料。 */ }
+        const { readRequestScriptConclusion } = require('./capability-resolution-entry-input') as typeof import('./capability-resolution-entry-input');
+        const { inferRepoLayout } = require('../../repo-layout') as typeof import('../../repo-layout');
+        const result = readRequestScriptConclusion(opts.projectRoot, opts.frameworkRoot ?? inferRepoLayout(opts.projectRoot).frameworkRoot, opts.request);
+        checks = result.checks; summary = result.summary;
+      } catch (error) { missingResult = String(error); }
     }
     checks = checks?.map(check => {
       const evidence = typeof check.id === 'string' ? nativeCompileDiagnosticRefs(check, opts.projectRoot) : undefined;
@@ -1005,7 +1005,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       requiredGaps: (checks ?? []).filter(check => isRequiredCheckGap(check)), checks, failingChecks: (checks ?? []).filter(check => check.status === 'FAIL'),
       openFindings: reviewIssues }],
       ...(checks === undefined ? { additionalProblems: [{ phase: opts.request.phase, id: 'verdict_pass', action: 'verify' as const,
-        affects: 'completion' as const, severity: 'BLOCKER' as const, detail: `当前专项请求 ${opts.request.request_sha256} 尚无结果` }] } : {}) };
+        affects: 'completion' as const, severity: 'BLOCKER' as const, detail: `当前专项请求 ${opts.request.request_sha256} 尚无可用结果${missingResult ? '：' + missingResult : ''}` }] } : {}) };
   }
   opts = { ...opts, authorityReaders: opts.authorityReaders ?? (require('./identity-neutral-digest') as typeof import('./identity-neutral-digest')).createIdentityNeutralDigestReaders() };
   if (!opts.executionScope && opts.runId) opts = { ...opts, executionScope: resolveEffectiveScopeSource(opts.projectRoot, opts.feature, opts.runId)?.scope };
@@ -1016,8 +1016,10 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
   for (const outcome of strength) {
     if (outcome.passed) continue;
     if ('gap' in outcome) {
+      const waitingForDefinition = outcome.issue === 'required_check_conclusion' && outcome.gap.action === 'verify'
+        && (outcome.gap.owner === 'spec' || outcome.gap.owner === 'plan');
       additionalProblems.push({ phase: 'ut', source_phase: 'ut', id: outcome.issue, affects: 'completion',
-        severity: 'BLOCKER', ...outcome.gap, files: outcome.files });
+        severity: 'BLOCKER', ...outcome.gap, ...(waitingForDefinition ? { owner: 'ut' } : {}), files: outcome.files });
       continue;
     }
     const verdict = outcome.verdict?.verdict;
@@ -1071,13 +1073,6 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
         runId: opts.runId,
         authorityReaders: opts.authorityReaders,
         pendingOwnerPhase: opts.pendingOwnerPhase,
-      }).map(entry => {
-        if (!entry.propagated_from) return entry;
-        const own = recomputePhaseEvidenceStaleness(projectRoot, feature, [entry.phase], {
-          currentRequirementSha: opts.currentRequirementSha, frameworkRoot: opts.frameworkRoot, runId: opts.runId,
-          authorityReaders: opts.authorityReaders, pendingOwnerPhase: opts.pendingOwnerPhase,
-        })[0];
-        return own?.verdict === 'fresh' ? own : entry;
       })
     : [];
   let openDebt = 0;
@@ -1408,15 +1403,10 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
     const proofCurrent = proofIsCurrent(phase);
     const current = proofCurrent === false ? undefined : opts.currentResults?.find(result => result.phase === phase);
     const s = readSummaryLattice(projectRoot, feature, phase, current?.summary);
-    // 链式传播只是上游缺口的提示，不是本阶段证据已经失效；直接绑定仍由原reader逐项核实。
-    const observedLineage = staleness.find(row => row.phase === phase) ?? recomputePhaseEvidenceStaleness(projectRoot, feature, [phase], {
+    const lineage = staleness.find(row => row.phase === phase) ?? recomputePhaseEvidenceStaleness(projectRoot, feature, [phase], {
       currentRequirementSha: opts.currentRequirementSha, frameworkRoot: opts.frameworkRoot, runId: opts.runId,
-      authorityReaders: opts.authorityReaders, pendingOwnerPhase: opts.pendingOwnerPhase,
+      authorityReaders: opts.authorityReaders,
     })[0];
-    const lineage = observedLineage?.propagated_from ? recomputePhaseEvidenceStaleness(projectRoot, feature, [phase], {
-      currentRequirementSha: opts.currentRequirementSha, frameworkRoot: opts.frameworkRoot, runId: opts.runId,
-      authorityReaders: opts.authorityReaders, pendingOwnerPhase: opts.pendingOwnerPhase,
-    })[0] : observedLineage;
     const schemaCurrent = SUMMARY_ASSURANCE_SCHEMA_VERSIONS.has(String(s.schemaVersion));
     const raw = (s.raw ?? {}) as { blocking_skips?: Array<{ id?: string; blocking_class?: string }> };
     const subject = (s.raw as { verifier_subject_id?: string } | null)?.verifier_subject_id;
@@ -1547,9 +1537,8 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       completionStatus: s.completionStatus,
       lineage: proofCurrent === false ? 'stale' : current ? null : lineage ? lineage.verdict : null,
       ...(proofCurrent === false ? { lineageDetail: `当前证据早于最近一次要求重验：${scopeHistory?.invalidatedAt.get(phase) ?? 'unknown'}` } : lineage && lineage.changed_paths.length
-        ? { lineageDetail: lineage.changed_paths.join(', ') + (lineage.propagated_from ? `（传染自 ${lineage.propagated_from}）` : '') }
+        ? { lineageDetail: lineage.changed_paths.join(', ') }
         : {}),
-      ...(lineage?.propagated_from ? { lineagePropagatedFrom: lineage.propagated_from } : {}),
       attestationPresent: chain.includes('review') && phase === 'review' ? !!loadReviewClosureAttestation(projectRoot, feature) : null,
       ...(phase === 'testing' ? { openDebt } : {}),
       openFindings,

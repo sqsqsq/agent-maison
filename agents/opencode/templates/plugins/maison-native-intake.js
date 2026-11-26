@@ -12,7 +12,6 @@ export const MaisonNativeIntake = async ({ directory }) => ({
   },
   'tool.execute.before': async (input, output) => {
     if (!['edit', 'write', 'apply_patch'].includes(input.tool)) return;
-    // SQLite is read by Node, so loading this plugin does not couple Bun to Node's SQLite ABI.
     const run = spawnSync('node', [path.join(directory, 'framework/agents/opencode/guard-tool.cjs')], {
       cwd: directory, input: JSON.stringify({ projectRoot: directory, ...input, args: output.args }),
       encoding: 'utf8', windowsHide: true, timeout: 15000,

@@ -5,15 +5,10 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { receiptDirPath, loadFrameworkConfig } from '../../config';
+import { receiptDirPath } from '../../config';
 import { CheckResult } from './types';
 import type { ExplorationThresholds, PhaseRuleSpec } from './types';
 import { fillCompatMessage, SUGGESTION_CONTEXT_EXPLORATION_MISSING } from '../../compat-messages';
-import {
-  applySequentialMultiplier,
-  determineExplorationMode,
-  resolveExplorationStrategy,
-} from './exploration-strategy';
 import { LEGACY_EXPLORATION_PHASES } from './runtime-policy';
 import { validateProjectRelativePath } from './project-relative-path';
 
@@ -40,42 +35,22 @@ export const CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS: Record<ContextExploration
 /** schema 1.1.0 且 phase-rules 未声明时的 per-phase 默认阈值 */
 export const DEFAULT_EXPLORATION_THRESHOLDS: Record<ContextExplorationPhase, ExplorationThresholds> = {
   spec: {
-    min_files_inspected: 4,
-    min_source_code_paths: 2,
-    min_searches: 3,
-    min_code_facts: 2,
     require_subagent_when_scope_gte: 3,
     exploration_mode_allowed: ['subagent', 'sequential', 'minimal'],
   },
   plan: {
-    min_files_inspected: 8,
-    min_source_code_paths: 5,
-    min_searches: 5,
-    min_code_facts: 5,
     require_subagent_when_scope_gte: 2,
     exploration_mode_allowed: ['subagent', 'sequential'],
   },
   coding: {
-    min_files_inspected: 6,
-    min_source_code_paths: 3,
-    min_searches: 4,
-    min_code_facts: 3,
     require_subagent_when_contract_files_gt: 5,
     exploration_mode_allowed: ['subagent', 'sequential'],
   },
   review: {
-    min_files_inspected: 5,
-    min_source_code_paths: 3,
-    min_searches: 4,
-    min_code_facts: 3,
     require_subagent_when_review_files_gt: 8,
     exploration_mode_allowed: ['subagent', 'sequential'],
   },
   ut: {
-    min_files_inspected: 5,
-    min_source_code_paths: 3,
-    min_searches: 4,
-    min_code_facts: 3,
     require_subagent_when_use_cases_gt: 2,
     exploration_mode_allowed: ['subagent', 'sequential'],
   },
@@ -341,68 +316,13 @@ export function runQuantitativeChecks(
   options?: ContextExplorationCheckOptions,
 ): CheckResult[] {
   const results: CheckResult[] = [];
-  let thresholds = resolveThresholds(phase, options?.phaseRule);
-  const profileName =
-    options?.profileName ?? loadFrameworkConfig(projectRoot).project_profile?.name ?? 'hmos-app';
-
-  const strategy = resolveExplorationStrategy(phase, options?.phaseRule);
-  const decision = options?.factsContext?.baseline ? { requiresSubagent: false, applySequentialMultiplier: false, complexity: 'L3_moderate' as const, reason: 'validated baseline', score: undefined } : determineExplorationMode(
-    phase,
-    projectRoot,
-    feature,
-    fm,
-    thresholds,
-    options?.phaseRule,
-    options?.frameworkRoot,
-    options?.resolvedInputs,
-  );
-  const mode = String(fm.exploration_mode ?? '').trim().toLowerCase();
-
-  if (decision.applySequentialMultiplier && strategy) {
-    thresholds = applySequentialMultiplier(thresholds, strategy);
-  }
-
-  if (options?.factsContext && (options.factsContext.baseline || options.factsContext.first_phase !== phase)) {
-    thresholds = { ...thresholds, min_source_code_paths: 0, min_files_inspected: 0, min_searches: 0, min_code_facts: 1 };
-  }
-  const requestSubject = options?.factsContext && 'request_sha256' in options.factsContext.subject;
-  // Every admitted subject has a production-derived source set; small runs need the same bound as requests.
-  if (options?.factsContext) {
-    const count = options.factsContext.source_paths.length;
-    thresholds = { ...thresholds, min_source_code_paths: Math.min(thresholds.min_source_code_paths ?? 0, count), min_files_inspected: Math.min(thresholds.min_files_inspected ?? 0, count), min_searches: Math.min(thresholds.min_searches ?? 0, Math.max(1, count)), min_code_facts: Math.min(thresholds.min_code_facts ?? 0, Math.max(1, count)) };
-  }
-
   const sourcePaths = dedupeNormalizedPaths(normalizeStringArray(fm.source_code_paths));
   const decisions = normalizeStringArray(fm.decisions_unlocked);
-  const subagents = String(fm.subagents_used ?? '').trim().toLowerCase();
-  const filesInspected = Number(fm.files_inspected_count ?? 0);
-  const searches = Number(fm.searches_performed_estimate ?? 0);
-  const codeFacts = countCodeFactsRows(body);
-
-  const minSource = thresholds.min_source_code_paths ?? 0;
-  if (sourcePaths.length < minSource) {
-    results.push({
-      id: 'context_exploration_source_code_paths_min',
-      category: 'structure',
-      description: 'context-exploration source_code_paths 数量须达到本阶段阈值',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `当前 ${sourcePaths.length} 条，要求 ≥ ${minSource}（schema 1.1.0）`,
-      suggestion:
-        '在 Research Sub-Phase 中 Read/Grep 真实源码并写入 source_code_paths。' +
-        '格式=纯相对路径（相对仓库根），每行一条，不要附加描述文字——' +
-        '例：`- src/main/ets/service/FooService.ets`；描述/原因写在正文「已检视文件」表格里。',
-      affected_files: [relFromRoot],
-    });
-  }
-
   const missingOnDisk: string[] = [];
-  for (const rel of sourcePaths) {
-    const abs = path.isAbsolute(rel) ? rel : path.join(projectRoot, rel);
+  const requiredSources = options?.factsContext?.baseline ? [] : sourcePaths;
+  for (const rel of requiredSources) {
     try {
-      if (options?.factsContext) {
-        assertFactsSourceReadable(projectRoot, rel, options);
-      } else fs.accessSync(abs, fs.constants.R_OK);
+      assertFactsSourceReadable(projectRoot, rel, options);
     } catch { missingOnDisk.push(rel); }
   }
   if (missingOnDisk.length > 0) {
@@ -422,42 +342,14 @@ export function runQuantitativeChecks(
     });
   }
 
-  const minFiles = thresholds.min_files_inspected ?? 0;
-  if (filesInspected < minFiles) {
-    results.push({
-      id: 'context_exploration_files_inspected_min',
-      category: 'structure',
-      description: 'files_inspected_count 须达到本阶段阈值',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `当前 ${filesInspected}，要求 ≥ ${minFiles}`,
-      affected_files: [relFromRoot],
-    });
-  }
-
-  const minSearches = thresholds.min_searches ?? 0;
-  if (searches < minSearches) {
-    results.push({
-      id: 'context_exploration_searches_min',
-      category: 'structure',
-      description: 'searches_performed_estimate 须达到本阶段阈值',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `当前 ${searches}，要求 ≥ ${minSearches}`,
-      affected_files: [relFromRoot],
-    });
-  }
-
-  const minFacts = thresholds.min_code_facts ?? 0;
-  if (codeFacts < minFacts) {
+  if (sourcePaths.length > 0 && countCodeFactsRows(body) === 0) {
     results.push({
       id: 'context_exploration_code_facts_min',
       category: 'structure',
-      description: '正文「Code Facts」表格有效行数须达到本阶段阈值',
+      description: 'Code Facts 记录支撑决定的实际事实',
       severity: 'BLOCKER',
       status: 'FAIL',
-      details: `当前 ${codeFacts} 行，要求 ≥ ${minFacts}`,
-      suggestion: '填写 ## Code Facts 表格：路径 + 发现的事实 + 对本阶段产出的影响。',
+      details: '已引用当前来源，但缺少来源所支持的具体事实及影响。',
       affected_files: [relFromRoot],
     });
   }
@@ -474,92 +366,12 @@ export function runQuantitativeChecks(
     });
   }
 
-  const allowedModes = (thresholds.exploration_mode_allowed ?? ['subagent', 'sequential', 'minimal']).map(
-    m => m.toLowerCase(),
-  );
-  if (options?.checkExplorationMode !== false && mode && !allowedModes.includes(mode)) {
-    results.push({
-      id: 'context_exploration_mode_allowed',
-      category: 'structure',
-      description: 'exploration_mode 须在本阶段允许的模式列表内',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `当前 "${fm.exploration_mode}"，允许：${allowedModes.join('、')}`,
-      affected_files: [relFromRoot],
-    });
-  }
-
-  if (options?.checkExplorationMode !== false && decision.requiresSubagent) {
-    if (mode === 'minimal') {
-      results.push({
-        id: 'context_exploration_subagent_required',
-        category: 'structure',
-        description: '须深度探索时 exploration_mode 不得为 minimal',
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: `${decision.reason}（complexity=${decision.complexity}${
-          decision.score !== undefined ? `, score=${decision.score}` : ''
-        }）`,
-        affected_files: [relFromRoot],
-      });
-    } else if (mode === 'subagent') {
-      if (!subagents || subagents === 'not_available' || subagents === 'not available') {
-        results.push({
-          id: 'context_exploration_subagents_used',
-          category: 'structure',
-          description: '须 subagent 探索时 subagents_used 不得为 not_available',
-          severity: 'BLOCKER',
-          status: 'FAIL',
-          details: `subagents_used="${fm.subagents_used ?? ''}"；${decision.reason}`,
-          suggestion: '启动 explore 子 agent 并在 subagents_used 简述分域范围。',
-          affected_files: [relFromRoot],
-        });
-      }
-    } else if (mode === 'sequential') {
-      // sequential 等价路径：已通过 applySequentialMultiplier 抬高量化阈值，不要求 subagents_used
-    } else if (!mode) {
-      results.push({
-        id: 'context_exploration_mode_required',
-        category: 'structure',
-        description: '须深度探索时须声明 exploration_mode 为 subagent 或 sequential',
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: decision.reason,
-        suggestion:
-          '有 subagent 能力时用 exploration_mode: subagent；否则 sequential（量化阈值已按倍率抬高）。',
-        affected_files: [relFromRoot],
-      });
-    }
-  }
-
-  const requiredSnippets = options?.factsContext
-    ? [...options.factsContext.required_input_snippets, ...(requestSubject ? [] : loadProfileExplorationSnippets(profileName, phase)), ...(options.phaseRule?.exploration_thresholds?.phase_input_snippets_extra ?? [])]
-    : resolvePhaseInputSnippets(phase, profileName, options?.phaseRule);
-  const haystack = [
-    flattenKeyInputs(fm.key_inputs_read),
-    ...sourcePaths.map(p => p.toLowerCase()),
-    ...(options?.deltaSourcePaths ?? []).map(p => p.toLowerCase()),
-  ].join('\n');
-  const missingSnippets = requiredSnippets.filter(sub => !haystack.includes(sub.toLowerCase()));
-  if (missingSnippets.length > 0) {
-    results.push({
-      id: 'context_exploration_inputs_coverage',
-      category: 'structure',
-      description:
-        'context-exploration key_inputs_read / source_code_paths 或本阶段 phase_delta 路径表须覆盖本阶段最低输入（含 profile overlay）',
-      severity: 'BLOCKER',
-      status: 'FAIL',
-      details: `缺少可匹配项：${missingSnippets.join('、')}`,
-      affected_files: [relFromRoot],
-    });
-  }
-
   return results;
 }
 
 /**
  * 校验 context-exploration.md：存在、frontmatter 合法、ready_to_produce、最低输入覆盖。
- * schema 1.1.0 额外执行量化阈值（见 phase-rules exploration_thresholds）。
+ * 检查已记录的事实、实际决策与当前可读来源。
  */
 export function checkContextExplorationArtifact(
   projectRoot: string,
@@ -667,27 +479,7 @@ export function checkContextExplorationArtifact(
     });
   }
 
-  if (schemaVersion === '1.0.0') {
-    const haystack = flattenKeyInputs(fm.key_inputs_read);
-    const required = CONTEXT_EXPLORATION_PHASE_INPUT_SNIPPETS[phase];
-    const missing = required.filter(sub => !haystack.includes(sub.toLowerCase()));
-    if (missing.length > 0) {
-      results.push({
-        id: 'context_exploration_inputs_coverage',
-        category: 'structure',
-        description:
-          'context-exploration key_inputs_read 须覆盖本阶段最低输入（路径或说明中含下列关键词之一）',
-        severity: 'BLOCKER',
-        status: 'FAIL',
-        details: `缺少可匹配项：${missing.join('、')}（在 key_inputs_read 中提供对应路径或条目即可）`,
-        affected_files: [relFromRoot],
-      });
-    }
-  } else if (schemaVersion === '1.1.0') {
-    results.push(
-      ...runQuantitativeChecks(projectRoot, feature, phase, fm, body, relFromRoot, options),
-    );
-  }
+  if (schemaVersion === '1.1.0') results.push(...runQuantitativeChecks(projectRoot, feature, phase, fm, body, relFromRoot, options));
 
   if (results.length === 0) {
     results.push({

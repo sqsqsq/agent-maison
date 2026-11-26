@@ -14,6 +14,7 @@ import {
   artifactReadCandidatePaths,
   featureDir,
   featureFilePath,
+  featurePhaseReportsDir,
   receiptDirPath,
   relFeaturesDir,
   resolveFeatureArtifact,
@@ -29,7 +30,8 @@ import {
 } from './skill-contract';
 import { SpecLoader } from './spec-loader';
 import { tryLoadDiffExcludeTestPathRegexes, tryLoadUtSourceRootResolver } from '../../profile-host-loader';
-import type { ContractsSpec, HarnessResolvedProfile } from './types';
+import type { ContractsSpec, HarnessResolvedProfile, HarnessRunSummary } from './types';
+import type { EvidenceEntry } from './phase-evidence-manifest';
 import type { CorrectionCategory } from './correction-routing';
 import type { ExecutionScope } from './execution-scope';
 import type { WorkflowSpec } from '../../workflow-loader';
@@ -124,21 +126,10 @@ export function workUnitProtectedRecordPaths(projectRoot: string, feature: strin
 }
 
 /** Write permission is a view of the unit's actual inputs/outputs, never its current method. */
-export function workUnitMayWritePath(resolution: PhaseWriteBoundaryResolution, candidate: string): boolean {
-  const normalized = normalizeResponsibilityPath(resolution.projectRoot, candidate);
-  const within = (prefix: string): boolean => normalized === prefix || normalized.startsWith(prefix + '/');
-  if (within('framework') || resolution.immutableInputPaths?.some(within)) return false;
-  if (resolution.executionRole === 'verifier') {
-    return !!resolution.verifierResultPath && normalized === resolution.verifierResultPath;
-  }
-  if (resolution.executionRole !== 'author') return false;
-  const domains = resolution.domains.filter(domain => (domain.match === 'exact' ? normalized === domain.path : within(domain.path))
-    && !(domain.excludedPrefixes ?? []).some(within));
-  // Skill outputs remain editable; the existing writers/checkers decide which evidence is valid.
-  if (domains.some(domain => domain.kind === 'artifact')) return true;
-  if (domains.some(domain => domain.kind === 'source')) return true;
-  return domains.some(domain => domain.kind === 'phase_workspace');
-}
+export const { workUnitMayWritePath } = require('../../../agents/shared/work-unit-write-authority.cjs') as {
+  workUnitMayWritePath(resolution: PhaseWriteBoundaryResolution, candidate: string,
+    options?: { ownedPrefixes?: readonly string[]; includeFiles?: readonly string[] }): boolean;
+};
 
 function toPosix(value: string): string {
   return value.replace(/\\/g, '/');
@@ -758,7 +749,19 @@ export function compareExistingTestPreservation(before: string | undefined, afte
   return { preserved, reason: preserved ? '既有用例定义与断言原样保留，未新增测试、断言或跳过声明' : '用例定义、断言或跳过声明发生变化；需独立核验当前授权验收与断言强度' };
 }
 
-/** Existing pre-write hashes select the original; an older run Git version is never substituted. */
+function recordedUtClosureStatus(projectRoot: string, feature: string, outputs: readonly EvidenceEntry[]): HarnessRunSummary['closure_status'] {
+  try {
+    const summaryPath = path.join(featurePhaseReportsDir(projectRoot, feature, 'ut'), 'summary.json');
+    const binding = outputs.find(entry => path.resolve(projectRoot, entry.path) === summaryPath);
+    if (!binding?.sha256) return undefined;
+    const bytes = fs.readFileSync(summaryPath);
+    if (crypto.createHash('sha256').update(bytes).digest('hex') !== binding.sha256) return undefined;
+    const summary = JSON.parse(bytes.toString('utf8')) as HarnessRunSummary;
+    return summary?.feature === feature && summary.phase === 'ut' ? summary.closure_status : undefined;
+  } catch { return undefined; }
+}
+
+/** Re-read the selected historical test when old assertion preservation is at issue. */
 export function codingTestPreservation(input: { projectRoot: string; feature: string; file: string; runId?: string }): { preserved: boolean; reason: string; beforeText?: string } {
   const { validateProjectRelativePath, isInsideProjectRoot } = require('./project-relative-path') as typeof import('./project-relative-path');
   try {
@@ -768,26 +771,25 @@ export function codingTestPreservation(input: { projectRoot: string; feature: st
     input = { ...input, file };
   } catch (error) { return { preserved: false, reason: `测试引用不在当前工程内：${(error as Error).message}` }; }
   const { readFileAtRef, resolveEffectiveDiffBaseline } = require('./git-diff') as typeof import('./git-diff');
+  const { loadPhaseEvidenceManifest, sha256File } = require('./phase-evidence-manifest') as typeof import('./phase-evidence-manifest');
+  const evidence = loadPhaseEvidenceManifest(input.projectRoot, input.feature, 'ut');
+  const recorded = evidence?.integrityOk && [...evidence.manifest.outputs, ...evidence.manifest.inputs]
+    .find(entry => entry.path === input.file && entry.exists && entry.sha256);
+  const current = sha256File(path.resolve(input.projectRoot, input.file));
   const baseline = resolveEffectiveDiffBaseline(input.projectRoot, input.feature, input.runId);
-  if (!baseline.available) return { preserved: false, reason: baseline.reason };
-  const original = readFileAtRef(input.projectRoot, baseline.baseSha, input.file);
-  let expected: string | null | undefined;
-  let authorWriteStarted = false;
-  if (input.runId) {
-    const { loadLineageRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
-    for (const event of loadLineageRunEvents(input.projectRoot, input.feature, input.runId)) {
-      if (event.type !== 'phase_write_observed') continue;
-      const rows = [...((event as { owned?: Array<{ path: string; pre_sha256?: string | null; post_sha256?: string | null }> }).owned ?? []),
-        ...((event as { observations?: Array<{ path: string; pre_sha256?: string | null; post_sha256?: string | null }> }).observations ?? [])];
-      for (const row of rows.filter(row => row.path === input.file)) {
-        if (event.phase === 'ut') { expected = row.post_sha256 === undefined ? 'unverifiable' : row.post_sha256; authorWriteStarted = false; }
-        else if (!authorWriteStarted) { expected = row.pre_sha256 === undefined ? 'unverifiable' : row.pre_sha256; authorWriteStarted = true; }
-      }
+  const original = baseline.available ? readFileAtRef(input.projectRoot, baseline.baseSha, input.file) : null;
+  // An open UT result only records the tested input bytes.
+  if (recorded && evidence?.integrityOk && (!original || recorded.sha256 !== current)) {
+    const closure = recordedUtClosureStatus(input.projectRoot, input.feature, evidence.manifest.outputs);
+    if (closure === 'closed' && recorded.sha256 === current && !original) {
+      return { preserved: true, reason: '当前测试字节与已核验的 UT 原件一致' };
+    }
+    if (closure !== 'open' && (!original || crypto.createHash('sha256').update(original).digest('hex') !== recorded.sha256)) {
+      return { preserved: false, reason: '缺少与原 UT 报告绑定匹配的测试文本，既有断言保持待独立核验' };
     }
   }
-  const originalHash = original ? crypto.createHash('sha256').update(original).digest('hex') : null;
-  if (expected !== undefined && expected !== originalHash) return { preserved: false, reason: '真实前置测试版本不在可读取的 Git 原件中；不能用更旧 run baseline 代替，交独立核验' };
-  const before = expected === undefined || original === null || original === undefined ? {} : { beforeText: original.toString('utf8') };
+  if (!baseline.available) return { preserved: false, reason: baseline.reason };
+  const before = original ? { beforeText: original.toString('utf8') } : {};
   let after: string;
   try { after = fs.readFileSync(path.resolve(input.projectRoot, input.file), 'utf8'); }
   catch { return { preserved: false, reason: '测试文件删除或不可读取；交独立核验', ...before }; }
