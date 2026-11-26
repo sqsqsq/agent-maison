@@ -9,7 +9,7 @@ import { clearFrameworkConfigCache } from '../../config';
 import { loadInstanceExtensions } from '../../extension-loader';
 import { detectRepoLayout } from '../../repo-layout';
 import { changeExtension, withExtensionWrite, type ExtensionMutation } from '../../scripts/utils/extension-lifecycle';
-import { activeExtensionRequests, inspectExtensionRequest } from '../../scripts/utils/extension-requests';
+import { inspectExtensionRequest } from '../../scripts/utils/extension-requests';
 import { acceptSessionExecution, capturePhaseBinding, writePhaseExecutionRequestMaterial } from '../../scripts/utils/session-execution-handoff';
 import { casAcquireRunOwner, ensureRunControl } from '../../scripts/utils/goal-run-control';
 import { capturePhaseInvocationSnapshot, type PhaseWriteBoundaryResolution } from '../../scripts/utils/phase-write-boundary';
@@ -62,7 +62,6 @@ function inProject(body: (projectRoot: string, source: string, extensionDir: str
 function state(projectRoot: string, action: ExtensionMutation, opts: { ability?: string; source?: string; binding?: string } = {}) {
   return withExtensionWrite(projectRoot, frameworkRoot, () => changeExtension(action, {
     projectRoot, frameworkRoot, ability: 'ux', ...opts,
-    activeRequests: (ability, source) => activeExtensionRequests(projectRoot, ability, source),
   }));
 }
 
@@ -96,7 +95,8 @@ function issueDesign(projectRoot: string, requestId: string, source: string, cu 
   const phase = cu ? 'work-unit-author' : 'initial-design-author';
   const issuedAt = '2026-11-25T00:01:00Z';
   const owner = { run_id: runId, owner_id: 'writer', epoch: 1, kind: 'session' as const };
-  const binding = { source, ability: 'ux', id: 'fill', at, kind: 'action', ref: 'ux', delivery: 'action' };
+  const binding = { source, ability: 'ux', id: 'fill', at, kind: 'action', ref: 'ux', delivery: 'action',
+    path: 'doc/extensions/skills/ux/SKILL.md' };
   if (boundary) {
     ensureRunControl(runDir, runId);
     assert(casAcquireRunOwner(runDir, runId, 0, { kind: owner.kind, owner_id: owner.owner_id }).ok);
@@ -234,6 +234,52 @@ const cases = [
       assert.equal(inspectExtensionRequest(project, signed.path, 'ux').settled, true);
       assert(state(project, 'uninstall').filesRemoved.includes('doc/extensions/skills/ux/SKILL.md'));
       assert(!fs.existsSync(path.join(extensionDir, 'skills/ux/SKILL.md')));
+    }),
+  },
+  {
+    name: '在途签发只保护实质改变的受管动作资源，同字节与无关更新仍可安装',
+    run: () => inProject((project, source, extensionDir) => {
+      state(project, 'install', { source });
+      const signed = issueDesign(project, 'active-update-author', 'local-ux');
+      assert.deepEqual(state(project, 'install', { source }).filesWritten, []);
+      write(path.join(source, 'knowledge/intake.md'), '# updated independent knowledge\n');
+      assert.deepEqual(state(project, 'install', { source }).filesWritten, ['doc/extensions/knowledge/intake.md']);
+
+      const sourceManifest = path.join(source, 'manifest.yaml');
+      const declarations = YAML.parse(fs.readFileSync(sourceManifest, 'utf8'));
+      declarations.provides.skills.push('neighbor');
+      declarations.bindings.neighbor = { read: { ...declarations.bindings.ux.read } };
+      write(sourceManifest, YAML.stringify(declarations));
+      write(path.join(source, 'skills/neighbor/SKILL.md'), '# unrelated skill\n');
+      assert.deepEqual(state(project, 'install', { source, ability: 'neighbor' }).filesWritten,
+        ['doc/extensions/skills/neighbor/SKILL.md']);
+      write(path.join(source, 'knowledge/intake.md'), '# incompatible shared update\n');
+      assert.throws(() => state(project, 'install', { source, ability: 'neighbor' }), /文件被其他能力拥有/);
+      assert.equal(fs.readFileSync(path.join(extensionDir, 'knowledge/intake.md'), 'utf8'), '# updated independent knowledge\n');
+      write(path.join(source, 'knowledge/intake.md'), '# updated independent knowledge\n');
+
+      const skill = 'skills/ux/SKILL.md';
+      const reference = 'skills/ux/reference/stable.md';
+      const file = path.join(extensionDir, skill);
+      const asset = path.join(extensionDir, reference);
+      const manifest = path.join(extensionDir, 'manifest.yaml');
+      const before = [file, asset, manifest, path.join(project, signed.path)].map(target => fs.readFileSync(target));
+      write(path.join(source, skill), '---\nname: ux\n---\n# updated UX skill\n');
+      write(path.join(source, reference), '# updated skill asset\n');
+      const deferred = runCli(project, 'install', source, 'ux');
+      assert.equal(deferred.status, 1, deferred.stdout + deferred.stderr);
+      const output = JSON.parse(deferred.stdout);
+      assert.deepEqual(output.mutation.requestIds, ['active-update-author']);
+      assert.match(output.mutation.message, /重试安装/);
+      assert.deepEqual(output.mutation.retained.map((item: { path: string }) => item.path),
+        ['doc/extensions/' + skill, 'doc/extensions/' + reference]);
+      assert.deepEqual(output.mutation.filesWritten, []);
+      assert.deepEqual([file, asset, manifest, path.join(project, signed.path)].map(target => fs.readFileSync(target)), before);
+
+      signed.append({ type: 'agent_invoke_end', invoke_id: 'active-update-author', phase: signed.phase, exit_code: 0 });
+      assert.deepEqual(state(project, 'install', { source }).filesWritten.sort(),
+        ['doc/extensions/' + skill, 'doc/extensions/' + reference]);
+      assert.equal(fs.readFileSync(asset, 'utf8'), '# updated skill asset\n');
     }),
   },
   {

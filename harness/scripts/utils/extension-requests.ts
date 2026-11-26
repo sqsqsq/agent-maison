@@ -67,11 +67,38 @@ function* authorRequests(projectRoot: string, requested?: string, activeOnly = f
   }
 }
 
-export function activeExtensionRequests(projectRoot: string, ability: string, source: string): string[] {
-  const matches = [...authorRequests(projectRoot, undefined, true)]
-    .filter(request => request.bindings.some(binding => binding.ability === ability && binding.source === source));
+function activeRequestIds(matches: Array<{ runId: string; requestId: string }>): string[] {
   return [...new Set(matches.map(request => matches.some(other => request.requestId === other.requestId && request.runId !== other.runId)
     ? `${request.runId}:${request.requestId}` : request.requestId))].sort();
+}
+
+export function activeExtensionRequests(projectRoot: string, ability: string, source: string): string[] {
+  return activeRequestIds([...authorRequests(projectRoot, undefined, true)]
+    .filter(request => request.bindings.some(binding => binding.ability === ability && binding.source === source)));
+}
+
+export function activeExtensionResourceRequests(projectRoot: string, paths: readonly string[]): { paths: string[]; requestIds: string[] } {
+  const retained = new Set<string>();
+  if (!paths.length) return { paths: [], requestIds: [] };
+  const comparable = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
+  const files = paths.map(file => ({ file, normalized: comparable(file) }));
+  const active = [...authorRequests(projectRoot, undefined, true)].filter(request => {
+    const root = request.issued.request.context.projectRoot;
+    let matched = false;
+    for (const binding of request.bindings) {
+      if (typeof binding.path !== 'string' || (binding.delivery !== 'action' && binding.delivery !== 'pointer')) continue;
+      const resource = comparable(relativeExtensionPath(root, path.resolve(root, binding.path)));
+      const skill = binding.delivery === 'action' && path.posix.basename(resource) === comparable('SKILL.md')
+        ? path.posix.dirname(resource) + '/' : undefined;
+      for (const { file, normalized } of files) {
+        if (normalized !== resource && (!skill || !normalized.startsWith(skill))) continue;
+        retained.add(file);
+        matched = true;
+      }
+    }
+    return matched;
+  });
+  return { paths: [...retained].sort(), requestIds: activeRequestIds(active) };
 }
 
 export function recordExtensionManagementWrites<T>(

@@ -10,7 +10,7 @@ import { extensionSkillIdsForBridge, loadInstanceExtensions } from '../extension
 import { detectRepoLayout } from '../repo-layout';
 import { emitInstanceSkillBridge } from './utils/instance-skill-bridge';
 import { formatExtensionInspection, inspectInstanceExtensions } from './utils/extension-inspect';
-import { activeExtensionRequests, inspectExtensionRequest, recordExtensionManagementWrites } from './utils/extension-requests';
+import { inspectExtensionRequest, recordExtensionManagementWrites } from './utils/extension-requests';
 import { changeExtension, extensionLocation, targetExtensionFrameworkRoot, withExtensionWrite } from './utils/extension-lifecycle';
 import { ordinaryFile, relativeExtensionPath, writeExtensionFileAtomic, type ObserveExtensionWrite } from './utils/extension-files';
 import { assertNoUnreplacedPlaceholders, buildAgentsTemplateVars, renderAgentsTemplate } from './utils/template-renderer';
@@ -184,11 +184,10 @@ function main(): void {
       const run = (observeWrite?: ObserveExtensionWrite) => {
         const result = changeExtension(action, {
           projectRoot, frameworkRoot: frameworkDir, source, ability, binding, observeWrite,
-          activeRequests: (ability, source) => activeExtensionRequests(projectRoot, ability, source),
         });
         if (result.requestIds?.length) {
           process.exitCode = 1;
-          return { ...result, message: '等待已有请求交回后重试卸载。' };
+          return { ...result, message: action === 'install' ? '等待已有请求交回后重试安装。' : '等待已有请求交回后重试卸载。' };
         }
         return {
           ...result,

@@ -7,6 +7,7 @@ import * as YAML from 'yaml';
 import { loadFrameworkConfig } from '../../config';
 import { extensionSkillIdsForBridge, loadInstanceExtensions, loadInstanceExtensionSource } from '../../extension-loader';
 import { scanExtensionSkills } from './instance-skill-bridge';
+import { activeExtensionRequests, activeExtensionResourceRequests } from './extension-requests';
 import { releaseLock, tryAcquireLock } from './goal-run-lock';
 import { isInsideProjectRoot, realProjectPath, validateProjectRelativePath } from './project-relative-path';
 import { ordinaryFile, ordinaryPath, relativeExtensionPath, writeExtensionFileAtomic, type ObserveExtensionWrite } from './extension-files';
@@ -268,7 +269,6 @@ interface ChangeOptions {
   source?: string;
   ability?: string;
   binding?: string;
-  activeRequests: (ability: string, source: string) => string[];
   observeWrite?: ObserveExtensionWrite;
 }
 
@@ -301,6 +301,7 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
     if (!options.source) throw new Error('用法：install <本地目录> [能力ID]');
     const input = sourcesForInstall({ ...options, projectRoot, frameworkRoot, root, source: options.source });
     const plannedFiles = new Map<string, InstallFile & { target: string; prior?: string }>();
+    const changedOwnedResources = new Set<string>();
     migrateHost(doc, bundle, projectRoot, relative);
     for (const ability of input.abilities) {
       const { id } = ability;
@@ -330,7 +331,10 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
         if (plannedFiles.get(hostRel)?.sha256 !== undefined && plannedFiles.get(hostRel)?.sha256 !== item.sha256) {
           throw new Error(`多个能力声明了不同的文件内容：${hostRel}`);
         }
-        if (actual !== item.sha256) plannedFiles.set(hostRel, { ...item, target, prior: actual });
+        if (actual !== item.sha256) {
+          plannedFiles.set(hostRel, { ...item, target, prior: actual });
+          if (prior && prior !== item.sha256) changedOwnedResources.add(hostRel);
+        }
         files = { ...files, [hostRel]: item.sha256 };
       }
       for (const [actionId, definition] of Object.entries(ability.mcpActions)) {
@@ -353,6 +357,11 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
       else if (previous && !input.inPlace) doc.deleteIn(['bindings', id]);
       result.abilities.push(id);
     }
+    const blockers = activeExtensionResourceRequests(projectRoot, [...changedOwnedResources]);
+    if (blockers.requestIds.length) return {
+      ...result, requestIds: blockers.requestIds,
+      retained: blockers.paths.map(file => ({ path: file, reason: '在途请求仍使用已安装资源' })),
+    };
     // Existing files retain their old receipt until replacement. New targets get a receipt before creation.
     for (const [hostRel, item] of plannedFiles) {
       if (!item.prior) continue;
@@ -381,7 +390,7 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
   const selection: Installation = previous ?? { source: bundle.manifestName ?? 'project-extensions', enabled: true, bindings: {}, files: {}, in_place: true };
 
   if (action === 'uninstall') {
-    const requestIds = options.activeRequests(ability, selection.source);
+    const requestIds = activeExtensionRequests(projectRoot, ability, selection.source);
     if (requestIds.length > 0) return { ...result, requestIds };
     migrateHost(doc, bundle, projectRoot, relative);
     for (const [hostRel, sha256] of Object.entries(selection.files)) {
