@@ -694,25 +694,26 @@ function readExtensionManifest(extRoot: string, projectRoot: string, options: Lo
           continue;
         }
         if (!isRecord(bucket)) {
-          pushError(bundle, 'skill_assets_bucket', `skill_assets.${sid} 必须是 assetKey→path 映射`, manifestPath);
+          pushError(bundle, 'skill_assets_bucket', `skill_assets.${sid} 必须是 assetKey→path 映射`, manifestPath, { source: manifestName, ability: sid });
           continue;
         }
         const acc: Record<string, string> = {};
         for (const [assetKey, rel] of Object.entries(bucket)) {
           const key = assetKey.trim();
+          const identity = { source: manifestName, ability: sid, bindingId: key };
           if (!key || typeof rel !== 'string' || !rel.trim()) {
-            pushError(bundle, 'skill_assets_entry', `skill_assets.${sid}.${assetKey} 非法`, manifestPath);
+            pushError(bundle, 'skill_assets_entry', `skill_assets.${sid}.${assetKey} 非法`, manifestPath, identity);
             continue;
           }
           try {
             const abs = safeResolve(extRoot, rel.trim());
             if (!fs.existsSync(abs)) {
-              pushError(bundle, 'skill_assets_missing', `skill_assets 文件不存在：${rel.trim()}`, abs);
+              pushError(bundle, 'skill_assets_missing', `skill_assets 文件不存在：${rel.trim()}`, abs, identity);
             } else {
               acc[key] = abs;
             }
           } catch (e) {
-            pushError(bundle, 'skill_assets_resolve', (e as Error).message, manifestPath);
+            pushError(bundle, 'skill_assets_resolve', (e as Error).message, manifestPath, identity);
           }
         }
         if (Object.keys(acc).length > 0) {

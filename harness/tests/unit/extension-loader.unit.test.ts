@@ -479,6 +479,7 @@ const cases: Case[] = [
       write(path.join(root, 'docs', 'knowledge.md'), '# Context');
       write(path.join(root, 'manifest.yaml'), [
         'schema_version: "2.0"', 'name: host', 'provides:', '  skills: [story, ux]',
+        '  skill_assets:', '    component-design: { knowledge: docs/old-missing.md }',
         'bindings:', '  ux:',
         '    read: {at: component-design.before_discovery@1, kind: knowledge, ref: docs/knowledge.md, enabled_by_default: true}',
         '    fill: {at: component-design.before_discovery@1, kind: action, ref: ux}',
@@ -498,6 +499,8 @@ const cases: Case[] = [
         assert(bad?.enabled === false && !!bad.reason?.includes('未知时点'), JSON.stringify(bad));
         assert(host.errors.some(error => error.bindingId === 'bad' && error.ability === 'ux' && error.at?.endsWith('@2')), 'attributed error');
         assert(host.errors.some(error => error.bindingId === 'missing' && error.ability === 'story'), 'bad resource still diagnosed when disabled');
+        assert(host.errors.some(error => error.code === 'skill_assets_missing' && error.source === 'host'
+          && error.ability === 'component-design' && error.bindingId === 'knowledge'), 'unavailable legacy design background retains precedence identity');
       } finally {
         fs.rmSync(project, { recursive: true, force: true });
       }
