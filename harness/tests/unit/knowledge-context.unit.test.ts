@@ -1,3 +1,4 @@
+import { putPlugin } from './extension-test-fixture';
 import { runUnitCasesAsync } from '../utils/unit-cases';
 import { testCliArgs } from '../utils/test-cli-args';
 import assert from 'assert';
@@ -167,12 +168,12 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.equal(assembleKnowledge({ ...args, phase: undefined, role: 'author', skill: 'component-design' }).entries.find(entry => entry.kind === 'architecture')?.content, architecture);
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
-  { name: 'design materialization consumes optional extension key before any blueprint; unconfigured asset does not fail docs', run() {
+  { name: 'design and project entry consume explicit knowledge bindings before any blueprint; unconfigured asset does not fail docs', run() {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'knowledge-design-'));
     try {
       const config = seed(root); config.project_profile = { name: 'hmos-app' }; config.materialized_adapters = ['cursor', 'claude']; put(root, 'framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
       materializeExtensions(root, frameworkRoot);
-      assert(fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8').includes('未声明可选资产'));
+      assert(fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8').includes('未声明可选 profile 资产'));
       const docs = validateProfileSkillAssetsForProject(root, { kind: 'standalone', projectRoot: root, frameworkRoot, frameworkRel: '' });
       assert(docs.ok, docs.errors.join('\n'));
       const prepare = (...extra: string[]) => cli(root, 'scripts/check-component-blueprint.ts',
@@ -184,16 +185,17 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.equal(absent.canonical_path, expectedPath);
       assert.deepEqual(absent.knowledge.entries, []);
       assert.deepEqual(absent.knowledge.notices, []);
-      const designPath = 'custom/extensions/knowledge/design.md';
+      const designPath = 'custom/extensions/knowledge-test/knowledge/design.md';
       const designText = '# design fact\n须脱敏日志。\n[原指引](intake.md)\n';
-      put(root, designPath, designText);
-      put(root, 'custom/extensions/knowledge/intake.md', '实际宿主设计原文。\n');
-      put(root, 'custom/extensions/manifest.yaml', 'schema_version: "1.1"\nname: knowledge-test\nprovides:\n  skill_assets:\n    component-design:\n      knowledge: knowledge/design.md\n');
+      putPlugin(root, 'knowledge-test', { extensionDir: 'custom/extensions', declaration: { bindings: {
+        design: { at: 'component-design.before_discovery@1', kind: 'knowledge', ref: 'knowledge/design.md' },
+        entry: { at: 'project.entry@1', kind: 'knowledge', ref: 'knowledge/design.md' },
+      } }, files: { 'knowledge/design.md': designText, 'knowledge/intake.md': '实际宿主设计原文。' } });
       materializeExtensions(root, frameworkRoot);
-      for (const file of ['AGENTS.md', 'CLAUDE.md']) assert(fs.readFileSync(path.join(root, file), 'utf8').includes('custom/extensions/knowledge/design.md'));
-      const view = assembleKnowledge({ projectRoot: root, frameworkRoot, skill: 'component-design' });
+      for (const file of ['AGENTS.md', 'CLAUDE.md']) assert(fs.readFileSync(path.join(root, file), 'utf8').includes(designPath));
+      const view = assembleKnowledge({ projectRoot: root, frameworkRoot, skill: 'component-design' }, 'design-knowledge');
       assert(renderKnowledge(view).includes('须脱敏日志'));
-      assert(inspectInstanceExtensions(root, frameworkRoot).rows.some(row => row.source === designPath && row.consumer.includes('P1 discovery')));
+      assert(inspectInstanceExtensions(root, frameworkRoot).rows.some(row => row.bindingId === 'design' && row.consumer.includes('component-design')));
       const selected = prepare();
       assert.equal(selected.status, 0, selected.stderr + selected.stdout);
       const direct = JSON.parse(selected.stdout);
@@ -220,24 +222,25 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     try {
       const config = seed(root); config.project_profile = { name: 'hmos-app' };
       put(root, 'framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
-      const manifestPath = 'custom/extensions/manifest.yaml';
+      const prefix = 'custom/extensions/contract-design/';
       const intake = 'knowledge/intake.md', constraints = 'knowledge/constraints.md', skill = 'skills/contract-examples/SKILL.md';
       const knowledge = { at: 'component-design.before_discovery@1', kind: 'knowledge', enabled_by_default: true };
       const manifest = {
-        schema_version: '2.0', name: 'contract-design',
-        provides: { skills: ['contract-examples'], skill_assets: { 'component-design': { knowledge: 'knowledge/host-design.md' } } },
-        bindings: { 'contract-examples': {
+        provides: { skills: ['contract-examples'] },
+        bindings: {
+          background: { ...knowledge, ref: 'knowledge/host-design.md' },
           intake: { ...knowledge, ref: intake },
           constraints: { ...knowledge, ref: constraints },
           draft: { at: knowledge.at, kind: 'action', ref: 'contract-examples', enabled_by_default: true },
           broken: { ...knowledge, at: 'harness.on_context_loda@1', phase: 'spec', ref: intake },
-        } },
+        },
       };
-      put(root, manifestPath, YAML.stringify(manifest));
-      put(root, 'custom/extensions/knowledge/host-design.md', '独立宿主设计背景。');
-      put(root, 'custom/extensions/' + intake, '准备契约的适用条件。');
-      put(root, 'custom/extensions/' + constraints, '核对调用方约束。');
-      put(root, 'custom/extensions/' + skill, '# Contract examples\n');
+      const register = () => putPlugin(root, 'contract-design', { extensionDir: 'custom/extensions', declaration: manifest });
+      register();
+      put(root, prefix + 'knowledge/host-design.md', '独立宿主设计背景。');
+      put(root, prefix + intake, '准备契约的适用条件。');
+      put(root, prefix + constraints, '核对调用方约束。');
+      put(root, prefix + skill, '# Contract examples\n');
       const prd = 'doc/inputs/requirements.md', material = 'doc/inputs/contract.txt', legacyMaterial = 'doc/inputs/older-input.json';
       put(root, prd, '为既有调用方设计契约。');
       put(root, material, '补充契约。');
@@ -267,15 +270,16 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.deepEqual(preparation.material_sources, [material, legacyMaterial]);
       assert.deepEqual(preparation.reference_images, ['doc/inputs/contract.jpg']);
       assert.deepEqual(preparation.bindings.map(({ id, path, delivery }: { id: string; path: string; delivery: string }) => [id, path, delivery]), [
-        ['intake', 'custom/extensions/' + intake, 'inline'], ['constraints', 'custom/extensions/' + constraints, 'inline'],
-        ['draft', 'custom/extensions/' + skill, 'action'],
+        ['background', prefix + 'knowledge/host-design.md', 'inline'],
+        ['intake', prefix + intake, 'inline'], ['constraints', prefix + constraints, 'inline'],
+        ['draft', prefix + skill, 'action'],
       ]);
       assert.deepEqual(output.knowledge.entries.map((entry: { content: string }) => entry.content),
         ['独立宿主设计背景。', '准备契约的适用条件。', '核对调用方约束。']);
       assert(!JSON.stringify(output).includes('unmentioned.ux.yaml'));
       assert(output.knowledge.notices.some((entry: string) => entry.includes('on_context_loda')));
       const instructions = preparation.author_instructions as string[];
-      assert(instructions.some(line => line.includes('设计前动作 contract-examples:draft [custom/extensions/' + skill + ']')
+      assert(instructions.some(line => line.includes('设计前动作 contract-design:draft [' + prefix + skill + ']')
         && line.includes('打开绑定资源')));
       const resultLine = instructions.flatMap(line => line.split('\n')).find(line => line.startsWith('extension-result: '));
       assert(resultLine);
@@ -287,21 +291,22 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.equal(pointer.extension_preparation?.bindings[0].delivery, 'pointer');
       assert.equal(pointer.knowledge.entries[1].content, undefined);
       assert.equal(prepareDesignExtensions({ ...options, lookupOnly: true }).extension_preparation, undefined);
-      const skipped = prepareDesignExtensions({ ...options, skipActions: ['contract-examples:draft'], materialSources: ['../outside.txt'] });
-      assert.deepEqual(skipped.extension_preparation?.skipped, ['contract-examples:draft']);
+      const skipped = prepareDesignExtensions({ ...options, skipActions: ['contract-design:draft'], materialSources: ['../outside.txt'] });
+      assert.deepEqual(skipped.extension_preparation?.skipped, ['contract-design:draft']);
       assert.deepEqual(skipped.extension_preparation?.material_sources, []);
       assert(skipped.knowledge.notices.some(notice => notice.includes('补充材料 ../outside.txt')));
-      manifest.bindings['contract-examples'].draft.enabled_by_default = false;
-      put(root, manifestPath, YAML.stringify(manifest));
+      manifest.bindings.draft.enabled_by_default = false;
+      register();
       const knowledgeOnly = prepareDesignExtensions(options).extension_preparation;
-      assert.deepEqual(knowledgeOnly?.bindings.map(item => item.id), ['intake', 'constraints']);
+      assert.deepEqual(knowledgeOnly?.bindings.map(item => item.id), ['background', 'intake', 'constraints']);
       const knowledgeInstructions = knowledgeOnly?.author_instructions;
       assert(knowledgeInstructions);
       assert(knowledgeInstructions.some(line => line.includes(resultLine)));
       assert(!knowledgeInstructions.some(line => line.includes('设计前动作')));
-      manifest.bindings['contract-examples'].intake.enabled_by_default = false;
-      manifest.bindings['contract-examples'].constraints.enabled_by_default = false;
-      put(root, manifestPath, YAML.stringify(manifest));
+      manifest.bindings.background.enabled_by_default = false;
+      manifest.bindings.intake.enabled_by_default = false;
+      manifest.bindings.constraints.enabled_by_default = false;
+      register();
       assert.equal(prepareDesignExtensions(options).extension_preparation?.author_instructions, undefined);
       assert.equal(fs.readFileSync(path.join(root, requestFile), 'utf8'), request);
       assert(!fs.existsSync(path.join(root, 'doc/features')));
@@ -314,9 +319,10 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     const { root, frameworkRoot: fw, feature } = setupRunlessProject();
     try {
       seed(root);
-      const specOnly = 'custom/extensions/knowledge/spec-only.md';
-      put(root, specOnly, '# 仅 spec 使用的术语整理要求\n');
-      put(root, 'custom/extensions/manifest.yaml', 'schema_version: "1.1"\nname: knowledge-isolation\nprovides:\n  knowledge:\n    - { path: knowledge/spec-only.md, summary: 仅 spec 使用, audience: [spec] }\n');
+      const specOnly = 'custom/extensions/knowledge-isolation/knowledge/spec-only.md';
+      putPlugin(root, 'knowledge-isolation', { extensionDir: 'custom/extensions', declaration: { bindings: {
+        guide: { at: 'feature.before_phase_work@1', phase: 'spec', kind: 'knowledge', ref: 'knowledge/spec-only.md' },
+      } }, files: { 'knowledge/spec-only.md': '# 仅 spec 使用的术语整理要求' } });
       const contractsFile = featureFilePath(root, feature, 'contracts.yaml');
       const contracts = YAML.parse(fs.readFileSync(contractsFile, 'utf8'));
       const targetFiles = ['src/demo/value.ts', ...Array.from({ length: 200 }, (_, index) => `src/demo/target-${index + 1}.ts`)];

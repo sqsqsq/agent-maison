@@ -12,8 +12,7 @@ defaults:
     profile: BLOCKER
     extension: MAJOR
 
-# The loader resolves both versioned manifest timing IDs and compatible shorthand
-# from these definitions. The owner named here still controls actual dispatch.
+# The loader derives versioned manifest timing IDs from these definitions.
 hook_events:
   - id: pre_phase
     version: 1
@@ -48,20 +47,22 @@ hook_contributions:
     hook_script: harness checker（脚本结果）；本轮实际组装的 verifier 提示（片段）
 
 contribution_timings:
+  - id: project.entry@1
+    scope: project
+    description: 物化项目入口时生成供项目维护者和作者阅读的随仓知识索引。
+    consumer: AGENTS.md / CLAUDE.md
+    resources: [knowledge_file]
   - id: feature.before_phase_work@1
-    legacy_slot: before_phase_work
     scope: feature
     description: Feature 作者动笔前准备输入，已声明 MCP 的产物随后由原 harness 检查。
     consumer: Feature 作者 / harness checker
     resources: [knowledge_file, skill, mcp]
   - id: feature.before_phase_verify@1
-    legacy_slot: before_phase_verify
     scope: feature
     description: 普通 Feature checker 运行前，由原 harness 检查 MCP 的声明产物。
     consumer: Feature harness checker
     resources: [mcp]
   - id: feature.after_phase_verify_before_close@1
-    legacy_slot: after_phase_verify_before_close
     scope: feature
     description: Feature 检查后、收口前，由原 receipt gate 检查 MCP 的声明产物。
     consumer: check-receipt

@@ -18,16 +18,16 @@ cd framework/harness && npx ts-node harness-runner.ts --phase extensions
 先用 `/extension inspect` 对账，再用 `/extension verify` 触发同一检查通道；inspect 的 JSON 与人话表
 必须同时列出类型、来源、生效时机、消费者、`available|scheduled|evidenced` 和当前状态。
 
-## 2. 带 `doc/extensions/` 的样例
+## 2. 安装随包样例
 
-本仓库演示包（钱包 SDK onboarding）包含（路径对齐 plan 白名单）：
+从已解包的 `framework/harness` 用下列命令安装、检视 [design-notes](../operations/samples/design-notes/)：
 
-- `manifest.yaml`（`provides.skills` / `knowledge` / `hooks`）
-- `skills/wallet-sdk-onboarding/SKILL.md` 与 `reference/wallet-rpc-conventions.md`
-- `knowledge/naming-taboos.md`
-- `hooks/coding/pre_check.mjs` 与 `hooks/spec/on_context_load.md`
+```bash
+npx ts-node scripts/extension.ts install ../docs/operations/samples/design-notes --project-root "<宿主根>" --json
+npx ts-node scripts/extension.ts inspect design-notes --project-root "<宿主根>" --json
+```
 
-跑一次 **feature 链**上阶段（如 `spec` / `plan` / `coding`）时，lifecycle hook 应**注入 verifier prompt 片段**且不默认阻断主链（演示 hook 仅追加轻量 prompt 片段；片段不进作者动笔前的上下文）。
+宿主登记与包内源分别位于 `doc/extensions/manifest.yaml` 和 `doc/extensions/design-notes/`。在真实设计前准备请求中核对指南和作者动作。完整请求、交回与停用步骤见 [Extension 接入协议](extension-protocol-v1.md)。
 
 ## 3. `render-agents-md` 与桥接产物
 
@@ -40,21 +40,21 @@ cd <repo-root> && node framework/harness/scripts/render-agents-md.mjs \
 ```
 
 使用 `--all-materialized-adapters` 时只读项目级 `materialized_adapters[]`，为所有 adapter 刷新桥接；
-不读取个人 `agent_adapter`。1.1 只物化 `provides.skills[]`，1.0 保持目录驱动。与内置 slash/跳板
+不读取个人 `agent_adapter`。入口只物化启用且已登记插件的 `provides.skills[]`。与内置 slash/跳板
 同名时用 **`ext-` 前缀** + stderr 告警。
 
 生成 bridge 带 ownership 标记：规范字节可覆盖/清理，标记件漂移只报告不动，无标记文件不接管。
 旧版无 ownership bridge 与普通用户文件同样保持 unowned/untouched；不会自动接管或纳入后续 orphan cleanup。
 
-## 4. Manifest 1.1 消费与 M7
+## 4. 时点消费、跨 clone 准备和 M7
 
-- global knowledge 只进 AGENTS/CLAUDE；Feature phase audience 只进对应 ai-prompt 索引；1.0 不消费 knowledge。
+- `project.entry@1` 在入口物化时生成静态知识索引；Feature 知识只进入绑定阶段的作者输入。旧平铺扩展显示手工接入提示，普通请求继续。
+- 用集成同一发布件的两份隔离 Git clone 验证本地产物：A 安装、启用并提交，B 首次取用生成、再次复用。A 升版后 B 保留同名旧产物，下一次使用可重建。删除产物、脚本失败后重试和隔离另一包的消费。A 删除包后 B 拉取仍保持干净，下次查看或准备时清除受管残留。含跟踪文件、手工资料或在途引用时保留。用 `git ls-files` 和 `git status` 核对。
 - required produces 缺失在 before-work/before-verify 的既有 CheckResult 或 after-verify 的 receipt 门禁失败；optional 缺失只报告降级。
 - `requirement-source-materialization@1` 与 `blueprint-review-feedback@1` 必须命中既有
   `check:component-blueprint --materialization/--feedback`。最小声明见
   [`../operations/samples/extension-m7-manifest.yaml`](../operations/samples/extension-m7-manifest.yaml)。
-- 反例：非法 manifest 不得物化目录 rogue Skill，且普通 Feature harness/receipt 必须出现 manifest
-  BLOCKER；`usage` 写 M7 但实际 artifact 未识别时，不得显示 M7 consumer。
+- 反例：未登记目录与非法插件清单不参与入口物化，显式扩展校验报告具体缺口。`usage` 写 M7 但实际 artifact 未识别时，检视只显示普通产物检查。
 
 **弱模型路径**：大文件渲染由 `/extension materialize` 的确定性 Node/TS 链落盘，避免模型手写 200+ 行入口文件。
 

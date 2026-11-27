@@ -21,21 +21,18 @@
 
 旧专项若没有 `gate_fingerprint`，即使版本与规则文件相同，也须沿原目录重验该阶段一次。原设计请求的编译、UT 与设备专项缺少实际模块或构建输入绑定时同样重验。旧报告及其原生记录保留。
 
-## 3.1.0 实例扩展安装、启停与设计前取用（plan 5247db24）
+## 3.1.0 实例扩展按插件组织与手工接入
 
-消费者集成支持扩展清单 2.0 的发布件后，可用 `/extension install <本地目录> [能力ID]`，并按能力或绑定选择启停。检查和只读加载保持存量 1.0／1.1 清单。首次写入需要 2.0 的选择时，原位保留当时生效的旧 Skill、路由、宿主身份、规则和手写资料。目标发布件尚无法读取 2.0 时会报告兼容缺口。
+3.1.0 读取按插件组织的清单 `2.0`。宿主选择保存在 `doc/extensions/manifest.yaml`（`kind: host`），提供方清单和资源保存在 `doc/extensions/<插件ID>/`（`kind: plugin`）。配置了 `paths.extension_dir` 时，以上路径从该根派生。
 
-安装、启停与卸载通过宿主 `paths.extension_dir/manifest.yaml` 保存选择和文件归属。重复安装保留启停选择。未完成的原签发请求仍可使用其授权副本，卸载会指出该请求 ID；交回后再次卸载，宿主修改过的文件、共享资源及已交付业务产物继续保留。扩展管理刷新项目已配置的入口。使用原位 `verify / materialize / inspect` 的宿主仍可沿原操作。
+升级发布件后，原有平铺扩展资料留在磁盘上。相关检视会提示「旧版扩展未加载，请按需手工整理后重新接入」，普通业务可继续。需要接入旧能力时按下列步骤操作：
 
-旧设计背景保持 extension 覆盖 profile 的优先级。给已有宿主加 UX 时，使用 `read-upstream` 和 `fill-missing` 的独立时点绑定。原有手写引用保持原样。保留手动 Skill 与读稿、停用自动补稿可执行 `extension disable ux-behavior-spec fill-missing`。后续直接或受管作者按本次签发的通用设计输入及扩展自身的取用指引执行。直接准备可用 `--material-source <项目相对文件>` 传显式补充材料，原 `--ux-source` 作为同一参数的兼容写法。能够归因的错误清单项从整体退出改为局部诊断，作用范围与原因可经 `inspect` 和现有扩展校验查到。
+1. 等依赖旧路径的在途工作交回。保留原扩展根和项目入口供核对。将旧根另行留存后建立干净的新根，或把 `paths.extension_dir` 改为新的项目相对路径。
+2. 由维护者和提供方决定各包的边界。比如把要一起升级的需求核对 Skill 和指南整理到 `design-notes/skills/design-notes/` 与 `design-notes/knowledge/`。该目录根写入 `schema_version: "2.0"`、`kind: plugin`、`name: design-notes` 和 `version`，通过 `provides.skills` 声明手动入口，通过 `bindings.<绑定ID>` 声明需要自动投递的知识或动作。把文件引用改为包内相对路径，按发布件时点表选择投递位置。也可把一份完整的裸 Skill 直接安装为仅供手动取用的包。
+3. 调用 `/extension install <来源目录>`，核对回执、宿主登记和生成入口。可加 `--no-enable`，先检视再选择启用。检查项目入口中的手写引用和旧桥，把仍需访问的旧路径按实际情况改到新包。扩展入口由安装或 `/extension materialize` 刷新。框架初始化仍沿普通 `/framework-init` 流程。
+4. 提交宿主清单、插件源码、锁文件、共享产物及扩展根的 `.gitignore`。clone 首次实际使用时按清单准备本地产物，后续就绪时复用。停用、卸载或升级可返回在途请求 ID，待交回后重试回执中的命令。宿主自有材料和已交付业务产物保留。
 
-安装及证据规则见 [Extension 接入协议](docs/evolution/extension-protocol-v1.md)。
-
-## 3.1.0 动态扩展与宿主阶段选择（plan ee85b0d3）
-
-更新 `framework/` 后，原 `1.0`、`1.1` 和 `2.0` 扩展继续可读，Story、UX 等静态能力沿用原声明。使用动态启用步骤或为旧绑定保存时点覆盖时，管理入口先核对目标发布件可读 `2.1`，再写入所需格式。新的宿主骨架仍可使用 `2.0`。提供方字段、启用步骤的执行与撤回及自测见 [Extension 接入协议](docs/evolution/extension-protocol-v1.md)。
-
-成品包首装按默认绑定启用，`install --no-enable` 保持只安装。裸 Skill 首装只公布手动入口，额外绑定可按授权在现有宿主清单中维护。若停用或卸载时原签发请求仍在使用扩展，回执会立即列出占用与原命令。交回后重试同一命令完成清理。检视也会报告新调度状态、剩余占用、启用失败和生成物漂移。宿主选择、已签资源与宿主自有文件继续保留。
+旧 1.0 发布格式和早期内测布局中的扩展专用知识字段，统一改为新包的显式时点绑定。例如项目常驻指南用 `project.entry@1`，设计前知识用 `component-design.before_discovery@1`。已有 UX 来源可按读稿和补稿分别选择，关闭补稿可执行 `extension disable ux-behavior-spec fill-missing`。协议含完整样例、阶段覆盖、动态准备和退出命令。[Extension 接入协议](docs/evolution/extension-protocol-v1.md)
 
 ## 3.1.0 初建设计准入与有进展续作（plan d18f6c42）
 

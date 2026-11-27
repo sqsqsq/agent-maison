@@ -11,7 +11,8 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { detectRepoLayout } from '../repo-layout';
 import { emitInstanceSkillBridge } from './utils/instance-skill-bridge';
-import { extensionSkillIdsForBridge, loadInstanceExtensions } from '../extension-loader';
+import { loadInstanceExtensions } from '../extension-loader';
+import { pendingExtensionUpgrades } from './utils/extension-lifecycle';
 import {
   assertNoUnreplacedPlaceholders,
   buildAgentsTemplateVars,
@@ -141,10 +142,13 @@ function main(): void {
     typeof paths.extension_dir === 'string' && paths.extension_dir.trim()
       ? paths.extension_dir.trim()
       : 'doc/extensions';
-  const bundle = loadInstanceExtensions(REPO_ROOT, extDir, { frameworkRoot: FRAMEWORK_DIR });
-  if (!bundle.manifestUsable) {
-    fail(`extension manifest/路径非法：${bundle.errors.map(error => `${error.code}: ${error.message}`).join('；')}`);
+  const loaded = loadInstanceExtensions(REPO_ROOT, extDir, { frameworkRoot: FRAMEWORK_DIR });
+  if (loaded.errors.length) {
+    for (const error of loaded.errors) process.stderr.write(`[render-agents-md] ${error.path ?? extDir}: ${error.message}\n`);
   }
+  const excludedPlugins = pendingExtensionUpgrades(loaded);
+  const bundle = excludedPlugins.size
+    ? loadInstanceExtensions(REPO_ROOT, extDir, { frameworkRoot: FRAMEWORK_DIR, excludedPlugins }) : loaded;
   const tpl = loadTemplate();
   const vars = buildAgentsTemplateVars(config, {
     entryFile: args['--entry-file'],
@@ -169,18 +173,16 @@ function main(): void {
     `[render-agents-md] wrote ${outPath} (${rendered.length} chars, ${lineCount} lines)\n`,
   );
 
-  if (!args['--no-instance-bridge']) {
+  if (!args['--no-instance-bridge'] && bundle.manifestUsable) {
     let adapters: string[];
     try { adapters = resolveRenderBridgeAdapters(config, Boolean(args['--all-materialized-adapters'])); }
     catch (error) { fail((error as Error).message); }
-    const declaredSkillIds = extensionSkillIdsForBridge(bundle);
     for (const agentAdapter of adapters) {
       const emit = emitInstanceSkillBridge({
         repoRoot: REPO_ROOT,
         frameworkDir: FRAMEWORK_DIR,
         agentAdapter,
-        extensionDirRel: extDir,
-        declaredSkillIds,
+        skills: bundle.manualSkills,
       });
       for (const w of emit.warnings) process.stderr.write(`[render-agents-md] ${w}\n`);
       process.stdout.write(

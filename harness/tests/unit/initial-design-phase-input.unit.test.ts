@@ -1,3 +1,4 @@
+import { putPlugin } from './extension-test-fixture';
 import { runUnitCasesAsync } from '../utils/unit-cases';
 import '../utils/transpile-only-env';
 import assert from 'assert';
@@ -135,13 +136,11 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
   name:'managed initial author freezes only the effective design knowledge in the actual request and keeps the blueprint write boundary',
   async run(){await withEmpty(async root=>{
     const feature='design-knowledge-input';
-    const source='doc/extensions/knowledge/design.md';
+    const source='doc/extensions/design-knowledge/knowledge/design.md';
     const body='# 真正由宿主提供的设计文本\n按原需求保留默认值决策与正式交接。\n';
-    fs.mkdirSync(path.dirname(path.join(root,source)),{recursive:true});
-    fs.writeFileSync(path.join(root,source),body,'utf8');
-    fs.writeFileSync(path.join(root,'doc/extensions/manifest.yaml'),YAML.stringify({
-      schema_version:'1.1',name:'installed-design-knowledge',provides:{skill_assets:{'component-design':{knowledge:'knowledge/design.md'}}},
-    }));
+    putPlugin(root, 'design-knowledge', { declaration: { bindings: { design: {
+      at: 'component-design.before_discovery@1', kind: 'knowledge', ref: 'knowledge/design.md',
+    } } }, files: { 'knowledge/design.md': body } });
     const input=definition(root,feature);let calls=0;
     const exit=await withRuntimeTest({root},()=>new GoalPhaseRuntime({
       args:['--manifest',input,'--project-root',root,'--framework-root',FRAMEWORK,'--foreground-ok','--authorize-autonomy'],authorization,
@@ -156,9 +155,11 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
         const material=context.workInput?.material;
         assert.deepEqual(issued.request.context.workInput?.material,material);
         const segments=material?.segments as unknown[] | undefined;
-        const delivered=segments?.filter(segment=>typeof segment==='string'&&segment.includes(body));
-        assert.equal(delivered?.length,1);
-        assert(String(delivered?.[0]).includes(source));
+        const delivered = segments?.find(segment => !!segment && typeof segment === 'object' && 'extension_preparation' in segment) as {
+          extension_preparation: { bindings: Array<{ path: string; resource_sha256: string }> };
+        } | undefined;
+        assert.equal(delivered?.extension_preparation.bindings[0].path, source);
+        assert.match(delivered?.extension_preparation.bindings[0].resource_sha256 ?? '', /^[0-9a-f]{64}$/);
         assert.deepEqual(issued.request.snapshot_options?.ownedPrefixes,[`doc/features/${feature}/blueprint`]);
         assert.equal(fs.readFileSync(path.join(root,source),'utf8'),body);
         return {status:'waiting',phase:context.phase,exitCode:0,stdout:'',stderr:'',command:'design-knowledge-observer'};
@@ -170,16 +171,11 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
   name: 'initial design handoff signs under the manager lock and the subsequent stop sees the original request',
   async run() { await withEmpty(async root => {
     const feature = 'design-extension-issuance';
-    const extensionRoot = path.join(root, 'doc/extensions');
+    const extensionRoot = putPlugin(root, 'design-action', { declaration: {
+      provides: { skills: ['design-action'] },
+      bindings: { action: { at: 'component-design.before_discovery@1', kind: 'action', ref: 'design-action' } },
+    }, files: { 'skills/design-action/SKILL.md': '# Extension action in the first signed design request\n' } });
     const skill = path.join(extensionRoot, 'skills/design-action/SKILL.md');
-    fs.mkdirSync(path.dirname(skill), { recursive: true });
-    fs.writeFileSync(skill, '# Extension action in the first signed design request\n');
-    fs.writeFileSync(path.join(extensionRoot, 'manifest.yaml'), YAML.stringify({
-      schema_version: '2.0', name: 'design-extension', provides: { skills: ['design-action'] },
-      bindings: { 'design-action': {
-        action: { at: 'component-design.before_discovery@1', kind: 'action', ref: 'design-action', enabled_by_default: true },
-      } },
-    }));
     const input = definition(root, feature);
     let starts = 0;
     let deliveries = 0;
@@ -204,7 +200,7 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
           assert.equal(starts, 1);
           const { context } = issued.request;
           assert.equal(context.phase, 'initial-design-author');
-          assert(context.instruction?.includes('doc/extensions/skills/design-action/SKILL.md'));
+          assert(context.instruction?.includes('doc/extensions/design-action/skills/design-action/SKILL.md'));
           const original = executionRequestForInvoke(context.runDir, issued.request.invoke_id);
           assert.equal(original?.reference.sha256, issued.reference.sha256);
           assert.equal(original?.event.type, 'phase_start');
@@ -227,7 +223,7 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
       const feature = `design-extension-${reason}`;
       const extensionRoot = path.join(root, 'doc/extensions');
       fs.mkdirSync(extensionRoot, { recursive: true });
-      fs.writeFileSync(path.join(extensionRoot, 'manifest.yaml'), 'schema_version: "2.0"\nname: extension-wait\n');
+      fs.writeFileSync(path.join(extensionRoot, 'manifest.yaml'), 'schema_version: "2.0"\nkind: host\nplugins: {}\n');
       const deadline = reason === 'deadline' ? new Date(Date.now() + 4_000).toISOString() : undefined;
       const { manifest } = prepare(root, feature, { userDeadlineAt: deadline });
       const runDir = path.join(root, manifest.report_dir);

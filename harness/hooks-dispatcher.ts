@@ -43,6 +43,7 @@ export interface DispatchLifecycleHooksResult {
 interface HookSlot {
   source: HookLayerSource;
   absPath: string;
+  plugin?: { id: string; root: string };
 }
 
 function severityForFailure(source: HookLayerSource): Severity {
@@ -83,8 +84,8 @@ function profileSlots(profileDir: string, phase: string, event: HookEventName): 
 
 function extensionSlots(resolved: HarnessResolvedProfile, phase: string, event: HookEventName): HookSlot[] {
   const bundle = resolved.extensionBundle;
-  const paths = bundle?.hooks[phase]?.[event] ?? [];
-  return paths.map(absPath => ({ source: 'extension' as const, absPath }));
+  return bundle?.bindings.flatMap(binding => binding.enabled && binding.phase === phase && binding.hookEvent === event && binding.absPath
+    ? [{ source: 'extension' as const, absPath: binding.absPath, plugin: { id: binding.ability, root: binding.rootDir } }] : []) ?? [];
 }
 
 export function collectHookSlots(
@@ -104,10 +105,11 @@ function runMarkdownHook(absPath: string): string {
   return fs.readFileSync(absPath, 'utf-8');
 }
 
-function runMjsHook(absPath: string, payload: Record<string, unknown>, timeoutMs: number): Record<string, unknown> {
+function runMjsHook(absPath: string, payload: Record<string, unknown>, timeoutMs: number, plugin?: HookSlot['plugin']): Record<string, unknown> {
   const runner = path.join(__dirname, 'scripts', 'hook-runner.mjs');
   const r = spawnSync(process.execPath, [runner, absPath], {
     input: JSON.stringify(payload),
+    ...(plugin ? { cwd: plugin.root, env: { ...process.env, MAISON_EXTENSION_ROOT: plugin.root } } : {}),
     encoding: 'utf-8',
     timeout: timeoutMs,
     windowsHide: true,
@@ -154,18 +156,20 @@ export async function dispatchLifecycleHooks(
       ...payload,
       source: slot.source,
       hookPath: slot.absPath,
+      ...(slot.plugin ? { extensionName: slot.plugin.id } : {}),
       promptFragments: [...promptFragments],
     };
 
+    const identity = slot.plugin ? `extension_${slot.plugin.id}` : slot.source;
     try {
       const lower = slot.absPath.toLowerCase();
       if (lower.endsWith('.md')) {
         const body = runMarkdownHook(slot.absPath);
         if (body.trim().length > 0) {
-          promptFragments.push(`<!-- hook:${event}:${slot.source}:${path.basename(slot.absPath)} -->\n${body}`);
+          promptFragments.push(`<!-- hook:${event}:${identity}:${path.basename(slot.absPath)} -->\n${body}`);
         }
       } else if (lower.endsWith('.mjs')) {
-        const result = runMjsHook(slot.absPath, ctxPayload, timeoutMs);
+        const result = runMjsHook(slot.absPath, ctxPayload, timeoutMs, slot.plugin);
         const frags = result.promptFragments;
         if (Array.isArray(frags)) {
           for (const f of frags) {
@@ -178,7 +182,7 @@ export async function dispatchLifecycleHooks(
           const sevRaw = typeof result.severityOverride === 'string' ? result.severityOverride : severityForFailure(slot.source);
           const sev = (['BLOCKER', 'MAJOR', 'MINOR'].includes(sevRaw) ? sevRaw : severityForFailure(slot.source)) as Severity;
           hookCheckResults.push({
-            id: `lifecycle_hook_${event}_${slot.source}`,
+            id: `lifecycle_hook_${event}_${identity}`,
             category: 'structure',
             description: `lifecycle hook 声明失败（${path.basename(slot.absPath)}）`,
             severity: sev,
@@ -190,7 +194,7 @@ export async function dispatchLifecycleHooks(
     } catch (e) {
       const sev = severityForFailure(slot.source);
       hookCheckResults.push({
-        id: `lifecycle_hook_${event}_${slot.source}_error`,
+        id: `lifecycle_hook_${event}_${identity}_error`,
         category: 'structure',
         description: `lifecycle hook 执行异常（${path.basename(slot.absPath)}）`,
         severity: sev,

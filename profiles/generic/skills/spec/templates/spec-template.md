@@ -258,12 +258,12 @@ flowchart TD
 ## 宿主扩展治理项
 
 > **锚点章节（core 模板预留）**：管理台排期、打点/SVN、翻译回稿、TA 联调、Demo 等**流程性事项不进 core 模板**。
-> 宿主细则通过 `doc/extensions/knowledge/` 章节模板（作者动笔前读；goal 模式下注入阶段 prompt）与 `phase_rules_overlays.spec`（harness 强制）叠加；`hooks/spec/on_context_load.md` 的片段只进 verifier 上下文，不会自动送达作者。
+> 作者动笔前使用已启用插件在 `feature.before_phase_work@1` 为 `spec` 投递的知识。Harness 执行 `phase_rules_overlays.spec` 结构检查。`harness.on_context_load@1` 的 Markdown 片段仅进入本轮实际组装的 verifier 提示。
 > 见 [phase-terminology.md](../../../../docs/concepts/phase-terminology.md)。
 
 | 扩展项 | 是否涉及 | 宿主模板/检查来源 |
 |--------|----------|-------------------|
-| {扩展治理项 1} | 否 / 是 | `doc/extensions/knowledge/...` |
+| {扩展治理项 1} | 否 / 是 | `doc/extensions/<插件ID>/knowledge/...` |
 
 ---
 

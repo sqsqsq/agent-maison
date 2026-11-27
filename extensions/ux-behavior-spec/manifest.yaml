@@ -1,0 +1,21 @@
+# 独立分发可复制完整 skills/ux-behavior-spec/，由其中 SKILL.md 手动调用。
+# 已集成 Maison 的宿主使用 /extension install <本目录>。
+schema_version: "2.0"
+kind: plugin
+name: ux-behavior-spec
+version: "0.2.0"
+description: 可选 UX 行为交接能力的实例扩展源码
+provides:
+  skills:
+    - ux-behavior-spec
+bindings:
+  read-upstream:
+    at: component-design.before_discovery@1
+    kind: knowledge
+    ref: skills/ux-behavior-spec/reference/intake.md
+    enabled_by_default: true
+  fill-missing:
+    at: component-design.before_discovery@1
+    kind: action
+    ref: ux-behavior-spec
+    enabled_by_default: true

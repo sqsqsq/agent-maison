@@ -1,13 +1,4 @@
-# 实例扩展 manifest；协议见 framework/specs/instance-extension-manifest.schema.yaml。
+# 由宿主管理的插件登记。协议见 framework/specs/instance-extension-manifest.schema.yaml。
 schema_version: "2.0"
-name: project-extensions
-provides:
-  skills: []
-  knowledge: []
-  hooks: {}
-  capabilities: {}
-  skill_assets: {}
-  phase_rules_overlays: {}
-  mcp_actions: {}
-bindings: {}
-installations: {}
+kind: host
+plugins: {}

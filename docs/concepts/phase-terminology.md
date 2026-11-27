@@ -27,10 +27,10 @@ yaml 三件套（`acceptance.yaml`、`contracts.yaml`、`use-cases.yaml`）统�
 
 core 模板只收通用维度；宿主细则通过：
 
-1. `doc/extensions/knowledge/` 章节模板（作者动笔前读；goal 模式下注入阶段 prompt）
-2. `hooks/spec/on_context_load.md` — 片段只进 verifier 上下文，不会自动送达作者；仅声明 hook 不代表已送达
+1. 已启用插件在 `feature.before_phase_work@1` 为 `spec` 投递的知识绑定，供作者动笔前使用
+2. `harness.on_context_load@1` 为 `spec` 声明的 Markdown 片段，仅进入本轮实际组装的 verifier 提示
 3. `phase_rules_overlays.spec` 结构检查（harness 强制）
-4. `doc/extensions/manifest.yaml` 的 `provides.skill_assets` — extension 模板/示例覆盖或增补 profile `skill-assets.yaml`（同 `skill-id` + `asset_key` 冲突时 extension 赢）；SKILL 正文仍写 `` `profile-skill-asset:<skill>/<key>` ``，由 harness 合并解析
+4. 已启用插件的 `doc/extensions/<插件ID>/manifest.yaml` 中的 `provides.skill_assets` — extension 模板/示例覆盖或增补 profile `skill-assets.yaml`（同 `skill-id` + `asset_key` 冲突时 extension 赢）；SKILL 正文仍写 `` `profile-skill-asset:<skill>/<key>` ``，由 harness 合并解析
 
 模板末尾锚点：**「宿主扩展治理项」**（见 `profiles/*/skills/spec/templates/spec-template.md`）。
 

@@ -25,7 +25,7 @@
 5. **能由当前目标裁决的不确定，按目标裁决并留痕**；目标本身冲突或缺失且无法裁决时才停下来问用户（见下文[权威判定](#权威判定)）。禁止静默猜测后继续写 spec/plan/code。
 6. **计数/清单类量化 inventory 须脚本产出并留痕**：产物中写"全仓共 N 个 X"类断言时，必须由可复跑的脚本命令（带锚定的 grep/统计）产出，并留存命令与输出摘录——不接受徒手扫读的印象值（实例：宣称 43 个 namespace、实际 26 个）。
 7. **框架 / vendor 事实以当前 profile-addendum 与契约为准**：记忆（用户级 / 会话级 memory）只作搜索线索，不能作裁决依据；与 addendum、harness 输出冲突时以后者为准（plan 07a41ec6 T9）。
-8. **动笔前读适用知识**：goal prompt 或现有 `--prepare-scope` / `--prepare-request` 的 knowledge 输出提供候选与原文路径；交互入口同时读 AGENTS/CLAUDE 的静态路由。按当前 Skill/phase 打开原生资产、manifest 1.1 适用知识和当前 profile 资料，候选须语义消歧，无命中仍探索完整索引；大材料分批读，不宣称已读完。实际依据沿既有 facts/provenance 引用，不新建已读台账；维护写回另遵守[知识读取与维护](../../docs/concepts/skill-contracts.md#知识读取与维护)。binding 三槽位不提前执行；`hooks/<phase>/on_context_load.md` 仍只进 verifier 上下文。manifest 1.0 声明不自动得到 1.1 路由。
+8. **动笔前读适用知识**：goal prompt 或现有 `--prepare-scope` / `--prepare-request` 的 knowledge 输出提供候选与原文路径。交互入口同时读 AGENTS/CLAUDE 的静态路由。按当前 Skill 和阶段打开原生资产、已发放的扩展知识和 profile 资料。核对候选的实际适用性，大材料分批读。实际依据沿既有 facts/provenance 引用，维护写回遵守知识协议。绑定在其声明时点消费，`on_context_load` 的 Markdown 片段只进 verifier 上下文。[知识读取与维护](../../docs/concepts/skill-contracts.md#知识读取与维护)
 
 ### 各阶段反例 / 正例
 

@@ -82,26 +82,28 @@ const cases: Array<{ name: string; run: () => void }> = [
       const first = initExtension(root, FRAMEWORK_DIR);
       assert(first.includes('doc/extensions/manifest.yaml'));
       write(path.join(root, 'doc/extensions/manifest.yaml'), 'schema_version: "1.0"\nname: kept\n');
-      const second = initExtension(root, FRAMEWORK_DIR);
-      assert(!second.includes('doc/extensions/manifest.yaml'));
+      assert.throws(() => initExtension(root, FRAMEWORK_DIR), /旧版扩展未加载/);
       assert(fs.readFileSync(path.join(root, 'doc/extensions/manifest.yaml'), 'utf8').includes('name: kept'));
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
     },
   },
   {
-    name: 'inspect 纯派生报告 manifest/目录漂移与桥接缺失',
+    name: 'inspect validates registered plugin contributions and absent bridges without writing',
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-inspect-'));
       config(root);
-      write(path.join(root, 'doc/extensions/skills/directory-only/SKILL.md'), '# directory only\n');
-      write(path.join(root, 'doc/extensions/manifest.yaml'), [
-        'schema_version: "1.0"', 'name: inspect', 'provides:', '  skills: [declared-only]', '',
-      ].join('\n'));
+      write(path.join(root, 'doc/extensions/orphan/skills/orphan/SKILL.md'), '# orphan\n');
+      write(path.join(root, 'doc/extensions/manifest.yaml'), YAML.stringify({ schema_version: '2.0', kind: 'host',
+        plugins: { demo: { source: 'fixture', enabled: true, bindings: {}, files: {}, in_place: true } } }));
+      write(path.join(root, 'doc/extensions/demo/manifest.yaml'), YAML.stringify({ schema_version: '2.0', kind: 'plugin',
+        name: 'demo', version: '1', provides: { skills: ['listed', 'missing'] } }));
+      write(path.join(root, 'doc/extensions/demo/skills/listed/SKILL.md'), '# Listed\n');
       const result = inspectInstanceExtensions(root, FRAMEWORK_DIR);
-      assert(result.findings.some(item => item.code === 'extension_skill_unlisted'));
-      assert(result.findings.some(item => item.code === 'extension_skill_declared_missing'));
-      assert(result.findings.filter(item => item.code === 'extension_bridge_missing').length === 2);
+      assert(!result.rows.some(item => item.ability === 'orphan'));
+      assert(result.manifestErrors.some(item => item.code === 'skill_missing'));
+      assert(result.findings.filter(item => item.code === 'extension_bridge_missing').length >= 2);
+      assert(!fs.existsSync(path.join(root, '.cursor/skills/listed')));
       assert(formatExtensionInspection(result).includes('| 类型 | 来源 | 生效时机 | 消费者 | 强度 | 状态 |'));
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
@@ -112,28 +114,28 @@ const cases: Array<{ name: string; run: () => void }> = [
     run: () => {
       const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-materialize-'));
       config(root);
-      write(path.join(root, 'doc/extensions/skills/customer/SKILL.md'), '# Customer\n');
-      write(path.join(root, 'doc/extensions/skills/unlisted/SKILL.md'), '# Unlisted\n');
-      write(path.join(root, 'doc/extensions/knowledge/global.md'), '# Global\n');
-      write(path.join(root, 'doc/extensions/knowledge/spec.md'), '# Spec\n');
-      write(path.join(root, 'doc/extensions/manifest.yaml'), [
-        'schema_version: "1.1"', 'name: materialize', 'provides:', '  skills: [customer]', '  knowledge:',
-        '    - { path: knowledge/global.md, summary: 全局事实, audience: global }',
-        '    - { path: knowledge/spec.md, summary: spec 输入, audience: [spec] }',
-        'phase_bindings:', '  spec:', '    before_phase_work:',
-        '      - { kind: knowledge, ref: knowledge/spec.md }', '',
-      ].join('\n'));
+      write(path.join(root, 'doc/extensions/customer/skills/customer/SKILL.md'), '# Customer\n');
+      write(path.join(root, 'doc/extensions/customer/skills/unlisted/SKILL.md'), '# Unlisted\n');
+      write(path.join(root, 'doc/extensions/customer/knowledge/global.md'), '# Global\n');
+      write(path.join(root, 'doc/extensions/customer/knowledge/spec.md'), '# Spec\n');
+      write(path.join(root, 'doc/extensions/manifest.yaml'), YAML.stringify({ schema_version: '2.0', kind: 'host',
+        plugins: { customer: { source: 'fixture', enabled: true, bindings: { global: true, spec: true }, files: {}, in_place: true } } }));
+      write(path.join(root, 'doc/extensions/customer/manifest.yaml'), YAML.stringify({ schema_version: '2.0', kind: 'plugin',
+        name: 'customer', version: '1', provides: { skills: ['customer'] },
+        bindings: {
+          global: { at: 'project.entry@1', kind: 'knowledge', ref: 'knowledge/global.md' },
+          spec: { at: 'feature.before_phase_work@1', phase: 'spec', kind: 'knowledge', ref: 'knowledge/spec.md' },
+        } }));
       const result = materializeExtensions(root, FRAMEWORK_DIR) as { adapters: string[] };
       assert.deepStrictEqual(result.adapters, ['cursor', 'claude']);
       assert(fs.existsSync(path.join(root, '.cursor/skills/customer/SKILL.md')));
       assert(fs.existsSync(path.join(root, '.claude/commands/customer.md')));
-      assert(!fs.existsSync(path.join(root, '.cursor/skills/unlisted/SKILL.md')), '1.1 must be manifest-driven');
+      assert(!fs.existsSync(path.join(root, '.cursor/skills/unlisted/SKILL.md')));
       assert(fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8').includes('| `customer` |'));
       assert(fs.readFileSync(path.join(root, 'CLAUDE.md'), 'utf8').includes('| `customer` |'));
       const agents = fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8');
-      assert(agents.includes('实例知识路由') && agents.includes('knowledge/global.md') && agents.includes('| global |'));
-      assert(agents.includes('knowledge/spec.md') && agents.includes('| spec |'), 'phase audience 无需额外 binding 即进入静态路由');
-      assert(fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8').includes('`spec` 动笔前'));
+      assert(agents.includes('doc/extensions/customer/knowledge/global.md'));
+      assert(!agents.includes('doc/extensions/customer/knowledge/spec.md'));
       fs.rmSync(root, { recursive: true, force: true });
       clearFrameworkConfigCache();
     },

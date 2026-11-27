@@ -14,30 +14,30 @@ function table(head, rows) {
   return [row(head), row(head.map(() => '---')), ...rows.map(row)].join('\n');
 }
 
-function fieldTable() {
+function fieldTable(role) {
   const manifest = schema('instance-extension-manifest.schema.yaml');
   const rows = [];
   const code = value => `\`${value}\``;
-  function fields(node, name, since, author, required) {
+  function fields(node, name, required) {
     if (node.$ref) node = { ...manifest.$defs[node.$ref.split('/').at(-1)], ...node };
-    since = node['x-since'] ?? since;
-    author = node['x-author'] ?? author;
     if (node.description) {
-      rows.push([code(name), since, author, node['x-required'] ?? (required ? '是' : '可选'),
+      rows.push([code(name), node['x-required'] ?? (required ? '是' : '可选'),
         node.default === undefined ? '—' : code(JSON.stringify(node.default)), node.description]);
     }
     for (const [key, field] of Object.entries(node.properties ?? {})) {
       if (!field.description) throw new Error(`扩展协议字段缺少效果说明 ${name ? `${name}.` : ''}${key}`);
-      fields(field, name ? `${name}.${key}` : key, since, author, node.required?.includes(key));
+      fields(field, name ? `${name}.${key}` : key, node.required?.includes(key));
     }
-    if (typeof node.additionalProperties === 'object') fields(node.additionalProperties, `${name}.${node['x-key'] ?? '<键>'}`, since, author, false);
-    if (node.items) fields(node.items, `${name}[]`, since, author, false);
+    if (typeof node.additionalProperties === 'object') fields(node.additionalProperties, `${name}.${node['x-key'] ?? '<键>'}`, false);
+    if (node.items) fields(node.items, `${name}[]`, false);
     for (const choice of node.oneOf ?? []) {
-      if (choice.properties) fields(choice, name, choice['x-since'] ?? since, author, required);
+      if (choice.properties) fields(choice, name, required);
     }
   }
-  fields(manifest.root_object, '', '1.0+', '来源或宿主', false);
-  return table(['字段路径', '版本起点', '填写方', '必填', '默认', '运行效果'], rows);
+  const root = manifest.root_object.oneOf.find(node => node.$ref === `#/$defs/${role}`);
+  if (!root) throw new Error(`扩展协议缺少清单角色 ${role}`);
+  fields(root, '', false);
+  return table(['字段路径', '必填', '默认', '运行效果'], rows);
 }
 
 function timingTable() {
@@ -55,7 +55,12 @@ function timingTable() {
 }
 
 export function regenerateExtensionProtocol(markdown) {
-  for (const [name, render] of [['manifest-fields', fieldTable], ['supported-timings', timingTable]]) {
+  const sections = [
+    ['host-fields', () => fieldTable('host')],
+    ['plugin-fields', () => fieldTable('plugin')],
+    ['supported-timings', timingTable],
+  ];
+  for (const [name, render] of sections) {
     const start = `<!-- BEGIN GENERATED ${name} -->`;
     const end = `<!-- END GENERATED ${name} -->`;
     const first = markdown.indexOf(start);

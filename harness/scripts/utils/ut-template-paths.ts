@@ -31,11 +31,13 @@ export function resolveUtTemplateRef(
   projectRoot: string,
   profileName: string,
   key: UtTemplateKey,
+  extensionAssets?: Record<string, Record<string, string>>,
 ): UtTemplateRef {
   try {
     const loaded = loadSkillAssetsManifest(projectRoot, profileName);
-    if (loaded.ok && loaded.manifest) {
-      const r = resolveSkillAssetPath(projectRoot, profileName, loaded.manifest, 'business-ut', key);
+    const manifest = loaded.manifest ?? { schema_version: '1.0' as const, profile: profileName, assets: {} };
+    if (loaded.ok || extensionAssets?.['business-ut']?.[key]) {
+      const r = resolveSkillAssetPath(projectRoot, profileName, manifest, 'business-ut', key, undefined, extensionAssets);
       if (r.ok && r.relRepo && r.absPath) return { rel: r.relRepo, abs: r.absPath };
     }
   } catch {
@@ -50,7 +52,7 @@ export function resolveUtTemplateRef(
  * profile-skill-asset 多跳协议即可直达。通用 skill 资产注入属 d8f4b7e2 extension
  * plan 范围——其落地后本块收编退役。
  */
-export function renderUtFormatContractLines(projectRoot: string, profileName?: string): string[] {
+export function renderUtFormatContractLines(projectRoot: string, profileName?: string, extensionAssets?: Record<string, Record<string, string>>): string[] {
   let profile = profileName;
   if (!profile) {
     try {
@@ -59,7 +61,7 @@ export function renderUtFormatContractLines(projectRoot: string, profileName?: s
       profile = '';
     }
   }
-  const ref = (key: UtTemplateKey): string => resolveUtTemplateRef(projectRoot, profile!, key).rel;
+  const ref = (key: UtTemplateKey): string => resolveUtTemplateRef(projectRoot, profile!, key, extensionAssets).rel;
   return [
     'UT machine-artifact format contract (deterministic gates parse these files):',
     `- testability-audit.md: fenced \`\`\`yaml block(s) OR pure YAML; root field records[]; Markdown tables are NOT machine-readable. Template: ${ref('testability_audit_template')}`,

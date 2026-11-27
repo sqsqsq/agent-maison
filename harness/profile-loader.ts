@@ -13,6 +13,7 @@ import type {
   HarnessResolvedProfile,
   ProfileCapabilitySpec,
   CapabilityKey,
+  ExtensionBundle,
 } from './scripts/utils/types';
 import { applyInstanceExtensions } from './extension-loader';
 import { normalizeCapabilitiesMap } from './scripts/utils/capability-alias';
@@ -192,7 +193,7 @@ function mergeOverlayFromDir(current: PhaseRuleSpec, overlayPath: string): Phase
   }
 }
 
-export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig, frameworkRoot = FRAMEWORK_DIR): HarnessResolvedProfile {
+export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig, frameworkRoot = FRAMEWORK_DIR, bundle?: ExtensionBundle): HarnessResolvedProfile {
   const name = cfg.project_profile.name;
   const sub = cfg.project_profile.sub_variant?.trim();
 
@@ -228,7 +229,8 @@ export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig, f
     personalPrerequisites,
   };
 
-  return applyInstanceExtensions(base, projectRoot, cfg.paths?.extension_dir, { frameworkRoot });
+  return bundle ? { ...base, capabilities: normalizeCapabilitiesMap({ ...capabilities, ...bundle.extensionCapabilities }), extensionBundle: bundle }
+    : applyInstanceExtensions(base, projectRoot, cfg.paths?.extension_dir, { frameworkRoot });
 }
 
 export function isPhaseDisabledByProfile(phase: Phase, resolved: HarnessResolvedProfile): boolean {

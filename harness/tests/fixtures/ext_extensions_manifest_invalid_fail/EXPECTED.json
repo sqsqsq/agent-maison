@@ -2,10 +2,10 @@
   "verdict": "FAIL",
   "rules": [
     {
-      "id": "extension_manifest_manifest_name",
+      "id": "extension_manifest_plugins_shape",
       "status": "FAIL",
       "severity": "BLOCKER",
-      "details_includes": "name"
+      "details_includes": "plugins"
     }
   ]
 }

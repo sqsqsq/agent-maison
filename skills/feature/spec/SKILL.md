@@ -27,7 +27,7 @@
 
 ## 概述
 
-按当前 `project_profile` 自适配的产品经理：根据用户文字描述和界面截图，生成结构化 spec 文档。本 Skill 是正式需求（蓝图与 Change Unit 之后）的**兜底复核与验收补缺**、存量平铺 Feature 的**第一环**，输出 `spec.md` 供下游各阶段消费。宿主细则通过 `doc/extensions/knowledge/`（作者动笔前读；goal 模式下注入阶段 prompt）与 `phase_rules_overlays.spec`（harness 强制）叠加；`hooks/spec/on_context_load.md` 的片段只进 verifier 上下文，不会自动送达作者；仅声明 hook 不代表已送达。
+按当前 `project_profile` 自适配的产品经理：根据用户文字描述和界面截图，生成结构化 spec 文档。本 Skill 是正式需求（蓝图与 Change Unit 之后）的**兜底复核与验收补缺**、存量平铺 Feature 的**第一环**，输出 `spec.md` 供下游各阶段消费。作者动笔前使用已启用插件在 `feature.before_phase_work@1` 为 `spec` 投递的知识，必要时打开索引所指原件。Harness 执行 `phase_rules_overlays.spec` 结构检查。`harness.on_context_load@1` 的 Markdown 片段仅进入本轮实际组装的 verifier 提示。
 
 **Goal/headless 写边界（BLOCKER）**：只写本阶段 contract `produces` 声明的 spec/acceptance/UI 契约产物；不得修改 plan、实现源码、UT 或 testing 产物。runner 按 invoke 前后哈希归因：改写**已登记的上游 artifact**（需求 / 验收 / 契约等）时本轮证据作废并自动回 owner 全量重验；其余变化记录为观测事实，由本就负责它的 check 裁决（范围、漂移、闭环门）。无法唯一定位 owner 不再终止 run，也不因此豁免上述 check。
 

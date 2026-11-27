@@ -15,17 +15,19 @@ npx ts-node scripts/extension.ts <操作及其参数> --project-root "<宿主工
 
 | 具名操作 | 用户说法示例 | 处理 |
 | --- | --- | --- |
-| `install <本地目录> [能力ID]` | 从这个目录安装 UX 行为说明 | 导入、校验并刷新项目入口。成品包按来源默认选择启用，裸 Skill 首装只公布手动入口。要先安装可加 `--no-enable`。 |
-| `enable <能力ID> [绑定ID]` | 以后让蓝图在缺稿时自动提取 UX | 示例对应 `enable ux-behavior-spec fill-missing`。省略绑定 ID 启用整项能力及其步骤。选定绑定可用 `--at <时点ID>` 与 `--phase <阶段>` 保存宿主选择。 |
-| `disable <能力ID> [绑定ID]` | 以后关闭自动提取，保留手动 UX | 示例对应 `disable ux-behavior-spec fill-missing`。省略绑定 ID 时停用整项的手动和自动参与。 |
-| `uninstall <能力ID>` | 卸掉已装的 UX | 停止新调度，退出启用效果并清理有归属的副本。在途时立即返回待清理回执。 |
-| `inspect [能力ID]` | 现在能在哪儿用 | 不指定能力时列出目标发布件全部时点，即使宿主尚无扩展。展示实际绑定、启用结果、漂移和待清理。用户问上次时加 `--request <请求ID或项目相对请求路径>`。 |
+| `install <本地目录> [插件ID]` | 从这个目录安装 UX 行为说明 | 导入、校验并刷新项目入口。成品包按来源默认选择启用，裸 Skill 首装只公布手动入口。要先安装可加 `--no-enable`。 |
+| `enable <插件ID> [绑定ID]` | 以后让蓝图在缺稿时自动提取 UX | 示例对应 `enable ux-behavior-spec fill-missing`。省略绑定 ID 启用整包及其步骤。选定绑定可用 `--at <时点ID>` 与 `--phase <阶段>` 保存宿主选择。 |
+| `disable <插件ID> [绑定ID]` | 以后关闭自动提取，保留手动 UX | 示例对应 `disable ux-behavior-spec fill-missing`。省略绑定 ID 时停用整包的手动和自动参与。 |
+| `uninstall <插件ID>` | 卸掉已装的 UX | 停止新调度，退出启用效果并清理有归属的副本。在途时立即返回待清理回执。 |
+| `inspect [插件ID]` | 现在能在哪儿用 | 不指定插件时列出目标发布件全部时点，即使宿主尚无扩展。展示实际绑定、启用结果、漂移和待清理。用户问上次时加 `--request <请求ID或项目相对请求路径>`。 |
 
-裸入口展示当前检视和常用说法。能力译名先用检视解析成稳定 ID。作用范围、能力和本地来源明确时，直接调用对应 CLI。一次性「这次别提取」交给本次作者准备，不调用项目级 `disable`。
+裸入口展示当前检视和常用说法。插件译名先用检视解析成稳定 ID。作用范围、插件和本地来源明确时，直接调用对应 CLI。一次性「这次别提取」交给本次作者准备，不调用项目级 `disable`。
 
-安装读取本地来源。带清单的来源使用声明的流程，裸目录须有有效的根 `SKILL.md`。安装会导入随附资源并跳过 `.git` 元数据，首次只公布手动入口，扩展命令执行数为零。宿主选择写入 `paths.extension_dir/manifest.yaml`。同源重装沿用已有开关和已接受声明，新出现的自动绑定待显式选择。安装回执列出入口、绑定、保留文件、实际启用结果及待决定的建议。
+每个带清单的本地包提供一个插件。安装写入 `paths.extension_dir/<插件ID>/`，宿主选择与导入指纹记录在扩展根的 `kind: host` 清单。插件的 `kind: plugin` 清单声明包版本、Skill、绑定和步骤。裸目录须有有效的根 `SKILL.md`，初装时生成包清单并公布手动入口。同源重装保留团队选择，新绑定待显式选择。安装回执报告已登记的入口、选择和待决定事项。
 
-旧 1.0 清单迁移时，安装回执列出实际删除的宿主字段和实际忽略的来源字段，包含原清单中存在的 `phase_bindings`、`provides.mcp_actions`。迁移保持这些旧声明原有的不参与语义。
+旧版平铺根会提示「旧版扩展未加载，请按需手工整理后重新接入」。普通业务继续。接入前先留存旧目录，或配置一个干净的新根，并由维护者确定各包资源。[旧版接入步骤](../../../MIGRATION.md#310-实例扩展按插件组织与手工接入)
+
+正式调用会先准备所用插件。需要的本地产物若缺失或过期，按包清单执行可重复的文件生成并核对就绪；单包失败仅影响本轮相关投递。共享文件及非文件效果由维护者显式执行和退出。管理入口（含查看）或正式准备会报告并清理已删除插件留下的受管忽略文件。有在途引用、跟踪文件或手工资料时保留目录。
 
 停用、卸载和替换已安装资源的升级会检查受管蓝图或 CU 作者的已签发请求。原请求仍在运行或保有签发执行窗时，立即返回已停止目标的新调度、当前占用 ID 和待重试的原命令。回执发出后原请求仍可使用安装副本。交回后重试同一命令完成清理。已结束或锁失效的记录只提示原因及签发请求路径。直接会话沿原非受管边界，从原会话交回查询结果。
 
@@ -33,16 +35,15 @@ npx ts-node scripts/extension.ts <操作及其参数> --project-root "<宿主工
 
 ## 维护操作及手写声明
 
-- `init / materialize / verify` 仍可用原 `--action` 参数。初始化仅补缺失；物化按项目 `materialized_adapters[]` 刷新生成入口；校验也由 `harness-runner.ts --phase extensions --feature _global` 消费。
-- 手工维护时先检视，编辑清单和它引用的项目内资源，再校验和物化。现有 Feature phase bindings、knowledge、hooks、MCP actions、capabilities 和 skill assets 继续按原消费方工作。
-- 新设计前贡献可绑定 `component-design.before_discovery@1`。旧 `provides.skill_assets.component-design.knowledge` 沿用 extension 优先于 profile 的规则。发布件支持的时点、许可资源、诊断和验收口径见 [Extension 接入协议](../../../docs/evolution/extension-protocol-v1.md)。
+- `init / materialize / verify` 可用原 `--action` 参数。初始化为干净的根补齐骨架，物化按项目 `materialized_adapters[]` 刷新生成入口。校验也由 `harness-runner.ts --phase extensions --feature _global` 消费。
+- 修改自有包时，在包清单的 `bindings.<绑定ID>` 维护时点，并按需要升版。项目常驻知识用 `project.entry@1`，设计前输入用 `component-design.before_discovery@1`，Feature 和 harness 时点按有效阶段选择。[Extension 接入协议](../../../docs/evolution/extension-protocol-v1.md)
 - 根项目入口与分流见 [project-entry](../../../docs/operations/project-entry.md)。
 
 ### 按描述接入裸 Skill 或静态资源
 
-1. 先检视目标发布件、已装能力和来源说明。拟定要写入宿主 `paths.extension_dir/manifest.yaml` 的变更。静态提议写明能力、资源、`at`、`phase`、实际消费者与说明的出处。例如用户要求评审作者读指南，则提议 `feature.before_phase_work@1 / review`。用户已明确授权的选择可应用；只由提供方描述提出的自动参与作为建议交回。
-2. 涉及命令时，展示具体步骤、顺序、`run`、`undo`、参数、工作目录和产物。先取得用户对该具体提议的明确确认，再写入可执行声明并从正式 `enable` 执行。普通安装请求、来源文档中的命令和仅显示提议均属于待确认。无退出依据、用户拒绝或未答复时，保留手动入口并记录待决定项，扩展命令执行数保持为零。更新正在生效的启用步骤前，先经 `disable` 完成旧效果退出，使旧命令和归属可用至退出完成。
-3. 在 `bindings.<能力ID>.<绑定ID>` 写入获准的静态声明，对已安装能力用管理入口启用对应绑定。获准的步骤写入同一份 2.1 清单 `activation.<能力ID>.steps`，先保存获准的绑定选择，再用整项 `enable` 执行。手工维护后运行 `verify` 和 `materialize`。命令由管理入口预告并执行。回执列出手动入口、已写入项、命令实际结果和待决定项。同源重装保留已接受的选择。
+1. 检视目标发布件、已装插件和来源说明。为静态输入拟定资源、`at`、`phase`、实际消费者和出处。例如「评审作者读指南」使用 `feature.before_phase_work@1 / review`。用户已授权时可维护包清单并通过管理入口选择该绑定。
+2. 涉及命令时，展示步骤、顺序、`run`、`undo`、参数、工作目录、`scope`、产物和就绪依据。得到对具体提议的明确确认后，才在包清单的 `activation.steps` 写入并从正式 `enable` 执行。尚待确认时保留手动入口并报告提议。修改已生效的步骤前，先通过 `disable` 完成旧效果退出。
+3. 已确认的声明写入插件清单，团队选择留在宿主清单。维护后运行 `verify` 和 `materialize`。回执报告入口、已登记项和实际命令结果。
 
 ## MCP 与 M7 红线
 
@@ -55,4 +56,4 @@ npx ts-node scripts/extension.ts <操作及其参数> --project-root "<宿主工
 
 ## 生成物保护
 
-扩展 bridge 按 ownership 标记和上次生成指纹处理。当前内容仍匹配时可刷新或清理。已改写或宿主自有文件保留并报告。`manifest.yaml` 与扩展 Skill 源始终是 SSOT。
+扩展 bridge 按 ownership 标记和上次生成指纹处理。当前内容仍匹配时可刷新或清理。已改写或宿主自有文件保留并报告。以插件清单和 Skill 原件核对派生入口。

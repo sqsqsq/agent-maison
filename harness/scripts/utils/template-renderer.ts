@@ -10,9 +10,10 @@ import {
   formatExtensionSkillSectionMarkdown,
   loadReservedBridgeIds,
   resolveBridgeTargets,
-  scanExtensionSkills,
+  extensionSkillRows,
 } from './instance-skill-bridge';
-import { extensionSkillIdsForBridge, loadInstanceExtensions } from '../../extension-loader';
+import { loadInstanceExtensions } from '../../extension-loader';
+import { pendingExtensionUpgrades } from './extension-lifecycle';
 import { assembleKnowledge, renderKnowledge, renderExtensionKnowledgeRoutes } from './knowledge-context';
 
 export type TemplateVars = Record<string, string>;
@@ -147,12 +148,11 @@ export function buildAgentsTemplateVars(
       ? (config.paths as Record<string, unknown>)
       : {};
 
-  const bundle = loadInstanceExtensions(opts.projectRoot, extDir, { frameworkRoot: opts.frameworkRoot });
-  const rows = scanExtensionSkills(
-    opts.projectRoot,
-    extDir,
-    extensionSkillIdsForBridge(bundle),
-  );
+  const loaded = loadInstanceExtensions(opts.projectRoot, extDir, { frameworkRoot: opts.frameworkRoot });
+  const excludedPlugins = pendingExtensionUpgrades(loaded);
+  const bundle = excludedPlugins.size
+    ? loadInstanceExtensions(opts.projectRoot, extDir, { frameworkRoot: opts.frameworkRoot, excludedPlugins }) : loaded;
+  const rows = extensionSkillRows(opts.projectRoot, bundle.manualSkills);
   const reserved = loadReservedBridgeIds(opts.frameworkRoot);
   const { targets } = resolveBridgeTargets(rows, reserved);
 
@@ -197,7 +197,7 @@ export function buildAgentsTemplateVars(
     COMPONENT_INDEX_PATH: String(paths.component_index ?? cfgPaths.component_index ?? DEFAULT_PATHS.component_index),
     COMPONENT_CATALOG_PATH: String(paths.component_catalog ?? cfgPaths.component_catalog ?? DEFAULT_PATHS.component_catalog),
     FEATURES_DIR: String(paths.features_dir ?? cfgPaths.features_dir ?? 'doc/features'),
-    EXTENSION_SKILL_SECTION: [formatExtensionSkillSectionMarkdown(targets, extensionSkillIdsForBridge(bundle) !== undefined),
+    EXTENSION_SKILL_SECTION: [formatExtensionSkillSectionMarkdown(targets),
       renderExtensionKnowledgeRoutes(bundle, opts.projectRoot)].filter(Boolean).join('\n\n'),
     COMPONENT_DESIGN_KNOWLEDGE: renderKnowledge(assembleKnowledge({ projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot,
       skill: 'component-design', subject: 'component-design', role: 'author', staticOnly: true,

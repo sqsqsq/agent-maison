@@ -1,14 +1,13 @@
-import { createHash, randomUUID } from 'crypto';
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import spawn from 'cross-spawn';
 
 import {
-  extensionActivationPathWithin, isExtensionActivationOutput, isExtensionNpmCommand,
-  parseExtensionActivationResult, validateExtensionActivationOwnership,
-  type ExtensionActivationOutput, type ExtensionActivationResult, type ExtensionActivationStep, type ExtensionActivationStepResult,
+  extensionActivationPathWithin, extensionActivationPathsOverlap, isExtensionActivationOutput, isExtensionNpmCommand,
+  validateExtensionActivationOwnership, type ExtensionActivationStep,
 } from './extension-activation-contract';
-import { ordinaryPath, relativeExtensionPath, removeExtensionFile, type ObserveExtensionWrite } from './extension-files';
+import { assertUnlinkedExtensionTree, extensionFingerprintMatcher, extensionGitPaths, ordinaryPath, relativeExtensionPath, removeExtensionFile, type ObserveExtensionWrite } from './extension-files';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, readPhaseRecoveryFile, type PhaseInvocationChange } from './phase-write-boundary';
 import { isInsideProjectRoot } from './project-relative-path';
 
@@ -16,7 +15,7 @@ export * from './extension-activation-contract';
 
 export interface ExtensionActivationPreview {
   ability: string;
-  version?: string;
+  version: string;
   input_sha256: string;
   commands: Array<{ id: string; action: 'run' | 'undo'; cwd: string; argv: string[]; outputs: string[] }>;
 }
@@ -25,27 +24,34 @@ export interface ExtensionActivationContext {
   projectRoot: string;
   extensionRoot: string;
   ability: string;
-  version?: string;
-  persist: (result: ExtensionActivationResult) => void;
+  version: string;
   preview?: (notice: ExtensionActivationPreview) => void;
   observeWrite?: ObserveExtensionWrite;
-  protectedFiles?: Iterable<string>;
   sourceFiles?: Readonly<Record<string, string>>;
 }
 
-export interface ExtensionActivationDrift {
-  path: string;
-  kind: 'missing' | 'changed' | 'unverifiable';
-  reason?: string;
+interface ExtensionStepState {
+  id: string;
+  status: 'ready' | 'pending' | 'applied' | 'undone' | 'failed';
+  outputs: string[];
+  failure?: string;
 }
 
-function digest(value: Buffer | string): string {
+export interface ExtensionActivationResult {
+  status: 'enabled' | 'disabled' | 'failed';
+  steps: ExtensionStepState[];
+  failure?: string;
+  residuals?: PhaseInvocationChange[];
+}
+
+function digest(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
 function outputPath(extensionRoot: string, relative: string): string {
-  if (fs.lstatSync(extensionRoot).isSymbolicLink()) throw new Error('扩展根目录已重定向');
-  return ordinaryPath(extensionRoot, relative, 'extension activation');
+  const root = fs.lstatSync(extensionRoot, { throwIfNoEntry: false });
+  if (!root?.isDirectory() || root.isSymbolicLink()) throw new Error('插件根不是普通目录');
+  return relative === '.' ? extensionRoot : ordinaryPath(extensionRoot, relative, 'extension activation');
 }
 
 function regularFile(file: string): boolean {
@@ -53,111 +59,50 @@ function regularFile(file: string): boolean {
   return Boolean(stat?.isFile() && stat.nlink === 1);
 }
 
+function projectOutputs(context: ExtensionActivationContext, step: ExtensionActivationStep): string[] {
+  const extensionDir = path.dirname(context.extensionRoot);
+  return (step.project_outputs ?? []).map(relative => {
+    const resolved = ordinaryPath(context.projectRoot, relative, 'extension 项目级输出');
+    if (extensionActivationPathsOverlap(relativeExtensionPath(context.projectRoot, extensionDir), relative)
+      || /(?:^|\/)\.(?:git|manifest[^/]*)(?:\/|$)/i.test(relative)
+      || extensionActivationPathsOverlap('framework', relative)) throw new Error(`项目级输出触及框架或扩展管理路径：${relative}`);
+    return resolved;
+  });
+}
+
+function managedOutputs(context: ExtensionActivationContext, step: ExtensionActivationStep): string[] {
+  return [...step.outputs.map(relative => outputPath(context.extensionRoot, relative)), ...projectOutputs(context, step)];
+}
+
 export function validateExtensionActivationFiles(
-  extensionRoot: string, ability: string, steps: readonly ExtensionActivationStep[], protectedFiles: Iterable<string> = [],
+  extensionRoot: string, plugin: string, steps: readonly ExtensionActivationStep[], protectedFiles: Iterable<string> = [],
 ): void {
-  if (!steps.length) return;
-  validateExtensionActivationOwnership(ability, steps, protectedFiles);
+  validateExtensionActivationOwnership(plugin, steps, protectedFiles);
   for (const step of steps) {
     const cwd = outputPath(extensionRoot, step.cwd);
     if (!fs.lstatSync(cwd, { throwIfNoEntry: false })?.isDirectory()) throw new Error(`步骤 ${step.id} 工作目录不存在：${step.cwd}`);
     for (const relative of step.outputs) outputPath(extensionRoot, relative);
-    for (const argv of [step.run, step.undo]) {
+    for (const argv of [step.run, step.undo, 'check' in step.ready ? step.ready.check : undefined]) {
       if (!argv) continue;
       if (isExtensionNpmCommand(argv) && argv[1] === 'ci') {
         for (const input of ['package.json', 'package-lock.json']) {
-          if (!regularFile(outputPath(extensionRoot, `${step.cwd}/${input}`))) {
-            throw new Error(`步骤 ${step.id} 缺少 npm ci 输入：${step.cwd}/${input}`);
-          }
+          if (!regularFile(ordinaryPath(cwd, input, 'npm ci'))) throw new Error(`步骤 ${step.id} 缺少 npm ci 输入：${input}`);
         }
       }
-      const localScript = /^node(?:\.exe)?$/i.test(path.win32.basename(argv[0])) && argv[1]
-        && !argv[1].startsWith('-') && !path.isAbsolute(argv[1]) && !path.win32.isAbsolute(argv[1]);
-      if (!localScript) continue;
-      const relative = relativeExtensionPath(extensionRoot, path.resolve(cwd, argv[1]));
-      if (!extensionActivationPathWithin(relative, `skills/${ability}`)
-        || !regularFile(outputPath(extensionRoot, relative)) && !isExtensionActivationOutput(steps, relative)) {
-        throw new Error(`步骤 ${step.id} 的脚本不可用：${relative}`);
+      const isScript = /^node(?:\.exe)?$/i.test(path.win32.basename(argv[0])) && argv[1] && !argv[1].startsWith('-');
+      if (!isScript) continue;
+      const script = path.resolve(cwd, argv[1]);
+      const relative = relativeExtensionPath(extensionRoot, script);
+      if (!isInsideProjectRoot(extensionRoot, script)
+        || (!regularFile(outputPath(extensionRoot, relative)) && !isExtensionActivationOutput(steps, relative))) {
+        throw new Error(`步骤 ${step.id} 的包内脚本不可用：${relative}`);
       }
     }
   }
 }
 
-export function extensionActivationInputDigest(
-  context: Pick<ExtensionActivationContext, 'extensionRoot' | 'ability' | 'sourceFiles'>,
-  steps: readonly ExtensionActivationStep[],
-): string {
-  const { extensionRoot, ability, sourceFiles } = context;
-  const files: Array<[string, string]> = [];
-  const add = (relative: string, expected?: string): void => {
-    const file = outputPath(extensionRoot, relative);
-    if (!regularFile(file)) throw new Error(`启用输入不是单链接普通文件：${relative}`);
-    const hash = digest(fs.readFileSync(file));
-    if (expected !== undefined && expected !== hash) throw new Error(`已安装源文件被改写：${relative}`);
-    files.push([relative, hash]);
-  };
-  const walk = (relative: string): void => {
-    if (isExtensionActivationOutput(steps, relative)) return;
-    const file = outputPath(extensionRoot, relative);
-    if (!fs.lstatSync(file).isDirectory()) return add(relative);
-    for (const child of fs.readdirSync(file).sort()) walk(`${relative}/${child}`);
-  };
-  if (sourceFiles && Object.keys(sourceFiles).length) {
-    for (const relative of Object.keys(sourceFiles).sort()) add(relative, sourceFiles[relative]);
-  } else {
-    walk(`skills/${ability}`);
-  }
-  return digest(JSON.stringify([steps, files]));
-}
-
-function treeMembers(directory: string, tree: string, allowLinks: boolean): Record<string, string> {
-  return Object.fromEntries(fs.readdirSync(directory).sort().map(name => {
-    const file = path.join(directory, name);
-    const stat = fs.lstatSync(file);
-    if (stat.isDirectory()) return [name, digest(JSON.stringify(['directory', treeMembers(file, tree, allowLinks)]))];
-    if (stat.isFile() && stat.nlink === 1) return [name, digest(`file:${digest(fs.readFileSync(file))}`)];
-    if (allowLinks && stat.isSymbolicLink() && isInsideProjectRoot(tree, fs.realpathSync(file))) {
-      return [name, digest(JSON.stringify(['symlink', fs.readlinkSync(file)]))];
-    }
-    throw new Error(`输出目录有不支持的文件类型或外部链接：${file}`);
-  }));
-}
-
-function readOutput(extensionRoot: string, relative: string): ExtensionActivationOutput | undefined {
-  const file = outputPath(extensionRoot, relative);
-  const stat = fs.lstatSync(file, { throwIfNoEntry: false });
-  if (!stat) return undefined;
-  if (stat.isDirectory()) {
-    const members = treeMembers(file, file, path.basename(file) === 'node_modules');
-    return { path: relative, kind: 'directory', sha256: digest(JSON.stringify(members)), members };
-  }
-  if (stat.isFile() && stat.nlink === 1) return { path: relative, kind: 'file', sha256: digest(fs.readFileSync(file)) };
-  throw new Error(`启用输出不是单链接普通文件或独占目录：${relative}`);
-}
-
-function outputDrift(expected: ExtensionActivationOutput, observed: ExtensionActivationOutput | undefined): ExtensionActivationDrift | undefined {
-  const result = { path: expected.path };
-  if (!observed) return { ...result, kind: 'missing' };
-  if (observed.kind !== expected.kind) return { ...result, kind: 'changed' };
-  if (observed.sha256 === expected.sha256) return undefined;
-  if (expected.members && observed.members && Object.entries(observed.members)
-    .every(([key, hash]) => expected.members?.[key] === hash)) return { ...result, kind: 'missing' };
-  return { ...result, kind: 'changed' };
-}
-
-export function extensionActivationDrift(extensionRoot: string, result: ExtensionActivationResult): ExtensionActivationDrift[] {
-  return result.steps.filter(step => step.status === 'applied').flatMap(step => step.outputs.flatMap(out => {
-    try {
-      const drift = outputDrift(out, readOutput(extensionRoot, out.path));
-      return drift ? [drift] : [];
-    } catch (error) {
-      return [{ path: out.path, kind: 'unverifiable' as const, reason: (error as Error).message }];
-    }
-  }));
-}
-
-export function extensionActivationNeedsCleanup(result: ExtensionActivationResult | undefined): boolean {
-  return result?.steps.some(step => step.status !== 'undone') ?? false;
+function instanceId(context: ExtensionActivationContext): string {
+  return digest(JSON.stringify([context.projectRoot, context.ability, context.version]));
 }
 
 function redactArguments(argv: readonly string[]): string[] {
@@ -175,7 +120,7 @@ function preview(
 ): void {
   if (!commands.length) return;
   const { ability, extensionRoot, version } = context;
-  const notice = { ability, ...(version ? { version } : {}), input_sha256: input,
+  const notice = { ability, version, input_sha256: input,
     commands: commands.map(({ step, action }) => ({ id: step.id, action, cwd: path.join(extensionRoot, step.cwd),
       argv: redactArguments(action === 'run' ? step.run : step.undo!), outputs: step.outputs })) };
   if (context.preview) context.preview(notice);
@@ -213,24 +158,23 @@ function removeReportedAddition(
 }
 
 function invoke(
-  context: ExtensionActivationContext, instance: string, step: ExtensionActivationStep, action: 'run' | 'undo',
-  allowedOutputs: readonly string[],
-): { failure?: string; residuals: PhaseInvocationChange[] } {
-  const argv = action === 'run' ? step.run : step.undo!;
+  context: ExtensionActivationContext, instance: string, step: ExtensionActivationStep, action: 'run' | 'undo' | 'check',
+  allowedOutputs: readonly string[], argv = action === 'run' ? step.run : step.undo!,
+): { failure?: string; violation?: true; residuals: PhaseInvocationChange[] } {
   const cwd = outputPath(context.extensionRoot, step.cwd);
   const resolution = { projectRoot: context.projectRoot, protectedRoots: [] };
   const occupied = new Set<string>();
   const pre = capturePhaseInvocationSnapshot(resolution, { wholeProject: true, onObservedPath: rel => {
     occupied.add(process.platform === 'win32' ? rel.toLowerCase() : rel);
   } });
-  if (pre.failureReason) return { failure: `${step.id} 步前项目快照失败：${pre.failureReason}`, residuals: [] };
+  if (pre.failureReason) return { violation: true, failure: `${step.id} 步前项目快照失败：${pre.failureReason}`, residuals: [] };
   let failure: string | undefined;
   let stdout = '';
   try {
     const command = spawn.sync(argv[0], argv.slice(1), {
-      cwd, input: '', encoding: 'utf8', windowsHide: true, shell: false, maxBuffer: 4 * 1024 * 1024,
+      cwd, input: '', encoding: 'utf8', windowsHide: true, shell: false, timeout: 60_000, maxBuffer: 4 * 1024 * 1024,
       env: { ...process.env, MAISON_EXTENSION_ROOT: context.extensionRoot, MAISON_EXTENSION_PROJECT_ROOT: context.projectRoot,
-        MAISON_EXTENSION_INSTANCE_ID: instance },
+        MAISON_EXTENSION_INSTANCE_ID: instance, MAISON_EXTENSION_VERSION: context.version },
     });
     stdout = command.stdout ?? '';
     if (command.error) failure = `${step.id} ${action} 命令失败 (${(command.error as NodeJS.ErrnoException).code ?? 'spawn'})`;
@@ -242,14 +186,12 @@ function invoke(
   const post = capturePhaseInvocationSnapshot(resolution, { wholeProject: true });
   const diff = diffPhaseInvocationSnapshots(pre, post);
   if (diff.kind === 'unverifiable') {
-    return { failure: [failure, `${step.id} 步后项目快照无法核对：${diff.reason}`].filter(Boolean).join('；'), residuals: [] };
+    return { violation: true, failure: [failure, `${step.id} 步后项目快照无法核对：${diff.reason}`].filter(Boolean).join('；'), residuals: [] };
   }
   if (diff.kind === 'clean') return { failure, residuals: [] };
-  const relativeRoot = relativeExtensionPath(context.projectRoot, context.extensionRoot);
-  const allowed = allowedOutputs.map(out => `${relativeRoot}/${out}`);
   const outside: PhaseInvocationChange[] = [];
   for (const change of diff.changes) {
-    if (!allowed.some(out => extensionActivationPathWithin(change.path, out))) outside.push(change);
+    if (!allowedOutputs.some(out => extensionActivationPathWithin(change.path, out))) outside.push(change);
     else context.observeWrite?.({
       path: path.join(context.projectRoot, change.path), pre_sha256: change.preSha256, post_sha256: change.postSha256,
     });
@@ -257,210 +199,205 @@ function invoke(
   if (!outside.length) return { failure, residuals: [] };
   const receipts = creationReceipts(stdout, instance);
   const residuals = outside.filter(change => !removeReportedAddition(context, change, occupied, receipts));
-  return { failure: [failure, `${step.id} ${action} 越界写入：${outside.map(change => change.path).join(', ')}`]
+  return { violation: true, failure: [failure, `${step.id} ${action} 越界写入：${outside.map(change => change.path).join(', ')}`]
     .filter(Boolean).join('；'), residuals };
 }
 
-function addResiduals(result: ExtensionActivationResult, rows: readonly PhaseInvocationChange[]): void {
-  if (!rows.length) return;
-  const seen = new Map((result.residuals ?? []).map(row => [row.path, row]));
-  for (const row of rows) if (!seen.has(row.path)) seen.set(row.path, row);
-  result.residuals = [...seen.values()];
+function protectedLocalOutputs(
+  context: ExtensionActivationContext, steps: readonly ExtensionActivationStep[],
+): void {
+  const outputPaths = steps.filter(step => step.scope === 'local').flatMap(step => step.outputs);
+  if (!outputPaths.length) return;
+  const prefix = relativeExtensionPath(context.projectRoot, context.extensionRoot);
+  const tracked = extensionGitPaths(context.projectRoot, ['ls-files', '-z', '--', prefix]) ?? [];
+  const owned = Object.keys(context.sourceFiles ?? {});
+  validateExtensionActivationOwnership(context.ability, steps.filter(step => step.scope === 'local'),
+    [...tracked.map(file => path.posix.relative(prefix, file)), ...owned]);
 }
 
-function persistenceFailure(error: unknown, result: ExtensionActivationResult): Error {
-  return new Error(`启用记录写入失败：${(error as Error).message}。当前补偿结果：${JSON.stringify({
-    failure: result.failure, steps: result.steps.map(({ id, status }) => ({ id, status })), residuals: result.residuals,
-  })}`);
-}
-
-function readAppliedOutputs(
-  context: ExtensionActivationContext, step: ExtensionActivationStep, row: ExtensionActivationStepResult,
-  result: ExtensionActivationResult, requireAll: boolean,
-): string[] {
-  const failures: string[] = [];
-  for (const relative of step.outputs) {
-    try {
-      const output = readOutput(context.extensionRoot, relative);
-      if (output) row.outputs.push(output);
-      else if (requireAll) failures.push(`缺少声明输出 ${relative}`);
-    } catch (error) {
-      failures.push((error as Error).message);
-      addResiduals(result, [{ path: relativeExtensionPath(context.projectRoot, path.join(context.extensionRoot, relative)),
-        how: 'added', preSha256: null, postSha256: null }]);
+function checkStep(
+  context: ExtensionActivationContext, step: ExtensionActivationStep,
+): { failure?: string; violation?: true; residuals: PhaseInvocationChange[] } {
+  for (const output of managedOutputs(context, step)) {
+    const stat = fs.lstatSync(output, { throwIfNoEntry: false });
+    if (!stat || (!stat.isDirectory() && (!stat.isFile() || stat.nlink !== 1))) {
+      return { failure: `步骤 ${step.id} 缺少有效产物：${relativeExtensionPath(context.projectRoot, output)}`, residuals: [] };
     }
   }
-  return failures;
-}
-
-function removeOutput(context: ExtensionActivationContext, output: ExtensionActivationOutput): PhaseInvocationChange | undefined {
-  const file = path.join(context.extensionRoot, output.path);
-  let observed: ExtensionActivationOutput | undefined;
+  if ('check' in step.ready) {
+    return invoke(context, instanceId(context), step, 'check', [], step.ready.check);
+  }
+  const relative = step.ready.version_file;
+  const file = outputPath(context.extensionRoot, relative);
   try {
-    observed = readOutput(context.extensionRoot, output.path);
-    if (!observed) return undefined;
-    const drift = outputDrift(output, observed);
-    if (!drift || drift.kind === 'missing') {
-      if (observed.kind === 'file') removeExtensionFile(file, context.observeWrite);
-      else {
-        const resolution = { projectRoot: context.projectRoot, protectedRoots: [relativeExtensionPath(context.projectRoot, file)] };
-        const snapshot = context.observeWrite ? capturePhaseInvocationSnapshot(resolution) : undefined;
-        fs.rmSync(file, { recursive: true });
-        for (const entry of snapshot?.entries ?? []) context.observeWrite?.({
-          path: path.join(context.projectRoot, entry.path), pre_sha256: entry.sha256, post_sha256: null,
-        });
-      }
-      return undefined;
+    if (regularFile(file)) {
+      const index: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+      const key = step.ready.version_field ?? 'plugin_version';
+      if (index && typeof index === 'object' && !Array.isArray(index) && Object.prototype.hasOwnProperty.call(index, key)
+        && (index as Record<string, unknown>)[key] === context.version) return { residuals: [] };
     }
-  } catch (error) {
-    if (observed) throw error;
-  }
-  return {
-    path: relativeExtensionPath(context.projectRoot, file), how: observed && output.kind !== observed.kind ? 'type-changed' : 'modified',
-    preSha256: output.sha256, postSha256: observed?.sha256 ?? null,
-  };
+  } catch { /* A missing or unreadable version is insufficient evidence to reuse the output. */ }
+  return { failure: `步骤 ${step.id} 的 ${relative} 未声明当前插件版本 ${context.version}`, residuals: [] };
 }
 
-export function undoExtensionActivation(
-  context: ExtensionActivationContext, steps: readonly ExtensionActivationStep[], previous: ExtensionActivationResult,
+export function inspectExtensionActivation(
+  context: ExtensionActivationContext, steps: readonly ExtensionActivationStep[],
 ): ExtensionActivationResult {
-  parseExtensionActivationResult(context.ability, previous, steps);
-  const result = structuredClone(previous);
-  const pending = [...result.steps].reverse().filter(row => row.status !== 'undone');
-  const declarations = new Map(steps.map(step => [step.id, step]));
-  const changed = pending.find(row => row.declaration_sha256 !== digest(JSON.stringify(declarations.get(row.id))));
-  if (changed) {
-    result.status = 'failed';
-    result.failure = `撤销待重试：步骤 ${changed.id} 的声明已改动，请恢复本次启用的声明后重试`;
-    context.persist(result);
-    return result;
-  }
-  result.status = 'running';
-  let persistError: unknown;
-  const remember = (): void => {
-    if (persistError) return;
-    try { context.persist(result); }
-    catch (error) { persistError = error; }
-  };
-  const finish = (): ExtensionActivationResult => {
-    remember();
-    if (persistError) throw persistenceFailure(persistError, result);
-    return result;
-  };
-  const commands = pending.flatMap(row => {
-    const step = declarations.get(row.id)!;
-    return step.undo && !row.undo_done ? [{ step, action: 'undo' as const }] : [];
-  });
-  preview(context, result.input_sha256, commands);
-  for (const row of pending) {
-    const step = declarations.get(row.id)!;
-    if (row.status === 'running') readAppliedOutputs(context, step, row, result, false);
-    row.status = 'undoing';
-    remember();
-    if (step.undo && !row.undo_done) {
-      const allowed = row.outputs.filter(out => {
-        try { return !outputDrift(out, readOutput(context.extensionRoot, out.path)); }
-        catch { return false; }
-      }).map(out => out.path);
-      let execution: ReturnType<typeof invoke>;
-      try {
-        execution = invoke(context, result.instance_id, step, 'undo', allowed);
-      } catch (error) { execution = { failure: (error as Error).message, residuals: [] }; }
-      addResiduals(result, execution.residuals);
-      if (execution.failure) {
-        result.status = 'failed';
-        result.failure = [previous.failure, `撤销待重试：${execution.failure}`].filter(Boolean).join('；');
-        return finish();
-      }
-      row.undo_done = true;
-      remember();
-    }
+  const rows: ExtensionStepState[] = [];
+  for (const step of steps) {
     try {
-      for (const output of [...row.outputs].reverse()) {
-        const residual = removeOutput(context, output);
-        if (residual) addResiduals(result, [residual]);
-      }
+      const { failure } = checkStep(context, step);
+      rows.push({ id: step.id, status: failure ? 'pending' : 'ready', outputs: step.outputs, ...(failure ? { failure } : {}) });
     } catch (error) {
-      result.status = 'failed';
-      result.failure = [previous.failure, `清理待重试：${(error as Error).message}`].filter(Boolean).join('；');
-      return finish();
+      rows.push({ id: step.id, status: 'failed', outputs: step.outputs, failure: (error as Error).message });
     }
-    row.status = 'undone';
-    remember();
   }
-  result.status = 'disabled';
-  delete result.failure;
-  return finish();
+  const failure = rows.find(step => step.failure)?.failure;
+  return { status: failure ? 'failed' : 'enabled', steps: rows, ...(failure ? { failure } : {}) };
+}
+
+function removeLocalOutputs(context: ExtensionActivationContext, step: ExtensionActivationStep, prune = false): void {
+  const outputs = managedOutputs(context, step);
+  for (const output of outputs) assertUnlinkedExtensionTree(output, true);
+  for (const output of outputs) {
+    const entries = context.observeWrite ? capturePhaseInvocationSnapshot({ projectRoot: context.projectRoot, protectedRoots: [] },
+      { wholeProject: true }).entries : [];
+    fs.rmSync(output, { recursive: true, force: true });
+    if (context.observeWrite) {
+      const relative = relativeExtensionPath(context.projectRoot, output);
+      for (const file of entries.filter(entry => entry.kind === 'file' && extensionActivationPathWithin(entry.path, relative))) {
+        context.observeWrite({ path: path.join(context.projectRoot, file.path), pre_sha256: file.sha256 ?? null, post_sha256: null });
+      }
+    }
+    if (!prune) continue;
+    let parent = path.dirname(output);
+    while (parent !== context.extensionRoot) {
+      if (!fs.existsSync(parent)) { parent = path.dirname(parent); continue; }
+      if (fs.readdirSync(parent).length) break;
+      fs.rmdirSync(parent);
+      parent = path.dirname(parent);
+    }
+  }
+}
+
+export function removeDisabledExtensionOutputs(
+  context: ExtensionActivationContext, steps: readonly ExtensionActivationStep[],
+): void {
+  const local = steps.filter(step => step.scope === 'local');
+  protectedLocalOutputs(context, local);
+  for (const step of [...local].reverse()) removeLocalOutputs(context, step, true);
+}
+
+function allowedPaths(context: ExtensionActivationContext, step: ExtensionActivationStep): string[] {
+  return managedOutputs(context, step).map(file => relativeExtensionPath(context.projectRoot, file));
+}
+
+function validateExecution(
+  context: ExtensionActivationContext, steps: readonly ExtensionActivationStep[], assertSources: boolean,
+): void {
+  validateExtensionActivationFiles(context.extensionRoot, context.ability, steps, Object.keys(context.sourceFiles ?? {}));
+  protectedLocalOutputs(context, steps);
+  for (const step of steps) managedOutputs(context, step);
+  if (!assertSources) return;
+  const matches = extensionFingerprintMatcher(context.extensionRoot);
+  for (const [relative, expected] of Object.entries(context.sourceFiles ?? {})) {
+    const file = outputPath(context.extensionRoot, relative);
+    if (!regularFile(file) || !matches(relative, fs.readFileSync(file), expected)) throw new Error(`已安装源文件被改写：${relative}`);
+  }
 }
 
 export function runExtensionActivation(
-  context: ExtensionActivationContext, steps: readonly ExtensionActivationStep[], previous?: ExtensionActivationResult,
+  context: ExtensionActivationContext, steps: readonly ExtensionActivationStep[], mode: 'management' | 'local',
+  canRebuild: () => void = () => {},
 ): ExtensionActivationResult {
-  const failed = (result: ExtensionActivationResult, failure: string): ExtensionActivationResult => {
-    const state: ExtensionActivationResult = { ...result, status: 'failed', failure };
-    context.persist(state);
-    return state;
-  };
-  parseExtensionActivationResult(context.ability, previous, steps);
-  const attempt: ExtensionActivationResult = { instance_id: randomUUID(), status: 'running', input_sha256: digest(JSON.stringify(steps)), steps: [] };
-  const remember = (draft: ExtensionActivationResult, currentNotStarted = false): void => {
-    try { context.persist(draft); }
-    catch (error) {
-      if (currentNotStarted) draft.steps.pop();
-      const undone = undoExtensionActivation({ ...context, persist: () => {} }, steps, draft);
-      throw persistenceFailure(error, undone);
-    }
-  };
+  const rows: ExtensionStepState[] = [];
+  const touched: Array<{ step: ExtensionActivationStep; row: ExtensionStepState }> = [];
+  const residuals: PhaseInvocationChange[] = [];
+  const id = instanceId(context);
   try {
-    validateExtensionActivationFiles(context.extensionRoot, context.ability, steps, context.protectedFiles);
-    attempt.input_sha256 = extensionActivationInputDigest(context, steps);
-  } catch (error) { return failed(previous ?? attempt, (error as Error).message); }
-  if (previous?.status === 'enabled') {
-    const drift = extensionActivationDrift(context.extensionRoot, previous);
-    if (!drift.length && attempt.input_sha256 === previous.input_sha256) return previous;
-    const conflicts = drift.filter(row => row.kind !== 'missing');
-    if (conflicts.length) return failed(previous, `启用输出发生改写，先处理冲突：${conflicts.map(row => row.path).join(', ')}`);
-  }
-  if (previous && extensionActivationNeedsCleanup(previous)) {
-    previous = undoExtensionActivation(context, steps, previous);
-    if (extensionActivationNeedsCleanup(previous)) return previous;
-  }
-  addResiduals(attempt, previous?.residuals ?? []);
-  try {
+    validateExecution(context, steps, false);
+    const commands: Array<{ step: ExtensionActivationStep; action: 'run' }> = [];
     for (const step of steps) {
-      for (const relative of step.outputs) {
-        if (fs.lstatSync(outputPath(context.extensionRoot, relative), { throwIfNoEntry: false })) {
-          throw new Error(`声明输出已存在，未获本次启用独占归属：${relative}`);
+      const row: ExtensionStepState = { id: step.id, status: 'pending', outputs: step.outputs };
+      rows.push(row);
+      const before = checkStep(context, step);
+      residuals.push(...before.residuals);
+      if (before.violation) throw new Error(before.failure);
+      if (!before.failure) { row.status = 'ready'; continue; }
+      if (step.scope === 'repo' && mode === 'local') {
+        throw new Error(`${before.failure}。请由维护者运行 extension enable ${context.ability}`);
+      }
+      if (!touched.length) { canRebuild(); validateExecution(context, steps, true); }
+      if (step.scope === 'local') removeLocalOutputs(context, step);
+      if (mode === 'management') {
+        commands.splice(0, commands.length, { step, action: 'run' });
+        preview(context, id, commands);
+      }
+      touched.push({ step, row });
+      const run = invoke(context, id, step, 'run', allowedPaths(context, step));
+      residuals.push(...run.residuals);
+      if (run.failure) throw new Error(run.failure);
+      if (step.scope === 'local') for (const output of managedOutputs(context, step)) assertUnlinkedExtensionTree(output, true);
+      const after = checkStep(context, step);
+      residuals.push(...after.residuals);
+      if (after.failure) throw new Error(after.failure);
+      row.status = 'applied';
+    }
+    return { status: 'enabled', steps: rows };
+  } catch (error) {
+    const failure = (error as Error).message;
+    const undoFailures = [];
+    for (const { step, row } of touched.reverse()) {
+      try {
+        if (step.scope === 'local') removeLocalOutputs(context, step);
+        else {
+          preview(context, id, [{ step, action: 'undo' }]);
+          const undone = invoke(context, id, step, 'undo', allowedPaths(context, step));
+          residuals.push(...undone.residuals);
+          if (undone.failure) throw new Error(undone.failure);
         }
+        row.status = 'undone';
+      } catch (undoError) {
+        row.status = 'failed';
+        row.failure = (undoError as Error).message;
+        undoFailures.push(row.failure);
       }
     }
-  } catch (error) { return failed(attempt, (error as Error).message); }
-  preview(context, attempt.input_sha256, [
-    ...steps.map(step => ({ step, action: 'run' as const })),
-    ...[...steps].reverse().flatMap(step => step.undo ? [{ step, action: 'undo' as const }] : []),
-  ]);
-  for (const step of steps) {
-    const row: ExtensionActivationStepResult = {
-      id: step.id, declaration_sha256: digest(JSON.stringify(step)), status: 'running', outputs: [],
-    };
-    attempt.steps.push(row);
-    remember(attempt, true);
-    let execution: ReturnType<typeof invoke>;
-    try { execution = invoke(context, attempt.instance_id, step, 'run', step.outputs); }
-    catch (error) { execution = { failure: (error as Error).message, residuals: [] }; }
-    addResiduals(attempt, execution.residuals);
-    const failures = [execution.failure, ...readAppliedOutputs(context, step, row, attempt, !execution.failure)].filter(Boolean);
-    row.status = 'applied';
-    if (failures.length) {
-      row.failure = failures.join('；');
-      const pending: ExtensionActivationResult = { ...attempt, status: 'failed', failure: row.failure };
-      remember(pending);
-      const undone = undoExtensionActivation(context, steps, pending);
-      return failed(undone, undone.failure ?? row.failure);
-    }
-    remember(attempt);
+    return { status: 'failed', steps: rows, failure: [failure, ...undoFailures].join('；'), ...(residuals.length ? { residuals } : {}) };
   }
-  attempt.status = 'enabled';
-  remember(attempt);
-  return attempt;
+}
+
+export function undoExtensionActivation(
+  context: ExtensionActivationContext, steps: readonly ExtensionActivationStep[],
+): ExtensionActivationResult {
+  const rows: ExtensionStepState[] = [];
+  const residuals: PhaseInvocationChange[] = [];
+  const id = instanceId(context);
+  try {
+    validateExecution(context, steps, false);
+    for (const step of [...steps].reverse()) {
+      const row: ExtensionStepState = { id: step.id, status: 'pending', outputs: step.outputs };
+      rows.push(row);
+      if (step.scope === 'local') removeLocalOutputs(context, step, true);
+      else {
+        const check = checkStep(context, step);
+        residuals.push(...check.residuals);
+        if (check.violation) throw new Error(check.failure);
+        if (!check.failure || managedOutputs(context, step).some(output => fs.existsSync(output))) {
+          validateExecution(context, steps, true);
+          preview(context, id, [{ step, action: 'undo' }]);
+          const undo = invoke(context, id, step, 'undo', allowedPaths(context, step));
+          residuals.push(...undo.residuals);
+          if (undo.failure) throw new Error(undo.failure);
+          const remaining = checkStep(context, step);
+          residuals.push(...remaining.residuals);
+          if (!remaining.failure || remaining.violation) throw new Error(`步骤 ${step.id} 撤回后效果仍在或无法核对`);
+        }
+      }
+      row.status = 'undone';
+    }
+    return { status: 'disabled', steps: rows };
+  } catch (error) {
+    return { status: 'failed', steps: rows, failure: (error as Error).message, ...(residuals.length ? { residuals } : {}) };
+  }
 }

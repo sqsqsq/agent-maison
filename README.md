@@ -22,11 +22,11 @@
 | `profiles/` | **profile-plugin** | 宿主 toolchain / capability / overlay |
 | `agents/` | **agent-plugin** | IDE 适配（slash / 跳板 / rules） |
 | `workflows/` | **workflow**（可选） | phase DAG YAML，fork 自定义顺序 |
-| 实例根 `doc/extensions/` | **instance-extension** | 业务 SKILL、audience knowledge、hooks、MCP produces、Feature phase bindings |
+| 实例根 `doc/extensions/` | **instance-extension** | 宿主插件登记，包内 Skill、时点绑定、知识、hooks 和 MCP 产物声明 |
 
 叠加顺序：**framework 默认 → profile → workflow → instance extensions**。详见 [docs/concepts/extensibility.md](docs/concepts/extensibility.md)。
 
-开发或安装本地实例扩展时，查阅 [Extension 接入协议](docs/evolution/extension-protocol-v1.md)。发布件带有完整时点表、可安装例子和启停自测命令。
+使用 `/extension install` 从本地来源安装所需插件。包清单和资源位于 `doc/extensions/<插件ID>/`，宿主选择位于 `doc/extensions/manifest.yaml`。发布件带有时点表、可安装示例和启停自测命令。[Extension 接入协议](docs/evolution/extension-protocol-v1.md) · [旧版扩展手工接入](MIGRATION.md#310-实例扩展按插件组织与手工接入)
 
 ### Profile 加载顺序
 

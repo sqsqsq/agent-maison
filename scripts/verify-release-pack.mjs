@@ -83,6 +83,7 @@ function assertZipContents(frameworkRoot) {
     '.gitignore',
     'openspec',
     'scripts',
+    'extensions',
     'harness/tests',
     'RELEASE-NOTES-v1.0.md',
     'RELEASE-NOTES-v2.0.md',
@@ -190,6 +191,10 @@ function assertZipContents(frameworkRoot) {
     'harness/trace/trace.schema.json',
     'harness/trace/gap-notes.template.md',
     'templates/AGENTS.md.template',
+    'skills/project/extension/templates/extension-skeleton/manifest.yaml.template',
+    'docs/operations/samples/design-notes/manifest.yaml',
+    'docs/operations/samples/design-notes/knowledge/design-notes/guide.md',
+    'docs/operations/samples/design-notes/skills/design-notes/SKILL.md',
     'profiles/hmos-app/vendor/hylyre/release.manifest.json',
   ];
   for (const rel of mustExist) {

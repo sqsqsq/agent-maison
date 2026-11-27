@@ -1,6 +1,7 @@
+import { putPlugin } from './extension-test-fixture';
 import { beginUnitCase } from '../utils/unit-cases';
 import { testCliArgs } from '../utils/test-cli-args';
-// 消费者扩展在 spec harness 入口的两种失败判定。
+// 消费者扩展在 spec harness 入口的消费与格式诊断。
 
 import * as fs from 'fs';
 import * as os from 'os';
@@ -57,7 +58,8 @@ function scaffoldFeature(root: string, adapter = 'codeagent'): void {
     '## 4. 功能清单', '', '| 编号 | 功能名称 | 优先级 | 描述 |', '|------|---------|--------|------|', '| F1 | 余额展示 | P0 | 展示余额 |', '| F2 | 转账入口 | P1 | 提供转账入口 |', '',
     '## 5. 页面/界面描述', '', '账户页展示余额与转账入口。', '',
     '## 6. 业务流程图', '', '```mermaid', 'flowchart LR', '  A --> B', '```', '',
-    '## 7. 异常/边界场景处理', '', '| 异常场景 | 处理方式 |', '|----------|----------|', '| 余额为负 | 展示告警 |', '',
+    '## 7. 异常/边界场景处理', '', '| 编号 | 异常场景 | 处理方式 |', '|------|----------|----------|',
+    '| E1 | 网络异常 | 显示重试入口 |', '| E2 | 数据为空 | 显示空态 |', '| E3 | 功能暂不支持 | 显示说明 |', '',
     '## 8. 非功能性需求', '', '加载时间 < 500ms。', '',
     '## 9. 验收标准', '', '**AC-1** (F1): 余额展示可测试。', '**AC-2** (F2): 转账入口可测试。', '',
   ].join('\n'), 'utf-8');
@@ -106,15 +108,11 @@ const cases: Case[] = [
       const root = provisionFramework();
       try {
         scaffoldFeature(root);
-        const extensionRoot = path.join(root, 'doc', 'extensions');
-        fs.mkdirSync(extensionRoot, { recursive: true });
-        fs.writeFileSync(path.join(extensionRoot, 'manifest.yaml'), [
-          'schema_version: "1.1"', 'name: runner-extension', 'provides:', '  skills: []',
-          '  mcp_actions:', '    verify-action:', '      tool: host.verify', '      required: true',
-          '      severity: BLOCKER', '      produces: [doc/missing-verify.json]', '      usage: verify',
-          'phase_bindings:', '  spec:', '    before_phase_verify:',
-          '      - { kind: mcp, ref: verify-action }', '',
-        ].join('\n'), 'utf-8');
+        putPlugin(root, 'runner-extension', { declaration: { provides: { mcp_actions: {
+          'verify-action': { tool: 'host.verify', required: true, severity: 'BLOCKER', produces: ['doc/missing-verify.json'], usage: 'verify' },
+        } }, bindings: {
+          verify: { at: 'feature.before_phase_verify@1', phase: 'spec', kind: 'action', ref: 'verify-action' },
+        } } });
         git(root, ['add', '-A']);
         git(root, ['-c', 'user.email=e2e@test', '-c', 'user.name=e2e', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'extension fixture']);
         const result = runHarness(root, ['--phase', 'spec', '--feature', 'demo', '--summary']);
@@ -130,21 +128,58 @@ const cases: Case[] = [
     },
   },
   {
-    name: '非法 1.1 + rogue Skill + required binding：runner 明确 BLOCKER 且不降级目录注入',
+    name: '已发布的旧平铺根只读提示，普通 spec 继续且不投递 rogue Skill',
+    run: () => {
+      const root = provisionFramework();
+      const baselineRoot = provisionFramework();
+      try {
+        scaffoldFeature(root);
+        scaffoldFeature(baselineRoot);
+        const args = ['--phase', 'spec', '--feature', 'demo', '--summary'];
+        const summaryPath = 'doc/features/demo/spec/reports/summary.json';
+        const extensionRoot = path.join(root, 'doc', 'extensions');
+        const rogue = path.join(extensionRoot, 'skills', 'rogue', 'SKILL.md');
+        const manifest = path.join(extensionRoot, 'manifest.yaml');
+        const old = 'schema_version: "1.0"\nname: legacy-extension\nprovides:\n  skills: [rogue]\n';
+        fs.mkdirSync(path.dirname(rogue), { recursive: true });
+        fs.writeFileSync(rogue, '# LEGACY_ROGUE\n', 'utf8');
+        fs.writeFileSync(manifest, old, 'utf8');
+        for (const project of [root, baselineRoot]) {
+          git(project, ['add', '-A']);
+          git(project, ['-c', 'user.email=e2e@test', '-c', 'user.name=e2e', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'spec fixture']);
+        }
+        const baseline = runHarness(baselineRoot, args);
+        const baselineVerdict = readJson(baselineRoot, summaryPath).verdict;
+        const result = runHarness(root, args);
+        assert(result.status === baseline.status && readJson(root, summaryPath).verdict === baselineVerdict,
+          `旧扩展不得改变普通业务结论：${result.stdout} ${result.stderr}`);
+        const report = readJson(root, 'doc/features/demo/spec/reports/script-report.json') as {
+          checks?: Array<{ id?: string; status?: string; severity?: string; details?: string }>;
+        };
+        assert(report.checks?.some(check => check.id === 'extension_legacy_layout' && check.status === 'WARN'
+          && check.details?.includes('请按需手工整理后重新接入')), '旧清单须提供手工接入提示');
+        assert(!report.checks?.some(check => check.status === 'FAIL' && check.id?.startsWith('extension_')),
+          '旧扩展不得进入正式门禁');
+        assert(report.checks?.some(check => check.id === 'required_chapters' && check.status === 'PASS'), '原生业务检查须执行');
+        assert(!result.stdout.includes('LEGACY_ROGUE'), '旧 Skill 正文不得投递');
+        assert(!fs.existsSync(path.join(root, '.cac', 'commands', 'rogue.md')), '旧 Skill 不得物化');
+        assert(fs.readFileSync(rogue, 'utf8') === '# LEGACY_ROGUE\n' && fs.readFileSync(manifest, 'utf8') === old, '旧资源保持原字节');
+      } finally {
+        fs.rmSync(baselineRoot, { recursive: true, force: true });
+        fs.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: '损坏的 2.0 宿主清单经普通 runner 报结构 BLOCKER',
     run: () => {
       const root = provisionFramework();
       try {
         scaffoldFeature(root);
         const extensionRoot = path.join(root, 'doc', 'extensions');
-        fs.mkdirSync(path.join(extensionRoot, 'skills', 'rogue'), { recursive: true });
-        fs.writeFileSync(path.join(extensionRoot, 'skills', 'rogue', 'SKILL.md'), '# rogue\n', 'utf8');
-        fs.writeFileSync(path.join(extensionRoot, 'manifest.yaml'), [
-          'schema_version: "1.1"', 'name: invalid-runner-extension', 'unknown: true', 'provides:',
-          '  skills: []', '  mcp_actions:', '    verify-action:', '      tool: host.verify',
-          '      required: true', '      produces: [doc/missing-verify.json]', '      usage: verify',
-          'phase_bindings:', '  spec:', '    before_phase_verify:',
-          '      - { kind: mcp, ref: verify-action }', '',
-        ].join('\n'), 'utf-8');
+        fs.mkdirSync(extensionRoot, { recursive: true });
+        fs.writeFileSync(path.join(extensionRoot, 'manifest.yaml'),
+          'schema_version: "2.0"\nkind: host\nplugins: {}\nunknown: true\n', 'utf8');
         git(root, ['add', '-A']);
         git(root, ['-c', 'user.email=e2e@test', '-c', 'user.name=e2e', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'invalid extension fixture']);
         const result = runHarness(root, ['--phase', 'spec', '--feature', 'demo', '--summary']);
@@ -155,7 +190,6 @@ const cases: Case[] = [
         assert(report.checks?.some(check => check.id?.startsWith('extension_manifest_manifest_unknown_field')
           && check.status === 'FAIL' && check.severity === 'BLOCKER'),
         `runner 缺 manifest BLOCKER：${JSON.stringify(report.checks)}`);
-        assert(!fs.existsSync(path.join(root, '.cac', 'commands', 'rogue.md')), 'rogue Skill 不得注入');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

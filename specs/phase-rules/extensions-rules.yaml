@@ -4,7 +4,7 @@ applies_to: "doc/extensions/**"
 
 structure_checks:
   extension_manifest_consistent:
-    description: doc/extensions/manifest.yaml（若存在）必须通过 extension-loader 校验且无 bundle.errors。
+    description: 宿主清单及登记的插件清单通过 extension-loader 校验。
     severity: BLOCKER
 
 semantic_checks: {}

@@ -32,7 +32,7 @@ import { isDeepStrictEqual } from 'util';
 import { spawnSync } from 'child_process';
 import minimist from 'minimist';
 import { decodeTextFile, SpecLoader, FeatureArtifactInspection } from './scripts/utils/spec-loader';
-import { assembleKnowledge, knowledgeContextFiles, renderKnowledge, type KnowledgeAssembly } from './scripts/utils/knowledge-context';
+import { assembleKnowledge, FEATURE_AUTHOR_AT, FEATURE_VERIFY_AT, knowledgeContextFiles, renderKnowledge, type KnowledgeAssembly } from './scripts/utils/knowledge-context';
 import {
   generateScriptReport,
   assembleAIPrompt,
@@ -251,7 +251,7 @@ import {
   type HookEventName,
 } from './hooks-dispatcher';
 import * as YAML from 'yaml';
-import { checkExtensionBindingProduces, checkExtensionManifest } from './scripts/utils/extension-runtime';
+import { checkExtensionBindingProduces, checkExtensionManifest, issueWithExtensionVerifierMaterial, phaseExtensionMaterialFiles, preparePhaseExtensionInputs } from './scripts/utils/extension-runtime';
 import { detectRepoLayout, frameworkAbs, frameworkRelPath, frameworkLogicalRelPath, inferRepoLayout, type RepoLayout } from './repo-layout';
 import { probeAdapterImageInput, collectAuthoritativeImagePaths, resolveContextAdapterImageInput } from './scripts/utils/multimodal-probe';
 import { resolveEffectiveVisionContext } from './scripts/utils/effective-vision-context';
@@ -1024,7 +1024,9 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const resolvedProfile = loadResolvedProfile(projectRoot, fwConfigEarly, resolvedFrameworkRoot);
+  const preparedExtensions = reportReconcileOnly || phase === 'extensions' ? undefined
+    : preparePhaseExtensionInputs(projectRoot, resolvedFrameworkRoot, [phase], 'check');
+  const resolvedProfile = loadResolvedProfile(projectRoot, fwConfigEarly, resolvedFrameworkRoot, preparedExtensions);
 
   // ---------------------------------------------------------------------------
   // verifier 适用性解析（plan a9d4e7c2 T1 / d2f7a9c4）——**一次解析，全员消费**
@@ -1381,13 +1383,13 @@ async function main(): Promise<void> {
       bundle: resolvedProfile.extensionBundle,
       projectRoot,
       phase,
-      slot: 'before_phase_work',
+      at: FEATURE_AUTHOR_AT,
     }));
     checks.push(...checkExtensionBindingProduces({
       bundle: resolvedProfile.extensionBundle,
       projectRoot,
       phase,
-      slot: 'before_phase_verify',
+      at: FEATURE_VERIFY_AT,
     }));
 
     // P0-2（plan d9b4f7e2 复审）：spec-loader 形状留痕升结构化 FAIL——归一化只防崩溃，
@@ -2253,6 +2255,7 @@ export function writeRunSummaryBase(
         dir,
         report,
         projectRoot,
+        frameworkRoot,
         gateFingerprint: gateFingerprint ?? null,
         sourceCommitSha,
         worktreeDigest,
@@ -2645,12 +2648,18 @@ function issueVerifierRequest(input: {
   dir: string;
   report: ScriptReport;
   projectRoot: string;
+  frameworkRoot: string;
   gateFingerprint: string | null;
   sourceCommitSha: string | null;
   worktreeDigest: string | null;
   material: VerifierMaterialView | null;
   promptAbs?: string;
 }): { subjectId: string; requestRel: string; reportRel: string } | null {
+  return issueWithExtensionVerifierMaterial(input.projectRoot, input.frameworkRoot, input.material?.files ?? [],
+    () => writeVerifierRequest(input));
+}
+
+function writeVerifierRequest(input: Parameters<typeof issueVerifierRequest>[0]) {
   const promptAbs = input.promptAbs ?? path.join(input.dir, 'ai-prompt.md');
   const promptRaw = fs.existsSync(promptAbs) ? readTextOrNull(promptAbs) : null;
   if (promptRaw === null) {
@@ -2700,6 +2709,7 @@ export function refreshVerifierRequestContext(input: {
   const material = readVerifierMaterialOrNull(dir, summary.verifier_subject_id);
   if (!request || !material || request.feature !== input.feature || request.phase !== input.phase
     || request.subject_id !== summary.verifier_subject_id || request.material_sha256 !== material.material_sha256) return null;
+  if (hasChangedVerifierMaterialInputs({ ...input, summary })) return null;
   const context = [...repairDeclineContextFiles(input.projectRoot, input.feature, input.runId, input.frameworkRoot),
     ...(input.additionalContextFiles ?? [])];
   const files = new Map(material.files.map(file => [file.path, file.sha256]));
@@ -2727,7 +2737,7 @@ export function refreshVerifierRequestContext(input: {
   fs.writeFileSync(promptAbs, scopedPrompt + '\n\n## 当前作者论据原件\n'
     + context.map(entry => `### ${entry.label}\n${entry.content}`).join('\n\n') + '\n', 'utf8');
   const report = JSON.parse(fs.readFileSync(path.join(dir, 'script-report.json'), 'utf8')) as ScriptReport;
-  const issued = issueVerifierRequest({ dir, report, projectRoot: input.projectRoot, material: current, promptAbs,
+  const issued = issueVerifierRequest({ dir, report, projectRoot: input.projectRoot, frameworkRoot: input.frameworkRoot, material: current, promptAbs,
     gateFingerprint: request.gate_fingerprint, sourceCommitSha: request.source_commit_sha, worktreeDigest: request.worktree_digest });
   if (!issued) return null;
   const updated = { ...summary, verifier_subject_id: issued.subjectId, verifier_request: issued.requestRel,
@@ -3671,11 +3681,12 @@ export function assembleVerifierPhasePrompt(
   const specContent = YAML.stringify(context.phaseRule);
   const templateText = loadVerifierPromptTemplate(harnessRoot, phase, resolvedProfile, options.verifierPromptRel);
   const extensionInstructions = knowledge.extensionInstructions;
+  const extensionFiles = phaseExtensionMaterialFiles(resolvedProfile.extensionBundle, projectRoot, phase);
   const goalBriefText = options.goalBrief ? renderGoalBrief(options.goalBrief, { requirementInContext: resolvedInputsCarryRequirement(resolvedInputs) }) : '';
   const material = buildVerifierMaterialView({ projectRoot, frameworkRoot, feature, phase, resolvedInputs, factsContext,
     deviceTestEvidence: context.deviceTestEvidence, gateFingerprint: computeGateFingerprint(frameworkRoot, phase),
     phaseRuleText: specContent, templateText, checks: scriptReport.checks, contextFiles, lifecycleFragments, extensionInstructions,
-    goalBriefText, phaseIssues, reviewChanges, runId });
+    extensionFiles, goalBriefText, phaseIssues, reviewChanges, runId });
   const reportDir = relFeaturePhaseReportsDir(projectRoot, feature, phase, frameworkRoot);
   const currentSubject = buildVerifierRequest({
     feature, phase, gate_fingerprint: material.gate_fingerprint, source_commit_sha: null, worktree_digest: null,

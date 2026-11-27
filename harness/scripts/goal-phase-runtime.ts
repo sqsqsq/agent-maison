@@ -46,7 +46,7 @@ import { resolveTaskAutomationPolicy } from './utils/runtime-policy';
 import { createIdentityNeutralDigestReaders, type IdentityNeutralDigestReaders } from './utils/identity-neutral-digest';
 import { parseVerifierRequest, parseVerifierRequestFromInstruction, canonicalRequestInput } from './utils/verifier-request';
 import { signedExtensionResourcePaths } from './utils/extension-requests';
-import { captureExtensionAuthorSelection, publishExtensionAuthorRequest } from './utils/extension-author-issuance';
+import { bindExtensionAuthorMaterials, captureExtensionAuthorSelection, publishExtensionAuthorRequest } from './utils/extension-author-issuance';
 import { validateProjectRelativePath, isInsideProjectRoot } from './utils/project-relative-path';
 import { loadVerifierEvidence, verifierDiagnosisRequired, verifierReportItemGaps } from './utils/verifier-evidence';
 import { readVerifierMaterialOrNull } from './utils/verifier-material';
@@ -128,6 +128,7 @@ import {
 import { assessLivenessBeacon, readLivenessBeacon, writeLivenessBeacon } from './utils/liveness-beacon';
 import { loadResolvedProfile } from '../profile-loader';
 // plan a7c3e9d2：作者前置输入 formatter（文件路径 / 函数名 / 签名 / 标题与主干 extension-runtime.ts 对齐）
+import { preparePhaseExtensionInputs } from './utils/extension-runtime';
 import { assembleKnowledge, featureExtensionBindingSegment, renderKnowledge } from './utils/knowledge-context';
 import { readRunBoundContracts, resolveCapabilityInputs, type ResolvedPhaseInputs } from './utils/capability-resolution';
 import { resolveCapabilityResolutionEntryInput, loadCompletedFactsBaseline } from './utils/capability-resolution-entry-input';
@@ -2903,9 +2904,10 @@ function beforeAuthorInvocation(events: readonly GoalRunEvent[], invokeId: strin
  */
 type FeatureExtensionContext = { frameworkRoot: string; feature: string; runId?: string; requirement?: string };
 
-function prepareExtensionInputsForPhase(projectRoot: string, phase: string, context?: FeatureExtensionContext) {
-  const profile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), context?.frameworkRoot);
-  const bundle = profile.extensionBundle;
+function prepareExtensionInputsForPhase(projectRoot: string, phase: string, context?: FeatureExtensionContext,
+  prepared?: import('./utils/types').ExtensionBundle) {
+  const frameworkRoot = context?.frameworkRoot ?? detectRepoLayout(__dirname).frameworkRoot;
+  const bundle = prepared ?? preparePhaseExtensionInputs(projectRoot, frameworkRoot, [phase], 'author');
   if (bundle && bundle.errors.length > 0) {
     const brief = bundle.errors.slice(0, 3).map(e => `${e.code}: ${e.message}`).join('；');
     console.warn(
@@ -2917,9 +2919,10 @@ function prepareExtensionInputsForPhase(projectRoot: string, phase: string, cont
     try { contracts = readRunBoundContracts(projectRoot, context.frameworkRoot, context.feature, context.runId); }
     catch { /* 未有施工契约的作者仍从需求和原生索引发现；原输入门禁负责契约缺失。 */ }
   }
-  const knowledge = assembleKnowledge({ projectRoot, frameworkRoot: context?.frameworkRoot ?? path.resolve(profile.profileDir, '../..'), phase,
+  const knowledge = assembleKnowledge({ projectRoot, frameworkRoot, phase,
     subject: 'feature', role: 'author', requirement: context?.requirement, contracts, extensionBundle: bundle });
-  return { instruction: renderKnowledge(knowledge), bindings: featureExtensionBindingSegment(bundle, phase, projectRoot, knowledge) };
+  const ut = phase === 'ut' ? '\n\n' + renderUtFormatContractLines(projectRoot, undefined, bundle.skillAssetAbsPaths).join('\n') : '';
+  return { instruction: renderKnowledge(knowledge) + ut, bindings: featureExtensionBindingSegment(bundle, phase, projectRoot, knowledge) };
 }
 
 export function extensionInputsForPhase(projectRoot: string, phase: string, context?: FeatureExtensionContext): string {
@@ -5076,6 +5079,7 @@ export class GoalPhaseRuntime {
           deliveryRuns: 'runs' in spent ? spent.runs : undefined, material: segments, checkerResultPath, questioningInputs })
           + (purpose !== 'questioning' && observed.disposition ? `\n当前全部未完项（方法不是写权限；原授权及未恢复写入仍有效）：\n${renderCurrentDisposition(observed.disposition)}` : '');
         if (restoration.size) segments.push({ restoration: Object.fromEntries(restoration) });
+        bindExtensionAuthorMaterials(extensionSelection, signedExtensionResourcePaths(label, segments), segments);
         const promptFile = path.join(invocationDir, 'prompt.md');
         const beforeBlueprint = fs.existsSync(observed.blueprintPath) ? fs.readFileSync(observed.blueprintPath, 'utf8') : '';
         const resolution = { projectRoot, executionRole: workUnitExecutionRole({ phase: label }, purpose),
@@ -8212,9 +8216,19 @@ Goal runner — original request design and construction runtime
         } catch (error) { console.warn(`[visual observation] 当前观察工具缺口：${(error as Error).message}；保留其它授权工作。`); }
       }
       const extensionSelection = captureExtensionAuthorSelection(projectRoot, frameworkRoot);
+      const preparedExtensions = preparePhaseExtensionInputs(projectRoot, frameworkRoot, work.input.chain, 'author');
       const extensionInputs = work.input.chain.map(family => prepareExtensionInputsForPhase(projectRoot, family,
-        { frameworkRoot, feature: manifest.feature, runId: manifest.run_id, requirement: manifest.requirement }));
+        { frameworkRoot, feature: manifest.feature, runId: manifest.run_id, requirement: manifest.requirement }, preparedExtensions));
       const knowledgeInputs = [...new Set(extensionInputs.map(input => input.instruction).filter(Boolean))];
+      const extensionAssets = work.input.chain.includes('ut') ? Object.values(preparedExtensions.plugins).flatMap(plugin =>
+        Object.entries(plugin.skillAssetAbsPaths['business-ut'] ?? {}).flatMap(([id, file]) =>
+          preparedExtensions.skillAssetAbsPaths['business-ut']?.[id] === file ? [{
+            source: plugin.source, ability: plugin.id, id, path: path.relative(projectRoot, file).replace(/\\/g, '/'),
+            plugin_manifest: path.relative(projectRoot, plugin.manifestPath).replace(/\\/g, '/'),
+          }] : [])) : [];
+      const extensionSegments = [...extensionInputs.flatMap(input => input.bindings ? [input.bindings] : []),
+        ...(extensionAssets.length ? [{ extension_feature_assets: extensionAssets }] : [])];
+      bindExtensionAuthorMaterials(extensionSelection, signedExtensionResourcePaths('work-unit-author', extensionSegments), extensionSegments);
       const authorChecks = work.input.chain.filter(family => ['coding', 'ut', 'testing'].includes(family));
       const parts = [
       `# 工作单元 ${manifest.feature}`,
@@ -8241,7 +8255,7 @@ Goal runner — original request design and construction runtime
       '当前全部未完项与真实证据：',
       ];
       const prepared = buildWorkUnitAuthorInput({ projectRoot, frameworkRoot, feature: manifest.feature, disposition: work.disposition,
-        instructions: parts, extensionBindings: extensionInputs.flatMap(input => input.bindings ? [input.bindings] : []),
+        instructions: parts, extensionBindings: extensionSegments,
         evaluation: { ...work.evaluation, disposition: work.disposition },
         repairNotes: repairNotesInput, designDeclineFeedback, designDeclines });
       return { ...prepared, extensionSelection };

@@ -36,6 +36,7 @@
     "check:component-blueprint": "ts-node scripts/check-component-blueprint.ts",
     "check:change-unit": "ts-node scripts/check-change-unit.ts",
     "check:component-closure": "ts-node scripts/check-component-closure.ts",
+    "extension": "ts-node scripts/extension.ts",
     "visual-diff-nav:migrate": "ts-node ../profiles/hmos-app/harness/visual-diff-nav-migrate.ts",
     "device:policy": "ts-node scripts/device-policy.ts --check --json",
     "device:enroll": "ts-node scripts/device-policy.ts --enroll",

@@ -2,9 +2,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { loadFrameworkConfig } from '../../config';
 import { loadInstanceExtensions } from '../../extension-loader';
+import { prepareExtensionPlugins } from './extension-lifecycle';
 import { componentBlueprintPath } from './component-blueprint-path';
 import { resolveRequirementReferenceImages } from './fidelity-shared';
-import { assembleKnowledge, DESIGN_PREPARATION_AT, renderKnowledge, type KnowledgeAssembly } from './knowledge-context';
+import { assembleKnowledge, DESIGN_PREPARATION_AT, extensionResourceSha256, renderKnowledge, type KnowledgeAssembly } from './knowledge-context';
 import { realProjectPath } from './project-relative-path';
 import type { ExtensionBinding } from './types';
 
@@ -14,6 +15,8 @@ const selector = ({ ability, id }: Pick<ExtensionBinding, 'ability' | 'id'>) => 
 type DesignBindingDelivery = Pick<ExtensionBinding, 'source' | 'ability' | 'id' | 'at' | 'ref' | 'required'> & {
   kind: 'knowledge' | 'action';
   path: string;
+  plugin_manifest: string;
+  resource_sha256?: string;
   delivery: 'inline' | 'pointer' | 'action';
 };
 
@@ -66,13 +69,18 @@ function fileInProject(root: string, file: string): string {
   return absolute;
 }
 
-/** Read-only for both transports. The signed or interactive author owns any action and its handback. */
+/** Prepare package-local inputs; the author owns design actions and their handback. */
 export function prepareDesignExtensions(input: DesignPreparationInput): DesignPreparation {
   const root = fs.realpathSync(input.projectRoot);
   const canonicalPath = componentBlueprintPath(root, input.blueprintId);
-  const bundle = loadInstanceExtensions(root, loadFrameworkConfig(root).paths.extension_dir, { frameworkRoot: input.frameworkRoot });
-  const knowledge = assembleKnowledge({ projectRoot: root, frameworkRoot: input.frameworkRoot, extensionBundle: bundle,
+  const prepared = input.lookupOnly ? undefined : prepareExtensionPlugins(root, input.frameworkRoot, view => view.bindings.filter(binding =>
+      binding.at === DESIGN_PREPARATION_AT && binding.selected && !binding.issue
+      && (binding.kind !== 'action' || !input.skipActions?.includes(selector(binding)))).map(binding => binding.ability));
+  const bundle = prepared?.bundle ?? loadInstanceExtensions(root, loadFrameworkConfig(root).paths.extension_dir, { frameworkRoot: input.frameworkRoot });
+  const view = input.lookupOnly ? { ...bundle, bindings: bundle.bindings.filter(binding => !binding.localOutput) } : bundle;
+  const knowledge = assembleKnowledge({ projectRoot: root, frameworkRoot: input.frameworkRoot, extensionBundle: view,
     subject: 'component-design', role: 'author', inlineBudgetChars: input.inlineBudgetChars }, 'design-knowledge');
+  for (const entry of prepared?.cleaned ?? []) knowledge.notices.push(`扩展目录 ${entry.path}：${entry.reason}`);
   const result = { canonical_path: canonicalPath, knowledge };
   if (input.lookupOnly) return result;
 
@@ -81,7 +89,7 @@ export function prepareDesignExtensions(input: DesignPreparationInput): DesignPr
   const skipped: string[] = [];
   for (const binding of candidates) {
     if (!binding.enabled || !binding.absPath || !binding.kind) {
-      if (binding.issue && binding.required && binding.selected) knowledge.notices.push(`必需绑定 ${selector(binding)}：${binding.issue}`);
+      if (binding.required && binding.selected && binding.reason) knowledge.notices.push(`必需绑定 ${selector(binding)}：${binding.reason}`);
       continue;
     }
     if (binding.kind === 'action' && input.skipActions?.includes(selector(binding))) {
@@ -96,6 +104,8 @@ export function prepareDesignExtensions(input: DesignPreparationInput): DesignPr
       continue;
     }
     bindings.push({ source, ability, id, at, kind, ref, ...(required ? { required } : {}), path: file,
+      plugin_manifest: toRelative(root, bundle.plugins[ability].manifestPath),
+      resource_sha256: extensionResourceSha256(binding.absPath, entry?.content),
       delivery: kind === 'action' ? 'action' : entry?.content !== undefined ? 'inline' : 'pointer' });
   }
 

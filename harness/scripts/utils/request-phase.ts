@@ -7,6 +7,7 @@ import { prepareExplicitRequest, requestProtectedPaths, type PreparedRequest } f
 import * as crypto from 'crypto';
 import { resolveRequestInputs, readBoundInput } from './capability-resolution';
 import { SpecLoader } from './spec-loader';
+import { preparePhaseExtensionInputs } from './extension-runtime';
 import { assembleKnowledge, renderKnowledge } from './knowledge-context';
 import { checkFactsArtifact } from './context-facts';
 import { generateRequestScriptReport } from './report-generator';
@@ -307,7 +308,9 @@ export async function runExplicitRequest(options: { projectRoot: string; framewo
     if (!artifact?.check) throw new Error('active workflow does not declare this request checker');
     // plan a9f3c7d2 A8：profile 载入前移到 `--prepare-request` 早退之前——落点与能力缺口必须在
     // agent **写测试之前**就拿到，而不是等到执行期才抛（原先 `request_phase_disabled` 只在 :76 出现）。
-    const profile = loadResolvedProfile(options.projectRoot, config, options.frameworkRoot);
+    const extensions = preparePhaseExtensionInputs(options.projectRoot, options.frameworkRoot, [prepared.phase],
+      args['prepare-request'] ? 'author' : 'standalone');
+    const profile = loadResolvedProfile(options.projectRoot, config, options.frameworkRoot, extensions);
     const acceptance = prepared.blueprint ? resolvedInputs?.artifacts?.['acceptance@1'] as AcceptanceSpec | undefined : undefined;
     const device = acceptance && requestTestingScope(options.projectRoot, prepared.intake_context && { ...prepared.intake_context, targets: prepared.targets.files }, acceptance, prepared.blueprint!.acceptance_ids, prepared.baseline);
     const testingExcluded = prepared.phase === 'testing' && (prepared.intake_context?.control.exempt || prepared.intake_context?.control.excluded.includes('testing'));

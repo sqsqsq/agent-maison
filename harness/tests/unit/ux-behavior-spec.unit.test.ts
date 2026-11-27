@@ -6,7 +6,7 @@ import * as YAML from 'yaml';
 import { auditSchemaSupport, validateLiteSchema } from '../../scripts/utils/lite-json-schema';
 import type { UnitCaseResult } from '../run-unit';
 
-const skillDir = path.resolve(__dirname, '../../../extensions/skills/ux-behavior-spec');
+const skillDir = path.resolve(__dirname, '../../../extensions/ux-behavior-spec/skills/ux-behavior-spec');
 const sampleDir = path.join(skillDir, 'examples/bc-openCard-2');
 
 type Fields = Record<string, unknown>;

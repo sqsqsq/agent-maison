@@ -4,7 +4,7 @@ import { test } from 'node:test';
 
 import { protocolFile, regenerateExtensionProtocol } from '../generate-extension-protocol.mjs';
 
-test('发布件 Extension 接入协议的两张表与 schema 一致', () => {
+test('发布件 Extension 接入协议的宿主字段、插件字段和时点表跟随 schema', () => {
   const markdown = fs.readFileSync(protocolFile, 'utf8');
   assert.equal(regenerateExtensionProtocol(markdown), markdown, '运行 node scripts/generate-extension-protocol.mjs 刷新生成区段');
 });

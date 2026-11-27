@@ -1,3 +1,4 @@
+import { putPlugin } from './extension-test-fixture';
 import { beginUnitCase } from '../utils/unit-cases';
 import { testCliArgs } from '../utils/test-cli-args';
 // ============================================================================
@@ -603,18 +604,14 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: 'extension 2.0 after_phase_verify_before_close required produces 缺失 → 真 spawn receipt FAIL',
     run: () => {
-      const extensionManifest = [
-        'schema_version: "2.0"', 'name: receipt-extension', 'provides:', '  skills: []',
-        '  mcp_actions:', '    close-action:', '      tool: host.close', '      required: true',
-        '      severity: BLOCKER', '      produces: [doc/missing-close.json]', '      usage: close',
-        'bindings:', '  closure:',
-        '    close: { at: feature.after_phase_verify_before_close@1, phase: review, kind: action, ref: close-action, enabled_by_default: true }',
-        '    broken: { at: harness.on_context_loda@1, phase: review, kind: knowledge, ref: hooks/no.md, enabled_by_default: true }', '',
-      ].join('\n');
-      const { root } = buildProject('review', {
-        evidenceProfile: 'balanced', omitVerifier: true, extensionManifest,
-      });
+      const { root } = buildProject('review', { evidenceProfile: 'balanced', omitVerifier: true });
       try {
+        putPlugin(root, 'closure', { declaration: { provides: { mcp_actions: {
+          'close-action': { tool: 'host.close', required: true, severity: 'BLOCKER', produces: ['doc/missing-close.json'], usage: 'close' },
+        } }, bindings: {
+          close: { at: 'feature.after_phase_verify_before_close@1', phase: 'review', kind: 'action', ref: 'close-action' },
+          broken: { at: 'harness.on_context_loda@1', phase: 'review', kind: 'knowledge', ref: 'hooks/no.md' },
+        } } });
         const result = tryValidateReceipt(HARNESS_ROOT, root, 'review', 'demo');
         assert(result.status === 'failed', `expected failed, got ${result.status}`);
         assert((result.message ?? '').includes('extension_produces_'), result.message ?? 'missing message');
@@ -629,13 +626,7 @@ const cases: Array<{ name: string; run: () => void }> = [
   {
     name: '非法 extension manifest → 真 spawn receipt 复用 manifest BLOCKER，不静默关闭 gate',
     run: () => {
-      const extensionManifest = [
-        'schema_version: "1.1"', 'name: invalid-receipt-extension', 'unknown: true',
-        'provides:', '  skills: []', '  mcp_actions:', '    close-action:',
-        '      tool: host.close', '      required: true', '      produces: [doc/missing-close.json]',
-        '      usage: close', 'phase_bindings:', '  review:', '    after_phase_verify_before_close:',
-        '      - { kind: mcp, ref: close-action }', '',
-      ].join('\n');
+      const extensionManifest = 'schema_version: "2.0"\nkind: host\nplugins: {}\nunknown: true\n';
       const { root } = buildProject('review', {
         evidenceProfile: 'balanced', omitVerifier: true, extensionManifest,
       });

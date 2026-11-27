@@ -1,3 +1,5 @@
+import { putPlugin } from './extension-test-fixture';
+import { loadInstanceExtensions } from '../../extension-loader';
 import { runUnitCasesAsync } from '../utils/unit-cases';
 import assert from 'assert';
 import { adapterModelBinding, freezeModelPin } from '../../scripts/utils/adapter-model';
@@ -177,15 +179,16 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       assert.strictEqual(fs.readFileSync(path.join(root, 'AGENTS.md'), 'utf8'), entry);
       assert.strictEqual(fs.readFileSync(path.join(root, '.dsh/skills/user-owned/SKILL.md'), 'utf8'), '# User skill\n');
 
-      const source = path.join(root, 'doc/extensions/skills/customer-context/SKILL.md');
-      write(source, '# Customer context\n');
+      const extension = putPlugin(root, 'customer', { declaration: { provides: { skills: ['customer-context'] } },
+        files: { 'skills/customer-context/SKILL.md': '# Customer context' } });
+      const source = path.join(extension, 'skills/customer-context/SKILL.md');
       const options = { repoRoot: root, frameworkDir: FRAMEWORK_ROOT, agentAdapter: ADAPTER };
-      assert.strictEqual(emitInstanceSkillBridge(options).filesWritten.length, 1);
+      assert.strictEqual(emitInstanceSkillBridge({ ...options, skills: loadInstanceExtensions(root).manualSkills }).filesWritten.length, 1);
       const bridge = path.join(root, '.dsh/skills/customer-context/SKILL.md');
-      assert(fs.readFileSync(bridge, 'utf8').includes('doc/extensions/skills/customer-context/SKILL.md'));
-      assert.strictEqual(emitInstanceSkillBridge(options).filesWritten.length, 0);
+      assert(fs.readFileSync(bridge, 'utf8').includes('doc/extensions/customer/skills/customer-context/SKILL.md'));
+      assert.strictEqual(emitInstanceSkillBridge({ ...options, skills: loadInstanceExtensions(root).manualSkills }).filesWritten.length, 0);
       fs.unlinkSync(source);
-      assert.strictEqual(emitInstanceSkillBridge(options).filesRemoved.length, 1);
+      assert.strictEqual(emitInstanceSkillBridge({ ...options, skills: loadInstanceExtensions(root).manualSkills }).filesRemoved.length, 1);
       assert(!fs.existsSync(bridge));
       assert(fs.existsSync(path.join(root, '.dsh/skills/user-owned/SKILL.md')));
     }),

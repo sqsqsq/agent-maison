@@ -3,7 +3,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { setTimeout as delay } from 'node:timers/promises';
 
-import { ExtensionWriteBusyError, extensionLocation, withExtensionWrite } from './extension-lifecycle';
+import { ExtensionWriteBusyError, extensionLocation, pendingExtensionUpgrades, withExtensionWrite } from './extension-lifecycle';
+import type { ExtensionBundle } from './types';
+import { loadInstanceExtensions } from '../../extension-loader';
 import { realProjectPath } from './project-relative-path';
 
 interface ExtensionAuthorSelection {
@@ -11,6 +13,9 @@ interface ExtensionAuthorSelection {
   frameworkRoot: string;
   manifest: string;
   revision: string | null;
+  view: ExtensionBundle;
+  packageRevisions: Map<string, string | null>;
+  materials?: Map<string, { revision: string | null; sha256?: string }>;
 }
 
 function manifestRevision(file: string): string | null {
@@ -30,11 +35,39 @@ function manifestRevision(file: string): string | null {
 
 export function captureExtensionAuthorSelection(projectRoot: string, frameworkRoot: string): ExtensionAuthorSelection | undefined {
   try {
-    const manifest = path.join(extensionLocation(projectRoot, frameworkRoot).root, 'manifest.yaml');
-    return { projectRoot, frameworkRoot, manifest, revision: manifestRevision(manifest) };
+    const location = extensionLocation(projectRoot, frameworkRoot);
+    const manifest = path.join(location.root, 'manifest.yaml');
+    const revision = manifestRevision(manifest);
+    const view = loadInstanceExtensions(projectRoot, location.relative, { frameworkRoot });
+    if (!view.manifestUsable) return undefined;
+    return { projectRoot, frameworkRoot, manifest, revision, view,
+      packageRevisions: new Map(Object.values(view.plugins).map(plugin => [plugin.manifestPath, manifestRevision(plugin.manifestPath)])) };
   } catch {
     // The loader reports absent or unreadable extension input separately from native author work.
     return undefined;
+  }
+}
+
+export function bindExtensionAuthorMaterials(
+  selection: ExtensionAuthorSelection | undefined, paths: readonly string[], segments: readonly unknown[],
+): void {
+  if (!selection) return;
+  const materials: NonNullable<ExtensionAuthorSelection['materials']> = new Map();
+  selection.materials = materials;
+  for (const file of paths) {
+    const absolute = path.resolve(selection.projectRoot, file);
+    const revision = selection.packageRevisions.has(absolute) ? selection.packageRevisions.get(absolute)! : manifestRevision(absolute);
+    materials.set(absolute, { revision });
+  }
+  for (const segment of segments) {
+    if (!segment || typeof segment !== 'object') continue;
+    const data = segment as { extension_feature_bindings?: unknown[]; extension_preparation?: { bindings?: unknown[] } };
+    for (const raw of data.extension_feature_bindings ?? data.extension_preparation?.bindings ?? []) {
+      const item = raw as { path?: string; resource_sha256?: string };
+      if (!item.path || !item.resource_sha256) continue;
+      const material = materials.get(path.resolve(selection.projectRoot, item.path));
+      if (material) material.sha256 = item.resource_sha256;
+    }
   }
 }
 
@@ -78,7 +111,12 @@ export async function publishExtensionAuthorRequest<T>(
         const revision = manifestRevision(selection.manifest);
         const boundary = stopped();
         if (boundary) return boundary;
-        if (revision !== selection.revision) return { kind: 'changed' };
+        if (revision !== selection.revision || [...(selection.materials ?? [])].some(([file, frozen]) => {
+          const current = manifestRevision(file);
+          return current === null || current !== frozen.revision || frozen.sha256 !== undefined && !current?.endsWith(':' + frozen.sha256);
+        })) return { kind: 'changed' };
+        const pending = pendingExtensionUpgrades(selection.view);
+        if ([...pending.keys()].some(id => selection.materials?.has(selection.view.plugins[id].manifestPath))) return { kind: 'changed' };
         return { kind: 'issued', value: publish() };
       });
       if (publication.kind === 'changed' && controls.selectionChanges > 0) {

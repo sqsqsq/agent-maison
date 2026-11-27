@@ -1,7 +1,9 @@
 # 最小示例：宿主 extension Skill 负责获取/脱敏/落盘；Maison 只验证仓内 produces。
 # server / URL / token / 登录配置不得写入 manifest。
-schema_version: "1.1"
+schema_version: "2.0"
+kind: plugin
 name: story-host-bridge
+version: "1.0.0"
 provides:
   skills:
     - story-input
@@ -20,6 +22,4 @@ provides:
         - doc/reviews/ledger.feedback.json
       usage: 评审后产出 blueprint-review-feedback@1；未产生时诚实降级
 
-# /component-design 不是 Feature phase，不增加 before_component_design。
 # story-input Skill 自身依次：materialization → /component-design → 消费 review.md → optional feedback。
-phase_bindings: {}

@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { extensionSkillIdsForBridge, loadInstanceExtensions, readExtensionTimings, type ExtensionTiming } from '../../extension-loader';
+import { loadInstanceExtensions, readExtensionTimings, type ExtensionTiming } from '../../extension-loader';
 import { loadFrameworkConfigWithSources } from '../../config';
 import {
   loadReservedBridgeIds,
@@ -9,14 +9,13 @@ import {
   parseInstanceSkillBridgeFromAdapter,
   resolveBridgeTargets,
   resolveSkillStubTargetDir,
-  scanExtensionSkills,
+  extensionSkillRows,
 } from './instance-skill-bridge';
 import { inspectExtensionProduce } from './extension-runtime';
-import { extensionKnowledgeRoutes } from './knowledge-context';
-import { extensionActivationDrift, type ExtensionActivationDrift } from './extension-activation';
-import type { ExtensionActivationResult } from './extension-activation-contract';
+import { inspectExtensionActivation, type ExtensionActivationResult } from './extension-activation';
+import { extensionActivationContext, pendingExtensionUpgrades } from './extension-lifecycle';
 import { extensionRequestsUsingAbility } from './extension-requests';
-import type { ExtensionPendingCleanup, ExtensionValidationError } from './types';
+import type { ExtensionValidationError } from './types';
 
 export type ExtensionStrength = 'available' | 'scheduled' | 'evidenced';
 
@@ -48,8 +47,8 @@ interface InspectedInstallation {
   state: 'installed' | 'enabled' | 'failed' | 'pending_cleanup';
   bindingOverrides?: Record<string, unknown>;
   activation?: ExtensionActivationResult;
-  pendingCleanup?: ExtensionPendingCleanup & ReturnType<typeof extensionRequestsUsingAbility>;
-  drift?: ExtensionActivationDrift[];
+  pendingCleanup?: ReturnType<typeof extensionRequestsUsingAbility>;
+  pendingUpgrade?: string;
 }
 
 export interface ExtensionInspection {
@@ -115,77 +114,40 @@ export function inspectInstanceExtensions(
     }
   }
   const installations: InspectedInstallation[] = [];
-  for (const [ability, installation] of Object.entries(bundle.installations)) {
+  const upgrades = pendingExtensionUpgrades(bundle);
+  const effective = upgrades.size
+    ? loadInstanceExtensions(projectRoot, extensionDir, { frameworkRoot: frameworkDir, excludedPlugins: upgrades })
+    : bundle;
+  for (const [ability, installation] of Object.entries(bundle.plugins)) {
     if (options.ability && options.ability !== ability) continue;
-    const { source, version, pending_cleanup: pending, activation_result: activation } = installation;
-    const pendingCleanup = pending && source
-      ? { ...pending, ...extensionRequestsUsingAbility(projectRoot, ability, source, pending.binding) }
-      : undefined;
-    const drift = activation?.status === 'enabled' && bundle.rootDir ? extensionActivationDrift(bundle.rootDir, activation) : [];
-    const state = pendingCleanup ? 'pending_cleanup' : activation?.status === 'failed' ? 'failed'
-      : installation.enabled && (!bundle.activations[ability] || activation?.status === 'enabled') ? 'enabled' : 'installed';
-    installations.push({ ability, source, version, state, bindingOverrides: installation.binding_overrides, activation, pendingCleanup,
-      ...(drift.length ? { drift } : {}) });
-    if (!drift.length) continue;
-    const affected = bundle.bindings.filter(binding => binding.ability === ability && binding.selected).map(binding => binding.id);
-    const hasConflict = drift.some(item => item.kind !== 'missing');
-    const driftReasons = { missing: '产物缺失', changed: '当前内容与生成指纹不符', unverifiable: '无法核实当前产物' };
-    for (const item of drift) {
-      const preserve = item.kind === 'missing' ? '' : '保留当前内容。';
-      const advice = pendingCleanup ? '请按待清理回执重试原操作。'
-        : item.kind !== 'missing' ? '请维护者核对并处理冲突。'
-        : hasConflict ? '请先处理本能力的其他产物冲突。'
-        : `运行 extension enable ${ability} 修复。`;
-      findings.push({ code: 'extension_activation_drift', ability,
-        path: bundle.rootDir ? path.posix.join(rel(projectRoot, bundle.rootDir), item.path) : item.path,
-        message: `${ability} 启用效果漂移：${driftReasons[item.kind]}${item.reason ? `（${item.reason}）` : ''}。${affected.length ? `所选绑定：${affected.join(', ')}。` : ''}${preserve}${advice}` });
+    const { source, version, enabled } = installation;
+    const steps = bundle.activations[ability] ?? [];
+    const use = !enabled ? extensionRequestsUsingAbility(projectRoot, ability, source) : undefined;
+    const pendingCleanup = use?.requestIds.length ? use : undefined;
+    const pendingUpgrade = upgrades.get(ability);
+    const activation = enabled && !pendingUpgrade && steps.length
+      ? inspectExtensionActivation(extensionActivationContext(projectRoot, installation), steps) : undefined;
+    const state = pendingCleanup || pendingUpgrade ? 'pending_cleanup' : activation?.failure ? 'failed' : enabled ? 'enabled' : 'installed';
+    installations.push({ ability, source, version, state, bindingOverrides: installation.binding_overrides,
+      activation, pendingCleanup, pendingUpgrade });
+    for (const step of activation?.steps ?? []) {
+      if (!step.failure) continue;
+      findings.push({ code: 'extension_activation_readiness', ability,
+        path: rel(projectRoot, installation.manifestPath), message: step.failure });
     }
-  }
-  const scanned = bundle.manifestUsable ? scanExtensionSkills(projectRoot, extensionDir) : [];
-  const declared = new Set(bundle.declaredSkills);
-  const scannedIds = new Set(scanned.map(row => row.sourceSlug));
-  const selectedIds = extensionSkillIdsForBridge(bundle);
-  const selected = selectedIds ? new Set(selectedIds) : null;
-  const materializedRows = selected ? scanned.filter(row => selected.has(row.sourceSlug)) : scanned;
-  const materializedTargets = resolveBridgeTargets(materializedRows, loadReservedBridgeIds(frameworkDir)).targets;
-
-  for (const skill of scanned) {
-    const listed = declared.has(skill.sourceSlug);
-    rows.push({
-      type: 'skill', source: skill.skillMdRepoRel, timing: `/${skill.sourceSlug} 或 AGENTS.md 路由`,
-      consumer: '当前 agent adapter', state: 'available', ability: skill.sourceSlug,
-      status: selected && !selected.has(skill.sourceSlug)
-        ? listed ? '未启用：能力已停用' : '未启用：目录未声明'
-        : listed ? 'declared' : 'directory-only',
-    });
-    if (!listed && bundle.manifestPath) findings.push({
-      code: 'extension_skill_unlisted', message: `目录 skill 未在 manifest provides.skills 声明：${skill.sourceSlug}`,
-      path: skill.skillMdRepoRel, ability: skill.sourceSlug,
+    for (const skill of installation.skills) rows.push({
+      type: 'skill', source: rel(projectRoot, skill.absPath), timing: `/${skill.skillId} 或 AGENTS.md 路由`,
+      consumer: '当前 agent adapter', state: 'available', ability,
+      status: pendingUpgrade ?? (enabled ? 'declared' : '未启用：插件已停用'),
     });
   }
-  for (const id of declared) {
-    if (!scannedIds.has(id)) findings.push({
-      code: 'extension_skill_declared_missing', message: `manifest skill 缺少 skills/${id}/SKILL.md`,
-      path: bundle.manifestPath ? rel(projectRoot, bundle.manifestPath) : undefined, ability: id,
-    });
-  }
-
-  for (const { entry: knowledge, path: source, routed, audience } of extensionKnowledgeRoutes(bundle, projectRoot)) {
-    rows.push({
-      type: 'knowledge', source,
-      timing: routed
-        ? knowledge.audience === 'global' ? 'AGENTS.md / CLAUDE.md 渲染时' : `Feature phases: ${audience.join(', ')}`
-        : '仅保留目录索引',
-      consumer: routed ? knowledge.audience === 'global' ? '全局 agent 指令' : '对应 phase 作者 / prepare / verifier；AGENTS 静态路由' : '无自动消费者',
-      state: routed ? 'scheduled' : 'available', status: routed ? 'routed' : 'declared-unconsumed',
-      ability: bundle.manifestName ?? undefined,
-    });
-  }
-  for (const [id, capability] of Object.entries(bundle.extensionCapabilities)) rows.push({
+  const materializedTargets = resolveBridgeTargets(extensionSkillRows(projectRoot, effective.manualSkills),
+    loadReservedBridgeIds(frameworkDir)).targets;
+  for (const [id, capability] of Object.entries(effective.extensionCapabilities)) rows.push({
     type: 'capability', source: capability.provider ? rel(projectRoot, capability.provider) : id,
     timing: 'capability resolution', consumer: 'harness capability registry', state: 'scheduled', status: id,
   });
-  for (const [skillId, assets] of Object.entries(bundle.skillAssetAbsPaths)) {
+  for (const [skillId, assets] of Object.entries(effective.skillAssetAbsPaths)) {
     for (const [assetKey, file] of Object.entries(assets)) rows.push({
       type: 'skill_asset', source: rel(projectRoot, file), timing: `/${skillId} 执行时`,
       consumer: skillId === 'component-design' && assetKey === 'knowledge'
@@ -193,28 +155,29 @@ export function inspectInstanceExtensions(
       state: skillId === 'component-design' && assetKey !== 'knowledge' ? 'available' : 'scheduled', status: assetKey,
     });
   }
-  for (const [phase, file] of Object.entries(bundle.phaseRuleOverlayPaths)) rows.push({
+  for (const [phase, file] of Object.entries(effective.phaseRuleOverlayPaths)) rows.push({
     type: 'phase_rules_overlay', source: rel(projectRoot, file), timing: `${phase} 规则合并`,
     consumer: `harness ${phase} checker`, state: 'scheduled', status: 'declared',
   });
   const scheduledActions = new Set<string>();
-  for (const binding of bundle.bindings) {
-    const action = binding.resource === 'mcp' ? bundle.mcpActions[binding.ref] : undefined;
+  for (const binding of effective.bindings) {
+    const action = binding.action;
     const missingTool = !!action && options.toolVisibility?.[action.id] === false;
-    const scheduled = binding.enabled && !missingTool;
+    const readiness = installations.find(item => item.ability === binding.ability)?.activation?.failure;
+    const scheduled = binding.enabled && !missingTool && !readiness;
     if (action && scheduled) scheduledActions.add(action.id);
     const identity = `${binding.source} · ${binding.ability}/${binding.id}`;
     const resource = binding.absPath ? rel(projectRoot, binding.absPath) : binding.ref;
     const where = [binding.phase, binding.at, binding.timingDescription].filter(Boolean).join(' · ');
     rows.push({
-      type: binding.legacy === 'hook' ? 'hook' : binding.legacy === 'phase' ? 'phase_binding' : 'binding',
+      type: binding.kind === 'knowledge' ? 'knowledge' : binding.resource?.startsWith('hook_') ? 'hook' : 'binding',
       source: [identity, resource].filter(Boolean).join(' · '), timing: where || '时点未声明',
       consumer: binding.consumer ?? '无已识别消费者', state: scheduled ? 'scheduled' : 'available',
-      status: scheduled ? 'declared' : `未启用：${binding.reason ?? `工具 ${action?.tool} 当前不可见（agent 自报）`}`,
+      status: scheduled ? 'declared' : `未启用：${readiness ?? binding.reason ?? `工具 ${action?.tool} 当前不可见（agent 自报）`}`,
       ability: binding.ability, bindingId: binding.id, at: binding.at, phase: binding.phase, packageSource: binding.source,
     });
   }
-  for (const action of Object.values(bundle.mcpActions)) {
+  for (const [plugin, action] of Object.values(effective.plugins).flatMap(plugin => Object.values(plugin.mcpActions).map(action => [plugin.id, action] as const))) {
     const existing = action.produceAbsPaths.filter(target => fs.existsSync(target) && fs.statSync(target).isFile());
     const validations = existing.map(target => inspectExtensionProduce(projectRoot, target));
     const seam = validations.find(item => item.seam && item.issues.length === 0)?.seam ?? null;
@@ -229,7 +192,7 @@ export function inspectInstanceExtensions(
           : 'manifest 声明的下游',
       state: existing.length === action.produceAbsPaths.length && validations.every(item => item.issues.length === 0)
         ? 'evidenced' : scheduledActions.has(action.id) ? 'scheduled' : 'available',
-      ability: action.id,
+      ability: plugin,
       status: `produces=${existing.length}/${action.produceAbsPaths.length}; invalid=${validations.reduce((sum, item) => sum + item.issues.length, 0)}; tool_visibility=${visibility === undefined ? 'not-reported' : visibility ? 'visible' : 'missing'}; source=agent_self_report; evidence_scope=filesystem_only`,
     });
   }
@@ -242,8 +205,8 @@ export function inspectInstanceExtensions(
       });
     }
     for (const artifact of inspectInstanceSkillBridgeArtifacts({
-      repoRoot: projectRoot, frameworkDir, agentAdapter: adapter, extensionDirRel: extensionDir,
-      declaredSkillIds: selectedIds,
+      repoRoot: projectRoot, frameworkDir, agentAdapter: adapter,
+      skills: effective.manualSkills,
     })) {
       rows.push({
         type: 'bridge', source: artifact.path, timing: `adapter=${adapter} 物化`, consumer: `/${artifact.bridgeId}`,
@@ -284,21 +247,17 @@ export function formatExtensionInspection(inspection: ExtensionInspection): stri
     const states = { installed: '已安装未启用', enabled: '已启用', failed: '启用失败', pending_cleanup: '已停止目标的新调度，待清理' };
     for (const item of inspection.installations) {
       lines.push(`- ${item.ability}${item.version ? ` ${item.version}` : ''}：${states[item.state]}`);
-      if (item.activation?.status === 'running') {
-        lines.push(`  - 启用步骤尚未完成。${item.pendingCleanup ? '' : `恢复时运行 extension enable ${item.ability}。`}`);
-      }
       if (item.activation?.failure) lines.push(`  - 失败：${item.activation.failure}`);
       for (const step of item.activation?.steps ?? []) {
-        lines.push(`  - ${step.id} · ${step.status}${step.outputs.length ? ` · 产物 ${step.outputs.map(out => out.path).join(', ')}` : ''}${step.failure ? ` · ${step.failure}` : ''}`);
+        lines.push(`  - ${step.id} · ${step.status}${step.outputs.length ? ` · 产物 ${step.outputs.join(', ')}` : ''}${step.failure ? ` · ${step.failure}` : ''}`);
       }
       for (const residual of item.activation?.residuals ?? []) {
         lines.push(`  - 残留 ${residual.path} · ${residual.how} · preSha256=${residual.preSha256 ?? '—'}`);
       }
+      if (item.pendingUpgrade) lines.push(`  - ${item.pendingUpgrade}`);
       if (item.pendingCleanup) {
         const pending = item.pendingCleanup;
-        lines.push(`  - ${pending.operation} ${pending.binding ?? '整项'}：${pending.requestIds.length
-          ? `资源仍被请求 ${pending.requestIds.join(', ')} 占用，待清理` : '占用已解除，待清理'}。`);
-        lines.push(`  - 重试原操作：extension ${pending.command.map(arg => JSON.stringify(arg)).join(' ')}`);
+        lines.push(`  - 资源仍被请求 ${pending.requestIds.join(', ')} 占用，交回后重试原操作。`);
         for (const request of pending.inactiveRequests) lines.push(`  - ${request.requestId}：${request.reason}（${request.requestFile}）`);
       }
     }

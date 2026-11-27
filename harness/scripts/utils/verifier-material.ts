@@ -448,8 +448,9 @@ export interface BuildVerifierMaterialInput {
   phaseIssues?: PhaseRepairIssues | null;
   /** 装配进 prompt 的 lifecycle hook fragments（实例 / profile / framework） */
   lifecycleFragments?: ReadonlyArray<string>;
-  /** 装配进 prompt 尾部的实例扩展输入（formatExtensionPhasePrompt 输出） */
+  /** 参与本次验证的扩展输入与投递指引。 */
   extensionInstructions?: string;
+  extensionFiles?: ReadonlyArray<string>;
   /** 装配进 prompt 尾部的目标简报渲染文本（renderGoalBrief 输出） */
   goalBriefText?: string;
 }
@@ -564,6 +565,10 @@ export function buildVerifierMaterialView(input: BuildVerifierMaterialInput): Ve
     if (files.has(rel)) continue;
     const sha = verifierMaterialFileHash({ projectRoot, feature, phase, factsContext: input.factsContext, file: rel, authorityReaders });
     if (sha !== null) files.set(rel, sha);
+  }
+
+  for (const file of input.extensionFiles ?? []) {
+    if (!files.has(file)) files.set(file, verifierMaterialFileHash({ projectRoot, feature, phase, file, authorityReaders }));
   }
 
   // Diagnosis reads the proposal's concrete text, which may exceed the CU-neutral consumption view.

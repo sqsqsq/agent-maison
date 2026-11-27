@@ -1,3 +1,5 @@
+import * as YAML from 'yaml';
+import { putPlugin } from './extension-test-fixture';
 import { runUnitCasesAsync } from '../utils/unit-cases';
 /**
  * plan a7c3e9d2 t3：goal 作者 prompt 注入 extension knowledge 索引。
@@ -155,6 +157,19 @@ async function driveSpecRun(
   }
 }
 
+const authorAt = 'feature.before_phase_work@1';
+const knowledge = (ref: string, phase = 'spec') => ({ at: authorAt, kind: 'knowledge', ref, phase, enabled_by_default: true });
+function pluginFixture(id: string, bindings: Record<string, unknown>, files: Record<string, string>, skills: string[] = []): Record<string, string> {
+  return {
+    'doc/extensions/manifest.yaml': YAML.stringify({ schema_version: '2.0', kind: 'host', plugins: {
+      [id]: { source: id, enabled: true, bindings: Object.fromEntries(Object.keys(bindings).map(binding => [binding, true])), files: {} },
+    } }),
+    [`doc/extensions/${id}/manifest.yaml`]: YAML.stringify({ schema_version: '2.0', kind: 'plugin', name: id, version: '1.0.0', bindings,
+      provides: { skills } }),
+    ...Object.fromEntries(Object.entries(files).map(([name, data]) => [`doc/extensions/${id}/${name}`, data])),
+  };
+}
+
 const cases: Array<{ name: string; run: () => Promise<void> }> = [
   {
     name: 'CU waits for extension management, rebuilds stale material, and signs automatically in the same run',
@@ -165,11 +180,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       let managementCompletedAt: number | undefined;
       let managementError: unknown;
       const r = await driveSpecRun(feature, {
-        'doc/extensions/manifest.yaml': [
-          'schema_version: "2.0"', 'name: test-race', 'provides: {}', 'bindings:', '  guide:',
-          '    read: {at: feature.before_phase_work@1, phase: spec, kind: knowledge, ref: knowledge/guide.md, enabled_by_default: true}',
-        ].join('\n'),
-        'doc/extensions/knowledge/guide.md': body,
+        ...pluginFixture('guide', { read: knowledge('knowledge/guide.md') }, { 'knowledge/guide.md': body }),
         'framework/specs/instance-extension-manifest.schema.yaml':
           fs.readFileSync(path.join(REPO_ROOT, 'specs/instance-extension-manifest.schema.yaml'), 'utf8'),
       }, (root, prompt) => {
@@ -224,27 +235,27 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         iSkill >= 0 && iInstr > iSkill && iIndex > iInstr,
         `顺序应为 skill 路径 < 读取指令 < 索引，实际 ${iSkill}/${iInstr}/${iIndex}`,
       );
-      assert(prompt.includes('- `doc/extensions/knowledge/spec-author.md`'));
+      assert(prompt.includes('doc/extensions/knowledge/spec-author.md'));
       const clean = buildPhasePrompt(MINIMAL_MANIFEST, REPO_ROOT, 'spec', REPO_ROOT, []);
       assert(!clean.includes('Instance extension inputs') && !clean.includes(READ_INSTRUCTION), '缺省不注入');
     },
   },
   {
-    name: 't3 送达接线：1.1 manifest 的 audience 命中 knowledge → 注入的 invoke 实收 prompt 含标题 / 路径 / 读取指令；落盘 prompt.md 同内容',
+    name: 't3 送达接线：Feature 前置时点匹配插件知识 → 注入的 invoke 实收 prompt 含标题 / 路径 / 读取指令；落盘 prompt.md 同内容',
     run: async () => {
       const feature = 'ext-author-inputs';
       const r = await driveSpecRun(feature, {
-        'doc/extensions/manifest.yaml':
-          'schema_version: "1.1"\nname: ext-author-inputs\nprovides:\n  knowledge:\n    - { path: knowledge/spec-author.md, summary: spec 作者要求, audience: [spec] }\n',
-        'doc/extensions/knowledge/spec-author.md': '# spec 作者要求\n- 写 spec 前必读\n',
+        ...pluginFixture('author-guide', { guide: knowledge('knowledge/spec-author.md') }, {
+          'knowledge/spec-author.md': '# spec 作者要求\n- 写 spec 前必读\n',
+        }),
         'doc/glossary.yaml': 'schema_version: "1.0"\nterms:\n  - term: 作者前置输入\n    canonical_module: Demo\n    aliases: [送达测试]\n    easily_confused_with: [{ term: 后置核对, module: Review, disambiguation: 动笔之前发现，不等价于完成审查 }]\n',
       });
       try {
         assert(r.prompts.length > 0, `专用作者的正式 invoke 必须发生，exit=${r.exitCode}`);
         const p = r.prompts[0];
         assert(p.includes(UNIT_READ_INSTRUCTION), '读取指令句须在单元作者实收 prompt 中');
-        assert(p.includes('## Instance extension inputs') && p.includes('### Knowledge index'), '主干同款标题');
-        assert(p.includes('- `doc/extensions/knowledge/spec-author.md`'), '相对路径须在作者实收 prompt 中');
+        assert(p.includes('## Instance extension inputs') && p.includes('feature.before_phase_work@1'), '主干同款标题');
+        assert(p.includes('doc/extensions/author-guide/knowledge/spec-author.md'), '相对路径须在作者实收 prompt 中');
         assert(p.includes('canonical_module') && p.includes('动笔之前发现，不等价于完成审查'), '原生术语候选与消歧也必须送达实际作者');
         assert(!r.warns.some(w => w.includes('作者前置输入诊断')), '合法 manifest 不得 warn');
         // 辅助断言：落盘 prompt.md 同内容
@@ -260,7 +271,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
           })
           .filter(f => fs.existsSync(f));
         assert(onDisk.length > 0, '落盘 prompt.md 须存在');
-        assert(fs.readFileSync(onDisk[0], 'utf-8').includes('- `doc/extensions/knowledge/spec-author.md`'));
+        assert(fs.readFileSync(onDisk[0], 'utf-8').includes('doc/extensions/author-guide/knowledge/spec-author.md'));
       } finally {
         fs.rmSync(r.root, { recursive: true, force: true });
       }
@@ -271,18 +282,14 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     run: async () => {
       const feature = 'signed-feature-extensions';
       const r = await driveSpecRun(feature, {
-        'doc/extensions/manifest.yaml': [
-          'schema_version: "2.0"', 'name: actual-feature-bindings', 'provides:', '  skills: [design-intake]',
-          'bindings:', '  design-intake:',
-          '    facts: {at: feature.before_phase_work@1, phase: spec, kind: knowledge, ref: knowledge/facts.md, enabled_by_default: true}',
-          '    action: {at: feature.before_phase_work@1, phase: spec, kind: action, ref: design-intake, enabled_by_default: true}',
-        ].join('\n'),
-        'doc/extensions/knowledge/facts.md': '# 当前作者的唯一验收材料',
-        'doc/extensions/skills/design-intake/SKILL.md': '# 已安装动作',
+        ...pluginFixture('actual-feature-bindings', {
+          facts: knowledge('knowledge/facts.md'),
+          action: { at: authorAt, phase: 'spec', kind: 'action', ref: 'design-intake', enabled_by_default: true },
+        }, { 'knowledge/facts.md': '# 当前作者的唯一验收材料', 'skills/design-intake/SKILL.md': '# 已安装动作' }, ['design-intake']),
       });
       try {
         assert(r.prompts[0]?.includes('当前作者的唯一验收材料'));
-        assert(r.prompts[0]?.includes('doc/extensions/skills/design-intake/SKILL.md'));
+        assert(r.prompts[0]?.includes('doc/extensions/actual-feature-bindings/skills/design-intake/SKILL.md'));
         const runsDir = path.join(r.root, 'doc/features', feature, 'goal-runs');
         const first = fs.readdirSync(runsDir).filter(name => !name.startsWith('.')).flatMap(name => {
           const runDir = path.join(runsDir, name);
@@ -292,29 +299,31 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         })[0];
         const segments = first?.request.context.workInput?.material.segments as Array<Record<string, unknown>> | undefined;
         const signed = segments?.find(segment => typeof segment === 'object' && 'extension_feature_bindings' in segment);
-        assert.deepEqual(signed?.extension_feature_bindings, [
-          { source: 'actual-feature-bindings', ability: 'design-intake', id: 'facts', at: 'feature.before_phase_work@1',
-            kind: 'knowledge', ref: 'knowledge/facts.md', phase: 'spec', path: 'doc/extensions/knowledge/facts.md', delivery: 'inline' },
-          { source: 'actual-feature-bindings', ability: 'design-intake', id: 'action', at: 'feature.before_phase_work@1',
-            kind: 'action', ref: 'design-intake', phase: 'spec', path: 'doc/extensions/skills/design-intake/SKILL.md', delivery: 'action' },
+        const rows = signed?.extension_feature_bindings as Array<Record<string, unknown>>;
+        assert.deepEqual(rows?.map(row => [row.ability, row.id, row.delivery, row.path]), [
+          ['actual-feature-bindings', 'facts', 'inline', 'doc/extensions/actual-feature-bindings/knowledge/facts.md'],
+          ['actual-feature-bindings', 'action', 'action', 'doc/extensions/actual-feature-bindings/skills/design-intake/SKILL.md'],
         ]);
+        assert(rows.every(row => row.plugin_manifest === 'doc/extensions/actual-feature-bindings/manifest.yaml'
+          && /^[0-9a-f]{64}$/.test(String(row.resource_sha256))));
       } finally {
         fs.rmSync(r.root, { recursive: true, force: true });
       }
     },
   },
   {
-    name: 't4 manifest 非法（knowledge 文件不存在）：warn 指向 --phase extensions，不注入，invoke 仍发生',
+    name: 't4 保留 3.0 平铺根，普通作者继续且给出手工接入提示',
     run: async () => {
       const r = await driveSpecRun('ext-author-inputs-bad', {
-        'doc/extensions/manifest.yaml':
-          'schema_version: "1.1"\nname: ext-bad\nprovides:\n  knowledge:\n    - { path: knowledge/missing.md, summary: 缺文件, audience: [spec] }\n',
+        'doc/extensions/manifest.yaml': 'schema_version: "1.0"\nname: old\nprovides:\n  knowledge: [knowledge/old.md]\n',
+        'doc/extensions/knowledge/old.md': '# 旧扩展正文',
       });
       try {
         assert(r.prompts.length > 0, `manifest 非法不得阻止作者 invoke，exit=${r.exitCode}`);
-        assert(!r.prompts[0].includes('Instance extension inputs'), '非法 manifest 不注入');
+        assert(!r.prompts[0].includes('Instance extension inputs') && !r.prompts[0].includes('旧扩展正文'));
+        assert.equal(fs.readFileSync(path.join(r.root, 'doc/extensions/knowledge/old.md'), 'utf8'), '# 旧扩展正文');
         assert(
-          r.warns.some(w => w.includes('作者前置输入诊断') && w.includes('--phase extensions')),
+          r.warns.some(w => w.includes('作者前置输入诊断') && w.includes('旧版扩展未加载')),
           `须 warn 并指向 --phase extensions，实际 warns=${JSON.stringify(r.warns)}`,
         );
       } finally {
@@ -338,21 +347,17 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         assert(!extensionInputsForPhase(root, 'spec').includes('Instance extension inputs'));
         assert.strictEqual(warn.warns.length, 0, '无 manifest 不出声');
 
-        const ext = path.join(root, 'doc', 'extensions');
-        fs.mkdirSync(path.join(ext, 'knowledge'), { recursive: true });
-        fs.writeFileSync(path.join(ext, 'manifest.yaml'),
-          'schema_version: "1.1"\nname: x\nprovides:\n  knowledge:\n    - { path: knowledge/missing.md, summary: 缺文件, audience: [spec] }\n');
+        putPlugin(root, 'test', { declaration: { bindings: { guide: knowledge('knowledge/missing.md') } } });
         clearFrameworkConfigCache();
         assert(!extensionInputsForPhase(root, 'spec').includes('Instance extension inputs'));
-        assert(warn.warns.some(w => w.includes('knowledge_missing') && w.includes('作者前置输入诊断')), 'errors 须出声');
+        assert(warn.warns.some(w => w.includes('extension_binding_invalid') && w.includes('作者前置输入诊断')), 'errors 须出声');
 
-        fs.writeFileSync(path.join(ext, 'knowledge', 'plan-author.md'), '# plan\n');
-        fs.writeFileSync(path.join(ext, 'manifest.yaml'),
-          'schema_version: "1.1"\nname: x\nprovides:\n  knowledge:\n    - { path: knowledge/plan-author.md, summary: plan 作者要求, audience: [plan] }\n');
+        putPlugin(root, 'test', { declaration: { bindings: { guide: knowledge('knowledge/plan-author.md', 'plan') } },
+          files: { 'knowledge/plan-author.md': '# plan' } });
         clearFrameworkConfigCache();
         const out = extensionInputsForPhase(root, 'plan');
         assert(out.includes('## Instance extension inputs'), `正常渲染，实际=${out.slice(0, 60)}`);
-        assert(out.includes('- `doc/extensions/knowledge/plan-author.md`'));
+        assert(out.includes('doc/extensions/test/knowledge/plan-author.md'));
       } finally {
         warn.restore();
         fs.rmSync(root, { recursive: true, force: true });

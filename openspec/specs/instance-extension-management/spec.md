@@ -3,50 +3,43 @@
 ## Purpose
 Define how locally installed instance contributions are selected, handed to existing Maison consumers, and reconciled against request evidence.
 ## Requirements
-### Requirement: The manifest normalizes versioned and legacy declarations
+### Requirement: The host registers separate versioned plugin manifests
 
-The loader MUST accept manifest 2.0 and 2.1 and normalize `bindings.<ability>.<id>` entries by source, ability ID, binding ID, timing, kind, and reference. Manifest 2.1 adds ordered activation steps and host binding timing overrides. The loader MUST accept 1.1 object knowledge entries, `provides.mcp_actions`, and top-level `phase_bindings` with their prior audience and execution semantics. A 1.0 manifest MUST retain directory-driven skill discovery and its legacy knowledge boundary. Reading or inspecting a manifest MUST leave it untouched. On the first persistent change requiring a newer schema, migration MUST preserve effective legacy choices, host identity, rules, hand-authored material, and existing adapters. The loader MUST reject unknown fields in closed manifest structures and forbidden MCP connection or credential fields. No manifest or no extension directory MUST yield an empty bundle with no side effects.
+Framework 3.1 MUST load schema `2.0` with a top-level `kind: host` manifest and a `kind: plugin` manifest in each registered, same-named plugin directory. The host manifest owns installation source, team selection, timing overrides, and package-relative import fingerprints. Each plugin manifest owns identity, version, bindings, declared resources, and steps. The loader MUST resolve declared package paths within that package. Repository delivery paths, including MCP outputs, remain relative to the project root. It MUST reject unknown fields in closed structures and forbidden MCP connection or credential fields. An unused or absent extension root MUST yield an empty bundle.
 
-#### Scenario: 1.0 remains behaviorally unchanged
-- **WHEN** a project uses a valid 1.0 manifest containing string knowledge and directory skills
-- **THEN** the loader accepts it, bridges remain directory-driven, and no knowledge/action/binding prompt or gate is emitted
+#### Scenario: An existing host installs Framework 3.1 over 3.0
+- **WHEN** the configured extension root contains a flat 1.0 manifest or an earlier internal layout
+- **THEN** the loader leaves the files, existing bridges, and request records untouched and reports a manual onboarding diagnostic
+- **AND** ordinary work continues with framework and profile inputs, and an explicitly requested legacy contribution has no delivery evidence
+- **AND** the manager preserves the occupied root and lets the host select a separate clean root or manually retain the old root before installing
 
-#### Scenario: connection details are rejected
-- **WHEN** a 1.1 mcp action declares `server`, `url`, `token`, `command`, or login configuration
-- **THEN** validation reports the invalid action and any affected binding while healthy contributions remain eligible
+#### Scenario: One registered plugin is malformed
+- **WHEN** a registered package has a malformed manifest, a mismatched identity, or an invalid contribution
+- **THEN** validation identifies the plugin and affected contribution and skips their unavailable inputs while independent plugins remain eligible
 
-#### Scenario: invalid manifest cannot masquerade as legacy absence
-- **WHEN** manifest YAML, its root structure, or its protocol version cannot be trusted
-- **THEN** no extension contribution is projected, and the existing Feature harness and receipt report the root diagnostic as BLOCKER
-
-#### Scenario: a malformed contribution is isolated
-- **WHEN** an enabled binding has an unknown timing or version, bad reference, missing configuration, or malformed fields
-- **THEN** validation and inspect identify its source, ability, binding ID, timing, and reason, and the contribution is unavailable
-- **AND** independent healthy bindings and skills remain eligible, an optional dependency degrades, and a selected required dependency reports its gap at the relevant consumer
-
-#### Scenario: extension root cannot escape the project
-- **WHEN** `paths.extension_dir` is absolute, drive-qualified, or contains a `..` segment
-- **THEN** loader, init, and materialize reject it through the existing project-relative-path validator before any read or write outside project root
+#### Scenario: Extension paths preserve the project boundary
+- **WHEN** an extension location is absolute, drive-qualified, traverses parent directories, or resolves outside its authorized root
+- **THEN** the loader and management entry points reject it before reading or writing the external path
 
 > **Enforced by:** `specs/instance-extension-manifest.schema.yaml`, `harness/extension-loader.ts`, extension loader unit tests
 
-### Requirement: Materialization uses the versioned SSOT and protects owned derivatives
+### Requirement: Materialization uses registered packages and protects owned derivatives
 
-For 1.1 manifests, bridge materialization MUST use `provides.skills[]`; for 2.0 and 2.1 it MUST project its effective enabled selection from the host manifest, including successful activation when required. Modern manifests MUST target every project-level `materialized_adapters[]`. For 1.0 it MUST remain directory-driven. Generated extension bridges MUST carry ownership metadata. A marked canonical derivative MAY be overwritten or removed, a marked derivative with content drift MUST be reported and preserved, and an unmarked file MUST remain untouched.
+For each supported project-level `materialized_adapters[]`, bridge materialization MUST project the selected manual Skills from enabled registered plugins. A bridge MUST prepare its plugin at actual invocation when necessary. Generated bridges MUST carry ownership metadata. Materialization MAY refresh or remove an unchanged marked derivative and MUST preserve marked derivatives with content drift and unmarked files.
 
-#### Scenario: all project adapters receive a declared skill
-- **WHEN** a 1.1 manifest declares one existing extension skill and the project declares multiple materialized adapters
-- **THEN** each supported adapter receives its canonical bridge and the AGENTS/CLAUDE entry projection lists the skill
+#### Scenario: All project adapters receive a declared skill
+- **WHEN** an enabled plugin declares an existing Skill and the project declares multiple materialized adapters
+- **THEN** each supported adapter receives its canonical bridge and the project entry lists the Skill
 
-#### Scenario: drift is never destroyed
+#### Scenario: Drift is never destroyed
 - **WHEN** a previously generated marked bridge has manual content changes or a colliding target is unmarked
-- **THEN** materialization reports the path and does not overwrite or delete it
+- **THEN** materialization reports the path and preserves the file
 
 > **Enforced by:** `harness/scripts/render-agents-md.ts`, `harness/scripts/utils/instance-skill-bridge.ts`, `/extension materialize`
 
-### Requirement: Inspect and reconciliation are pure projections
+### Requirement: Inspect and reconciliation derive facts from the active worktree
 
-`/extension inspect` MUST derive machine JSON and a human table from the manifest, loaded bundle, project adapter declarations, generated bridges, and produced files. Each row MUST include type, source, effective timing, consumer, strength (`available|scheduled|evidenced`), and status. A timing with no real consumer MUST report its cause and remain unscheduled. Evidence of a previous artifact on disk MUST be distinguished from the delivery and result of a specific request. Directory/manifest drift, missing/stale/orphan bridges, bad references, action visibility source, and M7 seam consumers MUST be shown. Reconciliation findings MUST flow through the existing `check-extensions` CheckResult channel and MUST NOT create a second ledger or checker framework.
+The underlying inspection and validation routines MUST leave extension resources untouched. The management entry may collect a deleted plugin’s attributable local leftovers before reporting. `/extension inspect` MUST derive machine JSON and a human table from the manifest, loaded bundle, project adapter declarations, generated bridges, and produced files. Each row MUST include type, source, effective timing, consumer, strength (`available|scheduled|evidenced`), and status. A timing with no real consumer MUST report its cause and remain unscheduled. Evidence of a previous artifact on disk MUST be distinguished from the delivery and result of a specific request. Directory/manifest drift, missing/stale/orphan bridges, bad references, action visibility source, and M7 seam consumers MUST be shown. Reconciliation findings MUST flow through the existing `check-extensions` CheckResult channel and MUST NOT create a second ledger or checker framework.
 
 #### Scenario: M7 consumer is explicit
 - **WHEN** an action produces a requirement materialization or blueprint feedback artifact
@@ -59,33 +52,20 @@ For 1.1 manifests, bridge materialization MUST use `provides.skills[]`; for 2.0 
 
 > **Enforced by:** `harness/scripts/utils/extension-inspect.ts`, `harness/scripts/check-extensions.ts`, `/extension inspect`
 
-### Requirement: Knowledge routes only to its declared audience
+### Requirement: Knowledge and actions route to their declared timings
 
-Object knowledge with `audience: global` MUST appear in the AGENTS/CLAUDE instance knowledge section. Object knowledge with Feature phase audiences MUST appear as dynamically rendered index rows only in those phases' `ai-prompt.md`. Legacy string knowledge in a 1.1 manifest MUST appear in every Feature phase index and MUST NOT enter AGENTS/CLAUDE. The legacy `skill_assets.component-design.knowledge` slot MUST still select one design background using the existing extension-over-profile precedence. Native knowledge bindings MUST add to that background through the public component design timing. Bound knowledge MUST keep its provenance and order.
+Extensions MUST declare knowledge through `kind: knowledge` bindings. `project.entry@1` MUST generate a static index of eligible versioned repository knowledge when materializing the project entry. `component-design.before_discovery@1` delivers applicable inputs to the directly invoked or managed design author. Feature bindings MUST use an active Feature phase and one of three versioned timings. `feature.before_phase_work@1` prepares knowledge and Skill or MCP instructions for the Feature author; the existing harness checks declared MCP outputs. `feature.before_phase_verify@1` checks MCP outputs before the phase checker. `feature.after_phase_verify_before_close@1` checks outputs at the existing receipt gate. Each consumer MUST retain provenance, established evidence, and severity.
 
-#### Scenario: phase filtering is exact
-- **WHEN** two knowledge entries target different Feature phases
-- **THEN** each generated phase prompt lists only the entry that includes that phase
+#### Scenario: A required MCP output is missing before close
+- **WHEN** a selected after-verify binding references a required MCP action whose declared output is absent
+- **THEN** the existing receipt check fails with the declared MAJOR or BLOCKER severity and preserves existing completion facts
 
-#### Scenario: only active workflow Feature phases are accepted
-- **WHEN** audience or phase_bindings names an unknown slug or a global phase, or the active workflow cannot be resolved
-- **THEN** manifest validation fails; full/lite Feature phases from the active workflow union remain accepted, including custom Feature phases
+#### Scenario: Phase filtering is exact
+- **WHEN** knowledge bindings target different Feature phases
+- **THEN** each Feature author receives only the selected knowledge for that phase
+- **AND** inspect reports unknown phases and incompatible timing overrides on the affected plugin and binding
 
-> **Enforced by:** extension loader, `template-renderer.ts`, `harness-runner.ts`, prompt assembly tests
-
-### Requirement: Phase bindings use exactly three Feature phase slots
-
-Feature bindings MUST normalize to the three versioned timings registered in `specs/lifecycle-hooks-schema.yaml` and use an active Feature phase. `feature.before_phase_work@1` prepares knowledge and skill or MCP action instructions for the Feature author, with bounded AGENTS routing and the existing harness validation of declared MCP outputs. `feature.before_phase_verify@1` checks declared MCP outputs through existing harness CheckResults before the phase checker. `feature.after_phase_verify_before_close@1` checks declared MCP outputs through the existing receipt gate before closure. These checks MUST retain existing severity, completion facts, and receipt schemas.
-
-#### Scenario: after-verify missing required output blocks closure
-- **WHEN** an `after_phase_verify_before_close` binding references a required action whose produces file is absent
-- **THEN** the existing receipt check fails with the declared MAJOR/BLOCKER severity and no completed fact is rewritten
-
-#### Scenario: optional output degrades honestly
-- **WHEN** a bound optional action has no produces file
-- **THEN** inspect/check reports the missing output without blocking the phase
-
-> **Enforced by:** harness runner CheckResult injection, `check-receipt.ts`, phase binding unit/fixture tests
+> **Enforced by:** `harness/extension-loader.ts`, `harness/harness-runner.ts`, `harness/scripts/check-receipt.ts`, contribution tests
 
 ### Requirement: MCP actions describe host execution and repository outputs only
 
@@ -117,9 +97,9 @@ When an action output declares artifact `requirement-source-materialization@1` o
 
 ### Requirement: The timing registry describes actual owners and recipients
 
-The published `specs/lifecycle-hooks-schema.yaml` MUST define the finite supported timings, versions, compatible legacy names, allowed contribution resources, and consumers. The loader and inspect MUST use these definitions. Each owning entry point MUST control dispatch and keep request applicability and write authorization. A configured timing yields only the consumer's stated outputs. A binding identity is deduplicated and preserves source provenance. Independent knowledge contributions are appended in the consumer's stable order. Conflicting exclusive facts MUST go to their existing authority.
+The published `specs/lifecycle-hooks-schema.yaml` MUST define the finite supported timings, versions, allowed contribution resources, and consumers. The loader and inspect MUST use these definitions. Each owning entry point MUST control dispatch and keep request applicability and write authorization. A configured timing yields only the consumer's stated outputs. A binding identity is deduplicated and preserves source provenance. Independent knowledge contributions are appended in the consumer's stable order. Conflicting exclusive facts MUST go to their existing authority.
 
-#### Scenario: legacy harness hooks keep their actual order and context
+#### Scenario: Harness hooks keep their actual order and context
 - **WHEN** a normal harness check emits lifecycle events
 - **THEN** `pre_phase` follows the running phase state, `pre_check` precedes the checker, `post_check` follows it, and `on_violation` runs for each classified violation
 - **AND** the check ends with `pre_verifier`, `on_context_load`, `post_verifier`, and `post_phase`, in that order before verification request eligibility is determined
@@ -137,51 +117,58 @@ The published `specs/lifecycle-hooks-schema.yaml` MUST define the finite support
 
 ### Requirement: Local installation is scoped, repeatable, and safe to remove
 
-The `/extension` CLI and materialized adapter entry points MUST provide install, inspect, enable, disable, and uninstall operations, with equivalent natural-language intent reaching the same operation. Install MUST accept a local source manifest or a valid bare Skill, verify the target release can read the needed schema before writing, and import selected resources within the configured path and resolved link boundaries. The host manifest MUST own package identity, selected abilities, binding switches, host-relative import fingerprints, and management lifecycle facts. First install of a manifest-backed package applies explicit source defaults through enable unless requested to install only. A bare Skill MUST publish only its manual entry at first install, with no extension command invoked or automatic binding declared. Selection updates and manifest writes MUST preserve unrelated declarations and user documents. Reinstallation keeps existing choices and disables newly introduced automatic bindings by default. Failed or interrupted changes MUST be recoverable against the manifest and files.
+The `/extension` CLI and materialized adapter entry points MUST provide install, inspect, enable, disable, and uninstall operations, with equivalent natural-language intent reaching the same operation. Install MUST accept a local source manifest or a valid bare Skill, verify the target release can read the needed schema before writing, and import selected resources within the configured path and resolved link boundaries. The host manifest MUST own per-package installation identity, team and binding choices, overrides, and package-relative import fingerprints. Inspect derives lifecycle facts from the current worktree and any in-flight operation or request. First install of a manifest-backed package applies explicit source defaults through enable unless requested to install only. A bare Skill MUST publish only its manual entry at first install, with no extension command invoked or automatic binding declared. Selection updates and manifest writes MUST preserve unrelated declarations and user documents. Reinstallation keeps existing choices and disables newly introduced automatic bindings by default. Failed or interrupted changes MUST be recoverable against the manifest and files.
 
 #### Scenario: A bare source describes an optional automatic command
 - **WHEN** a bare Skill describes an additional capability or contains an install script
 - **THEN** install leaves the source untouched and publishes its manual entry without invoking the script
 - **AND** the management Skill can propose a named binding with timing, phase, resource, consumer and rationale; a proposed command requires approval of its concrete run, undo, working directory, parameters and outputs before it is written or executed
 
-#### Scenario: the bundled UX ability can be selected at two levels
-- **WHEN** the host installs UX and disables just its fill-missing binding
+#### Scenario: A provider package can be selected at two levels
+- **WHEN** the host installs the optional UX package and disables its fill-missing binding
 - **THEN** the manual skill and read-upstream binding remain available and reinstallation retains the disabled choice
 - **AND** a request with an applicable upstream draft can reuse its evidence while a direct text correction does not trigger design work
 
 #### Scenario: disable applies to new work and uninstall respects prior requests
 - **WHEN** the host disables an ability while a request bound to it is still open
 - **THEN** new requests omit the target and the prior request can still access its signed inputs and installed resources
-- **AND** the command records pending cleanup inside the installation, releases its lock, and returns the active request IDs and original retry command before the request hands back
+- **AND** the command releases its lock and returns the active request IDs and original retry command before the request hands back
 - **AND** inspect shows whether use has ended and cleanup remains pending; repeating the same command removes only attributable unchanged, unshared effects and resources, and reports retained content
 
 > **Enforced by:** `harness/scripts/extension.ts`, `harness/scripts/utils/extension-lifecycle.ts`, `harness/scripts/utils/instance-skill-bridge.ts`
 
-### Requirement: Activation is an ordered and reversible management operation
+### Requirement: Local preparation checks clone readiness before delivery
 
-Manifest 2.1 MAY declare per-ability activation steps using a stable ID, local working directory, executable argument array, exclusive file outputs and an undo command for non-file effects. Discovery MAY validate a missing binding resource against an output of its own ability. Activation MUST record a recoverable step before starting it, preview resolved commands, and record actual attributable effects. A binding and the manual entry MUST become available only after the activation required for that ability has succeeded. Project snapshots MUST detect writes outside the authorized capability scope. Preview and project snapshots operate within the actual management authorization and snapshot coverage.
+A plugin MAY declare ordered `activation.steps` with stable IDs, a package-relative working directory, argument arrays, exclusive outputs and a readiness check. Local steps MUST be repeatable and confined to declared package-local artifacts. A request must prepare each affected enabled plugin once under worktree concurrency protection before giving inputs to its consumer. Ready artifacts MUST be reused. Stale or missing local artifacts MUST be rebuilt when ownership is established. Failure MUST withdraw that plugin from the current delivery, preserve unrelated plugins, and permit retry without rewriting the team selection.
 
-#### Scenario: Activation fails after creating effects
-- **WHEN** a later step fails or violates the observed boundary
-- **THEN** the manager compensates the failing step and earlier steps in reverse order, using the instance ID for undo and matching fingerprints for generated content
-- **AND** an attributable new out-of-scope file is deleted only when its current bytes match its recorded post-step fingerprint; changed or removed preexisting files are reported with their prior fingerprint rather than overwritten or restored
-- **AND** the package remains installed with the failure and any retryable compensation or residuals, and remains unavailable to new consumers
+#### Scenario: A clone inherits a package upgrade but keeps old local files
+- **WHEN** the required artifact is missing or its readiness evidence identifies a different plugin version
+- **THEN** the next request replaces the exclusive local artifacts, checks readiness again, and delivers the new version
+- **AND** a later request with ready outputs reuses them
 
-#### Scenario: A completed activation drifts
-- **WHEN** a previously successful activation output is missing, changed or unverifiable
-- **THEN** inspect and verify report drift, affected selections and the enable entry point without writing
-- **AND** explicit enable reuses valid results, repairs missing effects where attributable, and preserves and reports conflicting host changes
+#### Scenario: One local generator fails
+- **WHEN** the selected plugin's local step fails or its result fails readiness
+- **THEN** the affected plugin reports its preparation failure and its outdated material is withheld
+- **AND** unrelated enabled plugins continue, and a subsequent request can try the failed plugin again
 
-#### Scenario: Upgrade replaces an enabled version
-- **WHEN** the manager installs a changed version of an enabled package
-- **THEN** it preflights the new package, stops new use and reverses the old effects before replacing managed inputs
-- **AND** a failed replacement before commitment recovers old inputs and attempts to restore old activation; a failed activation after commitment leaves the new package installed and failed
+> **Enforced by:** `harness/scripts/utils/extension-activation.ts`, `harness/scripts/utils/extension-runtime.ts`, `harness/scripts/utils/extension-lifecycle.ts`
 
-> **Enforced by:** `harness/scripts/utils/extension-activation.ts`, `harness/scripts/utils/extension-lifecycle.ts`, `harness/scripts/utils/extension-inspect.ts`
+### Requirement: Explicit effects can be reversed and deleted clone leftovers can be collected
+
+Shared files, project-level or non-file effects MUST be handled only by authorized management steps with a repeatable undo. Management MUST run steps in order and undo effects in reverse order, preserving user edits and prior deliveries. Same-source, same-version content drift MUST request a provider version bump. A version change MUST preflight the new package, stop new use, and exit old effects before replacing managed inputs, preserving the prior team choice. An uncommitted replacement failure MUST attempt to restore the original package; a failed activation after commitment leaves the new version installed and reports the failure.
+
+A stable extension-root Git ignore file MUST distinguish package-local outputs from source, lock files and repository artifacts and retain the applicable ignore rules after a plugin is deleted. A management entry (including inspect) or a formal preparation entry MUST collect an attributable deleted-plugin directory when it contains only managed ignored resources and has no effective in-flight references. A package that remains registered or contains a tracked file, manual material or an effective in-flight reference MUST be preserved and explained. Cleanup preserves existing business deliverables.
+
+#### Scenario: A teammate pulls a plugin deletion
+- **WHEN** the plugin is gone from the host manifest and the clone still contains only that plugin's managed ignored files
+- **THEN** Git status remains clean and the next management or preparation entry collects the directory and reports it
+- **AND** tracked or unignored content and in-flight references prevent deletion
+
+> **Enforced by:** `harness/scripts/extension.ts`, `harness/scripts/utils/extension-activation.ts`, `harness/scripts/utils/extension-lifecycle.ts`
 
 ### Requirement: Host timing selection applies consistently to new consumers
 
-The host MAY store a timing and phase override for a named binding in its 2.1 installation selection. The loader MUST validate the effective timing, resource and active workflow phase, preserve source defaults and identify incompatible overrides. All consumers MUST receive the effective selection for new requests. Previously signed inputs retain their original authority.
+The host MAY store a timing and phase override for a named binding in its 2.0 host installation selection. The loader MUST validate the effective timing, resource and active workflow phase, preserve source defaults and identify incompatible overrides. All consumers MUST receive the effective selection for new requests. Previously signed inputs retain their original authority.
 
 #### Scenario: A phase changes after activation
 - **WHEN** an enabled knowledge binding is changed from coding to review with the same valid activation inputs and effects

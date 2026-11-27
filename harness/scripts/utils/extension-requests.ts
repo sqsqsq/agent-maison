@@ -2,7 +2,7 @@ import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { loadFrameworkConfig } from '../../config';
+import { featurePhaseReportsDir, loadFrameworkConfig } from '../../config';
 import { readInvokeFinalText } from './agent-invoke';
 import { classifyGoalRunsDir } from './fidelity-shared';
 import { assertFencedOwner, readRunControl } from './goal-run-control';
@@ -13,6 +13,9 @@ import { realProjectPath } from './project-relative-path';
 import { readPhaseRecoveryFile } from './phase-write-boundary';
 import { workUnitMayWritePath } from './repair-responsibility';
 import { acceptedSessionReport, readExecutionRequestOriginal, readSessionWriteWindows, type IssuedSessionExecution } from './session-execution-handoff';
+
+import { computeMaterialSha256, readVerifierMaterialOrNull, VERIFIER_MATERIAL_SCHEMA } from './verifier-material';
+import { parseVerifierRequestFromInstruction } from './verifier-request';
 
 type Data = Record<string, unknown>;
 
@@ -36,13 +39,22 @@ function signedExtensionBindings(phase: string, segments: readonly unknown[]): D
     const design = record(data.extension_preparation);
     const rows = phase === 'work-unit-author' ? data.extension_feature_bindings
       : design.at === 'component-design.before_discovery@1' ? design.bindings : undefined;
-    return Array.isArray(rows) ? rows.map(record) : [];
+    return [...Array.isArray(rows) ? rows.map(record) : [],
+      ...Array.isArray(data.extension_feature_assets) ? data.extension_feature_assets.map(record) : []];
   });
+}
+
+function bindingPaths(binding: Data): Array<{ path: string; skill: boolean }> {
+  return [
+    ...(typeof binding.path === 'string' ? [{ path: binding.path,
+      skill: binding.delivery === 'action' && path.posix.basename(binding.path) === 'SKILL.md' }] : []),
+    ...(typeof binding.plugin_manifest === 'string' ? [{ path: binding.plugin_manifest, skill: false }] : []),
+  ];
 }
 
 export function signedExtensionResourcePaths(phase: string, segments: readonly unknown[]): string[] {
   return [...new Set(signedExtensionBindings(phase, segments).flatMap(binding =>
-    typeof binding.path === 'string' && (binding.delivery === 'action' || binding.delivery === 'pointer') ? [binding.path] : []))];
+    bindingPaths(binding).map(item => item.path)))];
 }
 
 interface ExtensionRequestReference {
@@ -57,6 +69,7 @@ interface AuthorRequest extends ExtensionRequestReference {
   issued: IssuedSessionExecution;
   bindings: Data[];
   settled: boolean;
+  resources: Array<{ path: string; skill: boolean }>;
 }
 
 type InactiveReason = '运行已结束（run_end）' | '运行锁已失效或已释放' | '原签发 owner 已失活或被接替';
@@ -65,7 +78,7 @@ export interface InactiveExtensionRequest extends ExtensionRequestReference {
   reason: InactiveReason;
 }
 
-function* authorRequests(projectRoot: string, requested?: string, unsettledOnly = false): Generator<AuthorRequest> {
+function* issuedExtensionRequests(projectRoot: string, requested?: string, unsettledOnly = false): Generator<AuthorRequest> {
   const features = realProjectPath(projectRoot, loadFrameworkConfig(projectRoot).paths.features_dir, 'paths.features_dir');
   const ownerDirectories = directories(features).flatMap(workspace => [
     workspace,
@@ -81,7 +94,7 @@ function* authorRequests(projectRoot: string, requested?: string, unsettledOnly 
       const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
       const finished = new Set(events.filter(event => event.type === 'agent_invoke_end').map(event => event.invoke_id));
       const starts = events.filter(event => event.type === 'agent_invoke_start' && event.invoke_id
-        && event.phase && AUTHOR_PHASES.has(event.phase));
+        && event.phase && (AUTHOR_PHASES.has(event.phase) || /-verifier(?:-format-repair)?$/.test(event.phase)));
       for (const start of starts) {
         const requestId = start.invoke_id!;
         if (unsettledOnly && finished.has(requestId)) continue;
@@ -93,7 +106,19 @@ function* authorRequests(projectRoot: string, requested?: string, unsettledOnly 
         if (requested && requested !== requestId && requested !== `${runId}:${requestId}` && requested !== requestFile) continue;
         const segments = issued.request.context.workInput?.material.segments ?? [];
         const bindings = signedExtensionBindings(issued.request.context.phase, segments);
-        yield { requestId, requestFile, runId, runDir, events, issued, bindings, settled: finished.has(requestId) };
+        const resources = bindings.flatMap(bindingPaths);
+        if (!AUTHOR_PHASES.has(start.phase!)) {
+          const context = issued.request.context;
+          const verifier = parseVerifierRequestFromInstruction(context.instruction ?? '');
+          if (!verifier || verifier.feature !== context.feature || verifier.phase !== start.phase!.replace(/-verifier(?:-format-repair)?$/, '')) continue;
+          const reports = featurePhaseReportsDir(projectRoot, verifier.feature, verifier.phase, context.frameworkRoot);
+          const material = readVerifierMaterialOrNull(reports, verifier.subject_id);
+          if (material?.material_sha256 === verifier.material_sha256
+            && material.schema === VERIFIER_MATERIAL_SCHEMA && computeMaterialSha256(material) === verifier.material_sha256) {
+            for (const file of material.files) resources.push({ path: file.path, skill: false });
+          }
+        }
+        yield { requestId, requestFile, runId, runDir, events, issued, bindings, resources, settled: finished.has(requestId) };
       }
     }
   }
@@ -132,11 +157,11 @@ function extensionRequestUsage(active: AuthorRequest[], inactiveRequests: Inacti
   return { requestIds: [...new Set(requestIds)].sort(), inactiveRequests };
 }
 
-export function extensionRequestsUsingAbility(projectRoot: string, ability: string, source: string, bindingId?: string): ExtensionRequestUsage {
+export function extensionRequestsUsingAbility(projectRoot: string, ability: string, source?: string, bindingId?: string): ExtensionRequestUsage {
   const active: AuthorRequest[] = [];
   const inactive: InactiveExtensionRequest[] = [];
-  for (const request of authorRequests(projectRoot, undefined, true)) {
-    if (!request.bindings.some(binding => binding.ability === ability && binding.source === source
+  for (const request of issuedExtensionRequests(projectRoot, undefined, true)) {
+    if (!request.bindings.some(binding => binding.ability === ability && (source === undefined || binding.source === source)
       && (bindingId === undefined || binding.id === bindingId))) continue;
     const reason = inactiveReason(request);
     if (reason) inactive.push({ requestId: request.requestId, runId: request.runId, requestFile: request.requestFile, reason });
@@ -145,23 +170,21 @@ export function extensionRequestsUsingAbility(projectRoot: string, ability: stri
   return extensionRequestUsage(active, inactive);
 }
 
-export function extensionRequestsUsingResources(projectRoot: string, paths: readonly string[]): ExtensionRequestUsage & { paths: string[] } {
+export function extensionRequestsUsingResources(projectRoot: string, paths: readonly string[], recursive = false): ExtensionRequestUsage & { paths: string[] } {
   if (!paths.length) return { paths: [], requestIds: [], inactiveRequests: [] };
   const retained = new Set<string>();
   const comparable = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
   const files = paths.map(file => ({ file, normalized: comparable(file) }));
   const active: AuthorRequest[] = [];
   const inactive: InactiveExtensionRequest[] = [];
-  for (const request of authorRequests(projectRoot, undefined, true)) {
+  for (const request of issuedExtensionRequests(projectRoot, undefined, true)) {
     const root = request.issued.request.context.projectRoot;
     const matched = new Set<string>();
-    for (const binding of request.bindings) {
-      if (typeof binding.path !== 'string' || (binding.delivery !== 'action' && binding.delivery !== 'pointer')) continue;
-      const resource = comparable(relativeExtensionPath(root, path.resolve(root, binding.path)));
-      const skill = binding.delivery === 'action' && path.posix.basename(resource) === comparable('SKILL.md')
-        ? path.posix.dirname(resource) + '/' : undefined;
+    for (const item of request.resources) {
+      const resource = comparable(relativeExtensionPath(root, path.resolve(root, item.path)));
+      const skill = item.skill ? path.posix.dirname(resource) + '/' : undefined;
       for (const { file, normalized } of files) {
-        if (normalized === resource || (skill && normalized.startsWith(skill))) matched.add(file);
+        if (normalized === resource || (skill && normalized.startsWith(skill)) || (recursive && resource.startsWith(normalized + '/'))) matched.add(file);
       }
     }
     if (!matched.size) continue;
@@ -178,7 +201,7 @@ export function extensionRequestsUsingResources(projectRoot: string, paths: read
 export function recordExtensionManagementWrites<T>(
   projectRoot: string, work: (observe?: ObserveExtensionWrite) => T,
 ): T {
-  const active = [...authorRequests(projectRoot, undefined, true)].filter(actor => {
+  const active = [...issuedExtensionRequests(projectRoot, undefined, true)].filter(actor => {
     const { request } = actor.issued;
     return (request.context.phase === 'initial-design-author' || (request.context.phase === 'work-unit-author'
       && !request.purpose && request.write_boundary?.executionRole === 'author')) && !inactiveReason(actor);
@@ -260,7 +283,7 @@ export function inspectExtensionRequest(projectRoot: string, request: string, ab
   if (reference.includes('/')) {
     reference = path.relative(projectRoot, realProjectPath(projectRoot, reference, 'extension --request')).replace(/\\/g, '/');
   }
-  const matches = [...authorRequests(projectRoot, reference)];
+  const matches = [...issuedExtensionRequests(projectRoot, reference)];
   if (matches.length !== 1) return {
     request,
     message: matches.length > 1

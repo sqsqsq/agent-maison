@@ -3,6 +3,7 @@ import * as path from 'path';
 import minimist from 'minimist';
 import { loadFrameworkConfig } from '../config';
 import { isCapabilitySkipped } from '../capability-registry';
+import { preparePhaseExtensionInputs } from './utils/extension-runtime';
 import { loadResolvedProfile } from '../profile-loader';
 import { tryLoadProfileCodingHost, type ProjectCompileResult } from '../profile-host-loader';
 import { detectRepoLayout, resolveProbeFrameworkRoot } from '../repo-layout';
@@ -24,7 +25,8 @@ import { computeGateFingerprint } from './utils/gate-fingerprint';
 export function runCompile(options: { projectRoot: string; reportDir?: string; frameworkRoot?: string; sessionRef?: string; requestFile?: string; targets?: string[]; architectureOnly?: boolean }): ProjectCompileResult & { reportDir: string; intake?: RequestIntake; intakeGap?: string; contentImpact?: ReturnType<typeof deriveContentImpact>; next?: string[]; architectureAnalyzed: number } {
   const projectRoot = fs.realpathSync(options.projectRoot);
   const frameworkRoot = options.frameworkRoot ?? resolveProbeFrameworkRoot(projectRoot, __dirname);
-  const resolvedProfile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), frameworkRoot);
+  const extensions = preparePhaseExtensionInputs(projectRoot, frameworkRoot, ['coding'], 'standalone');
+  const resolvedProfile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), frameworkRoot, extensions);
   if (!options.architectureOnly && isCapabilitySkipped(resolvedProfile, 'coding.compile')) {
     throw new Error(`profile ${resolvedProfile.name} 不提供 coding.compile：本次未执行编译`);
   }

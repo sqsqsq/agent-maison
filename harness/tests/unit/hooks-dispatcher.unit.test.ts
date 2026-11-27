@@ -1,3 +1,5 @@
+import { putPlugin } from './extension-test-fixture';
+import { FEATURE_AUTHOR_AT } from '../../scripts/utils/knowledge-context';
 import { runUnitCasesAsync } from '../utils/unit-cases';
 // ============================================================================
 // hooks-dispatcher.unit.test.ts
@@ -53,28 +55,25 @@ interface Case {
 
 const cases: Case[] = [
   {
-    name: '旧与原生 hook 经真实 dispatcher 共存；坏时点独立诊断且已启用 required 报缺口',
+    name: '两个插件经真实 dispatcher 依序消费；坏时点独立诊断且已启用 required 报缺口',
     async run() {
       const project = mkTmp();
       const framework = path.resolve(__dirname, '../../..');
       const harness = path.join(project, 'harness');
       const profile = path.join(project, 'profile');
-      const extension = path.join(project, 'doc/extensions');
       const event = 'post_verifier';
       write(path.join(harness, 'hooks', 'spec', `${event}.md`), 'framework fragment');
       write(path.join(profile, 'hooks', 'spec', `${event}.md`), 'profile fragment');
-      write(path.join(extension, 'hooks/legacy.md'), 'legacy fragment');
-      write(path.join(extension, 'hooks/native.md'), 'native fragment');
-      write(path.join(extension, 'hooks/required.md'), 'unreachable fragment');
-      write(path.join(extension, 'manifest.yaml'), [
-        'schema_version: "2.0"', 'name: hook-source',
-        'provides:', '  hooks:', '    spec:', '      post_verifier: [hooks/legacy.md]',
-        '      on_context_loda: [hooks/required.md]',
-        'bindings:', '  compatibility:',
-        '    native: {at: harness.post_verifier@1, phase: spec, kind: knowledge, ref: hooks/native.md, enabled_by_default: true}',
-        '    broken: {at: harness.on_context_loda@1, phase: spec, kind: knowledge, ref: hooks/required.md, required: true, enabled_by_default: true}',
-        '    optional: {at: harness.on_context_loda@1, phase: spec, kind: knowledge, ref: hooks/required.md, enabled_by_default: true}',
-      ].join('\n'));
+      const textHook = { at: 'harness.post_verifier@1', phase: 'spec', kind: 'knowledge', ref: 'hooks/guide.md' };
+      putPlugin(project, 'layer-one', { declaration: { bindings: { text: textHook } }, files: { [textHook.ref]: 'first plugin fragment' } });
+      putPlugin(project, 'hook-source', { declaration: { bindings: {
+        native: { at: 'harness.post_verifier@1', phase: 'spec', kind: 'action', ref: 'hooks/check.mjs' },
+        broken: { ...textHook, at: 'harness.on_context_loda@1', required: true },
+        optional: { ...textHook, at: 'harness.on_context_loda@1' },
+      } }, files: { 'hooks/check.mjs': `
+        import { basename } from 'node:path';
+        export default ctx => ({promptFragments: [ctx.extensionName + ':' + basename(process.cwd()) + ':' + basename(process.env.MAISON_EXTENSION_ROOT)]});
+      ` } });
 
       try {
         const bundle = loadInstanceExtensions(project);
@@ -83,7 +82,7 @@ const cases: Case[] = [
           resolvedProfileName: 't-profile', hookEvent: event,
         }, resolved(profile, bundle));
         const delivered = result.promptFragments.map(value => value.slice(value.lastIndexOf('\n') + 1)).join('|');
-        assert(delivered === 'framework fragment|profile fragment|legacy fragment|native fragment', delivered);
+        assert(delivered === 'framework fragment|profile fragment|first plugin fragment|hook-source:hook-source:hook-source', delivered);
         const inspect = inspectInstanceExtensions(project, framework);
         const native = inspect.rows.find(row => row.bindingId === 'native');
         const broken = inspect.rows.find(row => row.bindingId === 'broken');
@@ -92,7 +91,7 @@ const cases: Case[] = [
         assert(inspect.manifestErrors.some(error => error.source === 'hook-source' && error.bindingId === 'broken'
           && error.at === 'harness.on_context_loda@1'), JSON.stringify(inspect.manifestErrors));
         assert(checkExtensionManifest(bundle).length === 0, 'health stays scoped to individual contributions');
-        const checks = checkExtensionBindingProduces({ bundle, projectRoot: project, phase: 'spec', slot: 'before_phase_work' });
+        const checks = checkExtensionBindingProduces({ bundle, projectRoot: project, phase: 'spec', at: FEATURE_AUTHOR_AT });
         assert(checks.length === 1 && checks[0].status === 'FAIL' && !!checks[0].details?.includes('harness.on_context_loda@1'),
           JSON.stringify(checks));
       } finally {
@@ -178,30 +177,10 @@ const cases: Case[] = [
       const profDir = path.join(dir, 'profile');
       write(path.join(harnessRoot, 'hooks', 'catalog', 'pre_phase.md'), 'fw');
       write(path.join(profDir, 'hooks', 'catalog', 'pre_phase.md'), 'prof');
-      const absExt = path.join(dir, 'ext-hook.md');
-      write(absExt, 'ext');
-      const bundle: HarnessResolvedProfile['extensionBundle'] = {
-        rootDir: dir,
-        manifestPath: null,
-        manifestVersion: null,
-        manifestName: null,
-        manifestUsable: true,
-        bindings: [],
-        activations: {},
-        installations: {},
-        declaredSkills: [],
-        featurePhases: [],
-        skills: [],
-        knowledgePaths: [],
-        knowledge: [],
-        mcpActions: {},
-        phaseBindings: {},
-        hooks: { catalog: { pre_phase: [absExt] } },
-        extensionCapabilities: {},
-        phaseRuleOverlayPaths: {},
-        skillAssetAbsPaths: {},
-        errors: [],
-      };
+      putPlugin(dir, 'fixture', { declaration: { bindings: { hook: {
+        at: 'harness.pre_phase@1', phase: 'catalog', kind: 'knowledge', ref: 'ext-hook.md',
+      } } }, files: { 'ext-hook.md': 'ext' } });
+      const bundle = loadInstanceExtensions(dir);
       const slots = collectHookSlots(harnessRoot, 'catalog', 'pre_phase', resolved(profDir, bundle));
       assert(slots.length === 3, String(slots.length));
       assert(slots[0]!.source === 'framework', 'fw first');
@@ -239,30 +218,10 @@ const cases: Case[] = [
     async run() {
       const dir = mkTmp();
       const harnessRoot = path.join(dir, 'harness');
-      const hookPath = path.join(dir, 'bad.mjs');
-      write(hookPath, 'export default async () => { throw new Error("boom-ext"); };');
-      const bundle: HarnessResolvedProfile['extensionBundle'] = {
-        rootDir: dir,
-        manifestPath: null,
-        manifestVersion: null,
-        manifestName: null,
-        manifestUsable: true,
-        bindings: [],
-        activations: {},
-        installations: {},
-        declaredSkills: [],
-        featurePhases: [],
-        skills: [],
-        knowledgePaths: [],
-        knowledge: [],
-        mcpActions: {},
-        phaseBindings: {},
-        hooks: { catalog: { pre_phase: [hookPath] } },
-        extensionCapabilities: {},
-        phaseRuleOverlayPaths: {},
-        skillAssetAbsPaths: {},
-        errors: [],
-      };
+      putPlugin(dir, 'fixture', { declaration: { bindings: { hook: {
+        at: 'harness.pre_phase@1', phase: 'catalog', kind: 'action', ref: 'bad.mjs',
+      } } }, files: { 'bad.mjs': 'export default async () => { throw new Error("boom-ext"); };' } });
+      const bundle = loadInstanceExtensions(dir);
       const r = await dispatchLifecycleHooks(
         harnessRoot,
         'pre_phase',
@@ -338,30 +297,10 @@ const cases: Case[] = [
     async run() {
       const dir = mkTmp();
       const harnessRoot = path.join(dir, 'harness');
-      const hookPath = path.join(dir, 'x.mjs');
-      write(hookPath, 'export default async () => ({ ok: false, message: "no-go" });');
-      const bundle: HarnessResolvedProfile['extensionBundle'] = {
-        rootDir: dir,
-        manifestPath: null,
-        manifestVersion: null,
-        manifestName: null,
-        manifestUsable: true,
-        bindings: [],
-        activations: {},
-        installations: {},
-        declaredSkills: [],
-        featurePhases: [],
-        skills: [],
-        knowledgePaths: [],
-        knowledge: [],
-        mcpActions: {},
-        phaseBindings: {},
-        hooks: { catalog: { pre_phase: [hookPath] } },
-        extensionCapabilities: {},
-        phaseRuleOverlayPaths: {},
-        skillAssetAbsPaths: {},
-        errors: [],
-      };
+      putPlugin(dir, 'fixture', { declaration: { bindings: { hook: {
+        at: 'harness.pre_phase@1', phase: 'catalog', kind: 'action', ref: 'x.mjs',
+      } } }, files: { 'x.mjs': 'export default async () => ({ ok: false, message: "no-go" });' } });
+      const bundle = loadInstanceExtensions(dir);
       const r = await dispatchLifecycleHooks(
         harnessRoot,
         'pre_phase',

@@ -51,7 +51,7 @@ framework/docs/
     ├── README.md
     ├── compat-protocol-v1.md          ← Feature 目录 compat.yaml：降级 / 过期 / 回填边界
     ├── extension-e2e-acceptance.md    ← 实例扩展与 hooks / render-agents-md 手验清单
-    └── extension-protocol-v1.md       ← workflow / manifest / lifecycle-hooks 三套协议 v1 约定
+    └── extension-protocol-v1.md       ← 插件接入、时点及生命周期协议
 ```
 
 ### 各子目录定位

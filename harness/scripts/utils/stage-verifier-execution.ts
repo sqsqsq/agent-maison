@@ -13,6 +13,7 @@ import { diffPhaseInvocationSnapshots, readPhaseRecoveryFile, type PhaseInvocati
 import { realProjectPath, validateProjectRelativePath } from './project-relative-path';
 import { computePromptSha256, parseVerifierRequest, verifierRequestFilename, type VerifierRequest } from './verifier-request';
 import { loadVerifierEvidenceForSubject, parseVerifierEvidenceText, planVerifierItemReview, verifierReportItemGaps, verifierReportMdPath, type LoadVerifierEvidenceResult } from './verifier-evidence';
+import { currentExtensionVerifierMaterial } from './extension-runtime';
 import { computeMaterialSha256, readVerifierMaterialOrNull, verifierMaterialFilename, VERIFIER_MATERIAL_SCHEMA } from './verifier-material';
 import { workflowVerifierPrompt } from './verifier-plan';
 import { loadVerifierPromptTemplate, renderVerifierItemReviewNotice } from './report-generator';
@@ -45,7 +46,8 @@ export function readSignedStageVerifier(input: StageVerifierLocation, summary?: 
       || reportPath !== verifierReportMdPath(reportsDir, request.subject_id)) return null;
     const material = readVerifierMaterialOrNull(reportsDir, request.subject_id);
     if (!material || material.material_sha256 !== request.material_sha256
-      || material.schema === VERIFIER_MATERIAL_SCHEMA && computeMaterialSha256(material) !== request.material_sha256) return null;
+      || material.schema === VERIFIER_MATERIAL_SCHEMA && computeMaterialSha256(material) !== request.material_sha256
+      || !currentExtensionVerifierMaterial(projectRoot, frameworkRoot, material.files)) return null;
     const promptPath = resolve(request.prompt_path);
     if (computePromptSha256(fs.readFileSync(promptPath, 'utf8')) !== request.prompt_sha256) return null;
     return { request, requestText, reportsDir, requestPath, reportPath, promptPath, reportRel: summary.verifier_report };

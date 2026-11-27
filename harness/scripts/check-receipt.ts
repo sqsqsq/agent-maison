@@ -82,7 +82,8 @@ import { RECEIPT_PROJECTION_SCHEMA } from './utils/receipt-scaffold';
 import type { VerifierClosureRecord } from './utils/types';
 import { resolveContextAdapterImageInput } from './utils/multimodal-probe';
 import type { HarnessRunSummary, SoftAdvisory } from './utils/types';
-import { checkExtensionBindingProduces, checkExtensionManifest } from './utils/extension-runtime';
+import { FEATURE_CLOSE_AT } from './utils/knowledge-context';
+import { checkExtensionBindingProduces, checkExtensionManifest, preparePhaseExtensionInputs } from './utils/extension-runtime';
 
 /**
  * summary.schema_version（**仅** legacy receipt 格式兼容判断用；verifier 证据不看它）。
@@ -262,7 +263,8 @@ function main(): void {
     console.error(`错误：${(err as Error).message}`);
     process.exit(2);
   }
-  const resolvedProfile = loadResolvedProfile(projectRoot, fw);
+  const preparedExtensions = preparePhaseExtensionInputs(projectRoot, frameworkRoot, [phase], 'close');
+  const resolvedProfile = loadResolvedProfile(projectRoot, fw, frameworkRoot, preparedExtensions);
   if (isPhaseDisabledByProfile(phase, resolvedProfile)) {
     console.log(
       `\n🧾 check-receipt: feature=${feature}, phase=${phase}` +
@@ -351,10 +353,11 @@ function main(): void {
       bundle: resolvedProfile.extensionBundle,
       projectRoot,
       phase,
-      slot: 'after_phase_verify_before_close',
+      at: FEATURE_CLOSE_AT,
     }),
   ];
   for (const check of extensionClosureChecks) {
+    if (check.status === 'WARN') { console.warn(check.details ?? check.description); continue; }
     if (check.status === 'FAIL') issues.push({
       id: check.id,
       severity: check.severity === 'BLOCKER' ? 'BLOCKER' : 'MAJOR',

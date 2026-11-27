@@ -400,7 +400,7 @@ revision N（被评审）
 ### 7.1 用 extension 承载三条接缝
 
 Maison 3.1 的 `/extension` 管理承载这三条接缝的宿主能力。宿主把自己的 Story
-能力写成 `doc/extensions/skills/<id>/SKILL.md`，并在扩展清单的 `provides.skills[]` 声明；
+Skill 写入插件的 `skills/<Skill ID>/SKILL.md`，并在同一包的 `manifest.yaml` 里用 `provides.skills[]` 声明，经 `/extension install` 登记；
 该 Skill 负责按宿主规则调用已经可用的工具、脱敏、落盘，再显式调用 `/component-design`：
 
 ```text
@@ -416,7 +416,7 @@ extension Skill
 
 - manifest 只写 `tool / required / severity / produces / usage`，不写 server、URL、token、command
   或登录配置；工具执行与凭据均归宿主，Maison 只验证仓内产物。
-- `phase_bindings` 沿用现有三个 Feature 槽位。设计前绑定使用 `component-design.before_discovery@1`。旧 `provides.skill_assets.component-design.knowledge` 先按 extension 优先于 profile 的原规则解析，新贡献追加到同一作者准备。
+- 用 `bindings.<绑定ID>` 声明扩展知识和动作。Feature 时机见随包时点表，设计前绑定使用 `component-design.before_discovery@1`。
 - 直接和受管初设在已绑定蓝图 ID、需求来源和写集后准备扩展内容。直接本地材料沿原需求 builder 规范化。宿主需求系统或外部 provider 向蓝图交付正式需求时，仍按 §3.0 物化原件、记录 authority 并经原 checker 核对。本轮 AI 推导的 UX 带实际出处、证据强度和待决项供设计采用，产品裁决沿既有责任链。
 - `/extension inspect` 只在产物实际 `artifact` 被识别且通过既有 validator 后，才把 materialization /
   feedback 标成 `evidenced` 并显示 `/component-design` 与接缝名；`usage` 文本不参与判断。工具可见性

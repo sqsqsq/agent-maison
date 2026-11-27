@@ -1,3 +1,4 @@
+import { putPlugin } from './extension-test-fixture';
 import { beginUnitCase } from '../utils/unit-cases';
 import { testCliArgs } from '../utils/test-cli-args';
 import '../utils/transpile-only-env';
@@ -291,15 +292,15 @@ cases.push({
     await withProject(async project => {
       const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
       const handoff = require(path.join(project.harnessDir, 'scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
-      const extension = 'doc/extensions';
-      const skill = `${extension}/skills/ux/SKILL.md`;
-      const manifest = `${extension}/manifest.yaml`;
-      writeHostFile(project.root, skill, '# Original UX action\n');
-      writeHostFile(project.root, `${extension}/intake.md`, '主持有的独立设计背景。\n');
-      writeHostFile(project.root, manifest, YAML.stringify({
-        schema_version: '2.0', name: 'host-design', provides: { skills: ['ux'], skill_assets: { 'component-design': { knowledge: 'intake.md' } } },
-        bindings: { ux: { fill: { at: 'component-design.before_discovery@1', kind: 'action', ref: 'ux', enabled_by_default: true } } },
-      }));
+      const skill = 'doc/extensions/ux/skills/ux/SKILL.md';
+      const manifest = 'doc/extensions/manifest.yaml';
+      putPlugin(project.root, 'ux', { declaration: {
+        provides: { skills: ['ux'] },
+        bindings: { fill: { at: 'component-design.before_discovery@1', kind: 'action', ref: 'ux' } },
+      }, files: { 'skills/ux/SKILL.md': '# Original UX action\n' } });
+      putPlugin(project.root, 'host-background', { declaration: { bindings: {
+        notes: { at: 'component-design.before_discovery@1', kind: 'knowledge', ref: 'intake.md' },
+      } }, files: { 'intake.md': '主持有的独立设计背景。\n' } });
       const prepared = entry.prepareGoalModeRun({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
         feature: project.feature, adapter: 'claude', runId: 'initial-extension-window', requirement: project.requirement,
         requirementSourceFiles: project.requirementSourceFiles, unattended: UNATTENDED, autonomyAuthorized: true });
@@ -336,14 +337,14 @@ cases.push({
       assert.equal(waiting.changed, true);
       assert.deepEqual(waiting.requestIds, [invokeId]);
       assert.deepEqual(waiting.outcomes, [{ ability: 'ux', state: 'pending', pending }]);
-      const selection = () => YAML.parse(fs.readFileSync(path.join(project.root, manifest), 'utf8')).installations.ux;
+      const selection = () => YAML.parse(fs.readFileSync(path.join(project.root, manifest), 'utf8')).plugins.ux;
       assert.equal(selection().enabled, false);
-      assert.deepEqual(selection().pending_cleanup, pending);
+      assert.equal(selection().pending_cleanup, undefined);
       assert.deepEqual((await next()).request, first.request, 'ordinary next reuses the original signed inputs');
       assert.equal(fs.readFileSync(path.join(project.root, skill), 'utf8'), '# Original UX action\n');
       await next({ requestPath: reference.path, report: { status: 'passed', phase: context.phase, details: '执行结束，初建设计仍未交付。' } });
       assert.equal(handoff.acceptedSessionReport(prepared.runDir, issued)?.event.status, 'passed');
-      assert.deepEqual(selection().pending_cleanup, pending);
+      assert.equal(selection().pending_cleanup, undefined);
       const stopped = cli({});
       assert.equal(stopped.status, 0, stopped.stderr + stopped.stdout);
       const completed = JSON.parse(stopped.stdout).mutation;
@@ -635,13 +636,10 @@ cases.push({
       fs.writeFileSync(blueprintPath, YAML.stringify(blueprint));
       const review = path.join(path.dirname(blueprintPath), 'component-blueprint.review.md');
       fs.writeFileSync(review, '# 设计\n## 方案\n正文\n<a id="reference"></a>\n## 技术与追溯参考\n参考\n');
-      const extensionRoot = path.join(directory, 'doc/extensions');
-      fs.mkdirSync(extensionRoot, { recursive: true });
       const designText = '# 仅设计作者取得的完整宿主知识\n';
-      fs.writeFileSync(path.join(extensionRoot, 'intake.md'), designText);
-      fs.writeFileSync(path.join(extensionRoot, 'manifest.yaml'), YAML.stringify({
-        schema_version: '1.1', name: 'author-knowledge', provides: { skill_assets: { 'component-design': { knowledge: 'intake.md' } } },
-      }));
+      putPlugin(directory, 'author-knowledge', { declaration: { bindings: {
+        intake: { at: 'component-design.before_discovery@1', kind: 'knowledge', ref: 'intake.md' },
+      } }, files: { 'intake.md': designText } });
       for (const authorized of [false, true]) for (const kind of ['author', 'questioning'] as const) {
         const prompt = delivery.initialDesignAuthorInstruction({ projectRoot: directory, frameworkRoot, manifest,
           observation: { kind, blueprintPath, candidatesPath, issues: ['当前机器缺口'] }, autonomyAuthorized: authorized, deliveryRuns: [] });

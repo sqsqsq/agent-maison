@@ -281,7 +281,7 @@ function main(): void {
       if (args['write-review'] || args['reader-guide-digest'] || args.materialization || args.projection || args.feedback || args.ref
         || args['session-ref'] || args['prepare-source'] || args['report-dir'] || args.target
         || lookupOnly && (args['prepare-design'] || args['request-file'] || args['requirement-source'] || args['material-source'] || args['skip-extension-action'])) {
-        throw new Error('--design-knowledge / --prepare-design 是独立只读模式。');
+        throw new Error('--design-knowledge / --prepare-design 是独立模式。');
       }
       const projectRoot = path.resolve(args['project-root']!);
       const frameworkRoot = args['framework-root'] ?? resolveProbeFrameworkRoot(projectRoot, __dirname);

@@ -1,9 +1,9 @@
 # Framework 3.1.0 发布说明
 
-**状态**：本地终验完成，待独立 review；尚未对外发布、创建或推送 tag。
-**验收日期**：2026-09-04
+**状态**：本地开发中，尚未对外发布。文末保留较早候选的终验记录。
+**早期候选验收日期**：2026-09-04
 **对比基线**：Framework 3.0.0
-**本地发布件**：`dist/framework-3.1.0.zip` 与同名 `.manifest.json`；实际产物身份与终验结果见文末记录。
+**早期候选产物**：`dist/framework-3.1.0.zip` 与同名 `.manifest.json`。文末记录对应的包身份与终验结果。
 
 本版交付单 App 部件正式需求的机械闭环：部件设计 → Change Unit → 既有 Goal Mode 单并发推进 → 部件组装与覆盖核对。仓内 fixtures 与临时消费者验证只证明框架机制，不代表真实业务、设备或团队语义验收通过。
 
@@ -14,7 +14,7 @@
 - **演进工作区**：蓝图位于 `<features_dir>/<blueprint_id>/blueprint/`，CU 与施工产物位于 `<features_dir>/<blueprint_id>/<change_unit_id>/`。同部件多次演进互不覆盖，跨蓝图不能满足依赖或继承完成事实。
 - **连续推进与部件闭环**：CU 消费稳定 `design_refs`，ready set 从依赖、阻塞与真实完成事实派生；复用既有 Goal Mode 恢复。closure 核对需求、设计、实现、运行时边、组合证据及知识归位，单 CU 与多 CU 共用算法。
 - **宿主适配接缝**：需求物化、评审发布、评审反馈保持各自方向和权责。发布件内的 `docs/operations/component-design-host-adaptation.md` 提供适配契约、样例与校验命令。
-- **知识与扩展接线**：`/extension` 和 manifest 1.1 支持知识受众、声明式物化与阶段绑定；工程惯例进入蓝图、CU 和 review；组件资产发现与选型通过既有 provenance、decision 和施工契约消费。缺少输入时如实显示不可用、未知或降级。goal 模式作者 prompt 同样注入本阶段的 1.1 knowledge 索引与阶段绑定，并计入 verifier 审前材料（plan a7c3e9d2）。
+- **实例扩展**：通过 `/extension` 管理按插件组织的清单 2.0。宿主选择与提供方声明各自保存。知识和动作通过版本化时点投递，本地产物在实际使用前准备、就绪时复用，单包失败时其他插件仍可用。已删除包的受管本地残留可在下次管理或消费前清理。工程惯例、组件资产发现和选型继续进入蓝图、CU 和 review。
 
 ## 升级操作
 
@@ -23,7 +23,7 @@
 3. 新正式需求从 `/component-design` 开始；已有平铺 Feature 保持有效，无需迁移为 CU。
 4. 自定义 `paths.features_dir` 且未显式配置 receipt/reports pattern 时，默认落点随 features_dir 派生。需要保留旧落点时显式配置 pattern。
 
-Extension 1.0 继续兼容；选择 1.1 时须在 `provides.skills[]` 列全待物化 Skill。详细步骤与影响见 [MIGRATION.md](MIGRATION.md)。
+旧版平铺扩展留在原处，运行时提示按需手工接入。维护者选择所需资源和包边界，再从干净的扩展根走正常安装流程。[实例扩展迁移说明](MIGRATION.md#310-实例扩展按插件组织与手工接入)
 
 ## 验收边界与后续
 
@@ -31,7 +31,7 @@ Extension 1.0 继续兼容；选择 1.1 时须在 `provides.skills[]` 列全待�
 - G8 真实宿主语义验收仍待按 M6 契约提供材料并执行；临时 fixture 的 PASS 不替代这些证据。
 - Service 透镜、跨部件自动交接和真实多 CU 并发不在本版；3.2.0 已登记的后续 plan 保持原状态。
 
-## 本轮终验记录
+## 早期候选终验记录
 
 首轮已执行 `cd harness && npm test`：typecheck 通过、unit 4205/4205、fixtures 46/46；发布脚本测试当时为 29/29，计数修复后的最终结果为 30/30；default/release plan 门与独立 `npm run release:verify` 通过。
 

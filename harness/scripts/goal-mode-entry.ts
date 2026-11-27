@@ -75,6 +75,7 @@ import { relFeaturesDir } from '../config';
 import { executionCompletionPhases, executionScopeFingerprint, authorizedScopePhases } from './utils/execution-scope';
 import { featurePhasesFromWorkflow, resolveAutoChain } from './utils/phase-transition-policy';
 import { loadFeatureTrackDecl, prepareFeatureScopeCandidate, featureScopePhaseHealth } from './utils/feature-track';
+import { preparePhaseExtensionInputs } from './utils/extension-runtime';
 import { assembleKnowledge, renderKnowledge } from './utils/knowledge-context';
 import { readBoundInput } from './utils/capability-resolution';
 import { resolveBirthExecutionScope, registerFeatureScopeTransfer, resolveSuccessorExecutionScope } from './utils/feature-execution-scope';
@@ -1277,9 +1278,10 @@ async function main(): Promise<void> {
       process.exitCode = 1;
     }
     const requirement = resolveRequirementInput({ requirement: argv.requirement, requirementFile: argv['requirement-file'], projectRoot }).text;
+    const extensionBundle = preparePhaseExtensionInputs(projectRoot, frameworkRoot, prepared.scope.phase_chain, 'author');
     const knowledge = prepared.scope.phase_chain.map(phase => {
       const view = assembleKnowledge({ projectRoot, frameworkRoot, phase, subject: 'feature', role: 'author',
-        requirement, contracts });
+        requirement, contracts, extensionBundle });
       if (knowledgeBindingError) view.notices.unshift(knowledgeBindingError);
       return { phase, ...view, instructions: renderKnowledge(view) };
     });

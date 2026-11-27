@@ -1,6 +1,6 @@
 # Framework 可演进性与扩展分层
 
-本文描述 framework 的叠加扩展模型：在不引入插件运行时的前提下，如何用声明式 workflow、宿主 profile、IDE adapter 与实例侧 extension 接入业务知识与门禁。
+本文描述 framework 的叠加扩展模型：如何用声明式 workflow、宿主 profile、IDE adapter 与实例侧 extension 接入业务知识与门禁。
 
 模块级 **Code Graph** / 需求级 **flow DAG** 术语见 [code-graph.md](code-graph.md)。
 
@@ -41,12 +41,12 @@ flowchart TB
   end
 
   subgraph Ext["doc/extensions/ 实例业务扩展"]
-    extSkills["skills/custom/SKILL.md"]
-    extKnow["knowledge/*.md"]
-    extHooks["hooks/*/*.mjs|.md"]
-    extOver["phase-rules-overlays/"]
-    extCaps["capabilities/*.provider.ts"]
-    extMani["manifest.yaml"]
+    extSkills["<插件ID>/skills/custom/SKILL.md"]
+    extKnow["<插件ID>/knowledge/*.md"]
+    extHooks["<插件ID>/hooks/*.mjs|.md"]
+    extOver["<插件ID>/phase-rules-overlays/"]
+    extCaps["<插件ID>/capabilities/*.provider.ts"]
+    extMani["宿主 manifest.yaml 与各包 manifest.yaml"]
   end
 
   subgraph Agent["agents/adapter IDE 入口"]
@@ -71,7 +71,7 @@ flowchart TB
 | **framework 默认**（skills / specs / harness / templates / docs） | 通用阶段流程、YAML 规则、`check-*.ts`、共享模板 | 不写具体宿主编译命令细节（交给 profile）；不写业务名词规则（交给实例 catalog/glossary/extension） |
 | **profile**（`profiles/<name>/`） | 宿主 toolchain、capability provider、phase-rules overlay、Skill profile-addendum | 不写 IDE slash/跳板（交给 adapter）；不承担业务扩展包语义 |
 | **workflow**（`workflows/*.workflow.yaml`） | phase DAG、`requires`、可选裁剪/重排合法 phase | 不包含业务 Markdown SOP（交给 extension）；不替换 `check-*.ts` 实现 |
-| **instance extension**（`doc/extensions/`） | manifest、业务 SKILL、knowledge、hooks、可选 capability overlay、MCP action 产物契约与 Feature phase bindings | **不**修改 `framework/` 发布件；不装 MCP server、不存凭据；协议错误在 `--phase extensions` 暴露 |
+| **instance extension**（`doc/extensions/`） | manifest、业务 SKILL、knowledge、hooks、可选 capability overlay、MCP action 产物契约与版本化时点绑定 | **不**修改 `framework/` 发布件；不装 MCP server、不存凭据；协议错误在 `--phase extensions` 暴露 |
 | **adapter**（`agents/<adapter>/`） | 把 Skill/extension 暴露给 Claude/Cursor 等客户端 | 不承担 harness 规则；不写 phase 校验逻辑 |
 
 ---
@@ -97,16 +97,12 @@ flowchart TB
 扩展与工作流的契约定义于：
 
 - [`framework/specs/workflow-schema.json`](../../specs/workflow-schema.json) — workflow YAML 校验
-- [`framework/specs/instance-extension-manifest.schema.yaml`](../../specs/instance-extension-manifest.schema.yaml) — `doc/extensions/manifest.yaml`
+- [`framework/specs/instance-extension-manifest.schema.yaml`](../../specs/instance-extension-manifest.schema.yaml) — 宿主和插件清单
 - [`framework/specs/lifecycle-hooks-schema.yaml`](../../specs/lifecycle-hooks-schema.yaml) — lifecycle hook 事件与上下文
 
 字段、时点、动态启停和版本演进见 [Extension 接入协议](../evolution/extension-protocol-v1.md)。
 
-Manifest 1.1 由 [`/extension`](../../skills/project/extension/SKILL.md) 管理：`knowledge` 按 audience
-路由到 AGENTS.md 或 Feature phase `ai-prompt.md`，`mcp_actions` 只声明宿主执行与仓内
-`produces`，`phase_bindings` 只有三个 Feature phase 槽位。1.0 继续按旧六域读取且不产生上述新行为。
-phase 名从 active workflow 的 Feature scope 派生；manifest 或 `paths.extension_dir` 非法时，bridge、
-Feature harness 与 receipt 均 fail-closed，不回退为目录驱动。
+扩展根的宿主清单登记插件及团队选择。每个插件目录保存提供方清单和资源。用 [`/extension`](../../skills/project/extension/SKILL.md) 安装和管理，知识与动作由版本化绑定投递到项目入口、Feature、蓝图作者或 harness。需要本地产物时在正式消费前准备，失败只影响相关插件。MCP 声明由宿主执行，harness 核对仓内产物。旧平铺格式按需手工接入。[迁移说明](../../MIGRATION.md#310-实例扩展按插件组织与手工接入)
 
 ---
 

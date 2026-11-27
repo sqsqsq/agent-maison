@@ -4,7 +4,7 @@
 
 ## 1. 包怎么组织，每个字段写了会发生什么？
 
-带 `manifest.yaml` 的本地来源可以声明一个或多个能力。能力 ID 与绑定 ID 应随升级保持稳定。下面是随包可直接安装的 [design-notes](../operations/samples/design-notes/) 示例，含一条知识和一个作者动作。
+一个来源目录提供一个插件。插件 ID 与绑定 ID 应随升级保持稳定。安装后，扩展根的 `manifest.yaml` 记录宿主选择；每个 `<插件ID>/manifest.yaml` 保存同名插件的提供方声明。一个包可同时提供多个 Skill。下面是随包可直接安装的 [design-notes](../operations/samples/design-notes/) 示例，含一条知识和一个作者动作。
 
 ```text
 design-notes/
@@ -20,24 +20,24 @@ design-notes/
 `manifest.yaml`
 
 ```yaml
-schema_version: "2.1"
+schema_version: "2.0"
+kind: plugin
 name: design-notes
 version: "1.0.0"
 description: 设计前核对需求与待确认问题。
 provides:
   skills: [design-notes]
 bindings:
-  design-notes:
-    guide:
-      at: component-design.before_discovery@1
-      kind: knowledge
-      ref: knowledge/design-notes/guide.md
-      enabled_by_default: true
-    note:
-      at: component-design.before_discovery@1
-      kind: action
-      ref: design-notes
-      enabled_by_default: true
+  guide:
+    at: component-design.before_discovery@1
+    kind: knowledge
+    ref: knowledge/design-notes/guide.md
+    enabled_by_default: true
+  note:
+    at: component-design.before_discovery@1
+    kind: action
+    ref: design-notes
+    enabled_by_default: true
 ```
 
 `knowledge/design-notes/guide.md`
@@ -63,78 +63,76 @@ description: 在允许写入的蓝图目录中记录设计前核对结果。
 回读笔记，核对每条约束的来源位置及待确认问题所影响的设计决定。按实际结果在原作者交回中记录产物路径。缺少需求原件或写入授权时记录 `skipped` 及原因。
 ```
 
-清单相对路径使用扩展根，安装归属和 MCP 产物使用宿主工程根。使用 `/` 分隔各段，路径须在相应目录内。普通 Skill 及随附资源也可以直接交付，一个有有效 `SKILL.md` 的裸目录首次安装只公布手动入口。导入随附资源时跳过 `.git` 元数据。同一来源重装保留宿主已接受的声明。
+`ref` 文件、脚本、`cwd` 和 `outputs` 都以插件根为基准。`MAISON_EXTENSION_ROOT` 指向当前插件目录。宿主的导入指纹以插件相对路径记录，MCP 产物和显式项目级输出以宿主工程根为基准。路径使用 `/` 并须落在声明的边界内。普通 Skill 连同随附资源也可直接安装，裸来源根须有有效 `SKILL.md`，安装时生成包清单并公布手动入口。
 
-字段表由随包的 [扩展清单 schema](../../specs/instance-extension-manifest.schema.yaml) 生成。必填性针对所属条目，版本列给出字段起点。
+### 宿主清单
 
-<!-- BEGIN GENERATED manifest-fields -->
-| 字段路径 | 版本起点 | 填写方 | 必填 | 默认 | 运行效果 |
-| --- | --- | --- | --- | --- | --- |
-| `schema_version` | 1.0+ | 来源或宿主 | 是 | — | 选择字段的解析协议。动态步骤和宿主时点覆盖使用 2.1。 |
-| `name` | 1.0+ | 来源或宿主 | 是 | — | 声明来源身份。在 1.1 中须为小写 slug。 |
-| `version` | 1.0+ | 来源或宿主 | 可选 | — | 标明包版本，供管理端记录与核对重装、升级。 |
-| `description` | 1.0+ | 来源或宿主 | 可选 | — | 面向读者的能力简介，仅供说明。 |
-| `framework_compat` | 1.0+ | 来源或宿主 | 可选 | — | 以 semver 范围描述适用框架版本，仅供说明。 |
-| `provides` | 1.0+ | 来源或宿主 | 可选 | — | 声明手动技能及既有消费者可用的资源。 |
-| `provides.skills` | 1.0+ | 来源或宿主 | 可选 | — | 手动入口的逻辑 Skill ID，指向扩展根的 skills/<id>/SKILL.md，1.0 入口按目录发现。 |
-| `provides.knowledge` | 1.0+ | 来源或宿主 | 可选 | — | 1.0 字符串只登记文件。1.1 起，字符串进入所有 Feature 阶段的动态索引， 对象按 audience 投递。2.0 起可用 audience none 保留旧路径的登记。 |
-| `provides.knowledge[].path` | 1.1 | 来源或宿主 | 是 | — | 扩展根相对知识路径。 |
-| `provides.knowledge[].summary` | 1.1 | 来源或宿主 | audience 非 none 时必填 | — | 显示在投递索引中的摘要。 |
-| `provides.knowledge[].audience` | 1.1 | 来源或宿主 | 是 | — | global 进入项目入口，非空阶段数组进入对应 Feature 作者索引，none 仅保留文件登记（2.0 起）。 |
-| `provides.hooks` | 1.0+ | 来源或宿主 | 可选 | — | 兼容写法。按阶段和事件列出扩展根相对的 .md 或 .mjs，由原 harness 消费。 |
-| `provides.capabilities` | 1.0+ | 来源或宿主 | 可选 | — | 将键映射到原 harness capability registry 的本地 provider 和严重级别。 |
-| `provides.capabilities.<能力键>.provider` | 1.0+ | 来源或宿主 | 是 | — | 扩展根相对的 capability provider 路径。 |
-| `provides.capabilities.<能力键>.severity` | 1.0+ | 来源或宿主 | 是 | — | 原 capability 检查使用的严重级别。 |
-| `provides.phase_rules_overlays` | 1.0+ | 来源或宿主 | 可选 | — | 为指定阶段追加扩展根内的规则 YAML，由原规则合并器读取。 |
-| `provides.skill_assets` | 1.0+ | 来源或宿主 | 可选 | — | 按 Skill 与资源键指定扩展根相对路径，覆盖 profile 同键资源。 |
-| `provides.mcp_actions` | 1.1 | 来源或宿主 | 可选 | — | 供宿主角色调用的 MCP 工具与产物。连接与凭据由宿主管理。 |
-| `provides.mcp_actions.<动作ID>.tool` | 1.1 | 来源或宿主 | 是 | — | 宿主 agent 看到的工具 ID。 |
-| `provides.mcp_actions.<动作ID>.required` | 1.1 | 来源或宿主 | 是 | — | 声明当前消费者是否要求产物。 |
-| `provides.mcp_actions.<动作ID>.severity` | 1.1 | 来源或宿主 | 可选 | `"MAJOR"` | 所需产物不满足时原消费者使用的严重级别。 |
-| `provides.mcp_actions.<动作ID>.produces` | 1.1 | 来源或宿主 | 是 | — | 要核对的宿主工程根相对产物路径。 |
-| `provides.mcp_actions.<动作ID>.usage` | 1.1 | 来源或宿主 | 是 | — | 面向作者的工具用法说明。 |
-| `phase_bindings` | 1.1 | 来源或宿主 | 可选 | — | Feature 旧式绑定，按阶段和兼容槽位选择。可选槽位与消费约束见下文。 |
-| `phase_bindings.<阶段>.before_phase_work` | 1.1 | 来源或宿主 | 可选 | — | 动笔前将兼容资源交给 Feature 作者，原 checker 检查 MCP 声明产物。 |
-| `phase_bindings.<阶段>.before_phase_work[].kind` | 1.1 | 来源或宿主 | 是 | — | 兼容绑定资源类别。 |
-| `phase_bindings.<阶段>.before_phase_work[].ref` | 1.1 | 来源或宿主 | 是 | — | 对应的知识路径、Skill 或 MCP 动作 ID。 |
-| `phase_bindings.<阶段>.before_phase_verify` | 1.1 | 来源或宿主 | 可选 | — | 由原 Feature checker 核对 MCP 声明产物。 |
-| `phase_bindings.<阶段>.before_phase_verify[].kind` | 1.1 | 来源或宿主 | 是 | — | 兼容绑定资源类别。 |
-| `phase_bindings.<阶段>.before_phase_verify[].ref` | 1.1 | 来源或宿主 | 是 | — | 对应的知识路径、Skill 或 MCP 动作 ID。 |
-| `phase_bindings.<阶段>.after_phase_verify_before_close` | 1.1 | 来源或宿主 | 可选 | — | 由原收口检查核对 MCP 声明产物。 |
-| `phase_bindings.<阶段>.after_phase_verify_before_close[].kind` | 1.1 | 来源或宿主 | 是 | — | 兼容绑定资源类别。 |
-| `phase_bindings.<阶段>.after_phase_verify_before_close[].ref` | 1.1 | 来源或宿主 | 是 | — | 对应的知识路径、Skill 或 MCP 动作 ID。 |
-| `bindings` | 2.0 | 来源或宿主 | 可选 | — | 将能力 ID 和稳定绑定 ID 映射到一条自动投递声明。 |
-| `bindings.<能力ID>.<绑定ID>.at` | 2.0 | 来源或宿主 | 是 | — | 使用已发布且带版本的时点 ID，见时点表。 |
-| `bindings.<能力ID>.<绑定ID>.kind` | 2.0 | 来源或宿主 | 是 | — | 按时点选择知识或动作。 |
-| `bindings.<能力ID>.<绑定ID>.ref` | 2.0 | 来源或宿主 | 是 | — | 知识和生命周期 hook 使用扩展根相对路径。作者 Skill 或 checker MCP 贡献填对应的 ID。 |
-| `bindings.<能力ID>.<绑定ID>.phase` | 2.0 | 来源或宿主 | Feature、harness 时点必填，项目时点省略 | — | 选择当前 workflow 中有效的阶段。 |
-| `bindings.<能力ID>.<绑定ID>.enabled_by_default` | 2.0 | 来源或宿主 | 可选 | `false` | 成品包首装且启用整项时采用的自动绑定开关。 |
-| `bindings.<能力ID>.<绑定ID>.required` | 2.0 | 来源或宿主 | 可选 | `false` | 选择该绑定后资源不可用时，在实际消费者处报告依赖缺口。 |
-| `activation` | 2.1 | 来源或宿主 | 可选 | — | 能力启用的有序步骤。宿主也可在明确确认命令后维护同一声明。 |
-| `activation.<能力ID>.steps` | 2.1 | 来源或宿主 | 是 | — | 启用按顺序运行，退出按逆序撤回。所有步骤及生效资源通过校验后才开放调度。 |
-| `activation.<能力ID>.steps[].id` | 2.1 | 来源或宿主 | 是 | — | 同一能力内唯一的稳定步骤 ID。 |
-| `activation.<能力ID>.steps[].cwd` | 2.1 | 来源或宿主 | 是 | — | 扩展根相对工作目录，使用 skills/<能力ID> 或其子目录。 |
-| `activation.<能力ID>.steps[].run` | 2.1 | 来源或宿主 | 是 | — | 启用时运行的可执行程序及参数数组。 |
-| `activation.<能力ID>.steps[].outputs` | 2.1 | 来源或宿主 | 是 | — | 本步独占创建的扩展根相对文件或目录。没有文件产物时填空数组。 |
-| `activation.<能力ID>.steps[].undo` | 2.1 | 来源或宿主 | 产生非文件效果时必填 | — | 补偿或停用时运行的可重复命令，必须只撤销当前实例的效果。 |
-| `installations` | 2.0 | 宿主 | 可选 | — | 管理入口持久化的宿主选择、归属与实际启停结果，键为能力 ID。来源包的该字段不参与安装。 |
-| `installations.<能力ID>.source` | 2.0 | 宿主 | 是 | — | 能力的安装来源身份。 |
-| `installations.<能力ID>.version` | 2.0 | 宿主 | 可选 | — | 已导入来源包的版本。 |
-| `installations.<能力ID>.enabled` | 2.0 | 宿主 | 是 | — | 宿主整项开关，动态能力还需启用结果才能参与。 |
-| `installations.<能力ID>.bindings` | 2.0 | 宿主 | 是 | — | 各绑定的宿主开关，重装保留已有选择。 |
-| `installations.<能力ID>.files` | 2.0 | 宿主 | 是 | — | 导入副本的宿主根相对路径与 SHA-256，用于核对所有权。 |
-| `installations.<能力ID>.in_place` | 2.0 | 宿主 | 可选 | — | 原始文件在扩展目录就地管理，卸载时保留原件。 |
-| `installations.<能力ID>.binding_overrides` | 2.1 | 宿主 | 可选 | — | 按绑定 ID 保存宿主选择的时点，取代来源绑定的 at 和 phase。 |
-| `installations.<能力ID>.binding_overrides.<绑定ID>.at` | 2.1 | 宿主 | 是 | — | 校验通过的版本化时点 ID。 |
-| `installations.<能力ID>.binding_overrides.<绑定ID>.phase` | 2.1 | 宿主 | Feature、harness 时点必填，项目时点省略 | — | 当前 workflow 下选定的阶段。 |
-| `installations.<能力ID>.pending_cleanup` | 2.0 | 宿主 | 可选 | — | 已停止目标的新调度，等待当前请求交回或清理重试。由框架管理。 |
-| `installations.<能力ID>.pending_cleanup.operation` | 2.0 | 宿主 | 是 | — | 待完成的管理操作。 |
-| `installations.<能力ID>.pending_cleanup.binding` | 2.0 | 宿主 | 可选 | — | 单条待退出绑定，缺省为整项。 |
-| `installations.<能力ID>.pending_cleanup.command` | 2.0 | 宿主 | 是 | — | 待重试的原操作参数，从操作名开始。 |
-| `installations.<能力ID>.pending_cleanup.restore_enabled` | 2.0 | 宿主 | 可选 | — | 升级保留的原整项开关。 |
-| `installations.<能力ID>.pending_cleanup.replacement` | 2.0 | 宿主 | 可选 | — | 升级替换中的暂存定位和前后指纹，用于恢复尚未提交的文件替换。 |
-| `installations.<能力ID>.activation_result` | 2.1 | 宿主 | 可选 | — | 本次实例、输入指纹、步骤结果、生成指纹及失败或补偿残留，由框架管理。 |
-<!-- END GENERATED manifest-fields -->
+由管理入口生成和维护。空根的内容为 `schema_version: "2.0"`、`kind: host`、`plugins: {}`。表中记录安装来源、团队开关、绑定选择和导入文件归属。
+
+<!-- BEGIN GENERATED host-fields -->
+| 字段路径 | 必填 | 默认 | 运行效果 |
+| --- | --- | --- | --- |
+| `schema_version` | 是 | — | 宿主清单协议版本。 |
+| `kind` | 是 | — | 标记顶层安装登记。 |
+| `plugins` | 是 | — | 每个键对应同名插件目录。仅登记的包参与运行。 |
+| `plugins.<插件ID>.source` | 是 | — | 用于核对重装与升级的本地来源身份。 |
+| `plugins.<插件ID>.enabled` | 是 | — | 宿主的整包开关。 |
+| `plugins.<插件ID>.bindings` | 是 | — | 宿主对各绑定的开关。重装保留已有选择。 |
+| `plugins.<插件ID>.files` | 是 | — | 受管导入文件的插件相对路径与 SHA-256。退出时用于核对所有权。 |
+| `plugins.<插件ID>.in_place` | 可选 | — | 就地登记自有包。卸载时保留来源文件。 |
+| `plugins.<插件ID>.binding_overrides` | 可选 | — | 宿主保存的按绑定时点覆盖，取代提供方的 at 和 phase。 |
+| `plugins.<插件ID>.binding_overrides.<绑定ID>.at` | 是 | — | 校验通过的版本化时点 ID。 |
+| `plugins.<插件ID>.binding_overrides.<绑定ID>.phase` | Feature 和 harness 时点必填，项目时点省略 | — | 当前 workflow 中选定的阶段。 |
+<!-- END GENERATED host-fields -->
+
+### 插件清单
+
+提供方在包内维护 `kind: plugin` 清单。宿主自有包也用同一结构。字段表由 [扩展清单 schema](../../specs/instance-extension-manifest.schema.yaml) 生成。
+
+<!-- BEGIN GENERATED plugin-fields -->
+| 字段路径 | 必填 | 默认 | 运行效果 |
+| --- | --- | --- | --- |
+| `schema_version` | 是 | — | 提供方清单协议版本。 |
+| `kind` | 是 | — | 标记插件目录内的提供方声明。 |
+| `name` | 是 | — | 稳定的插件 ID。安装后与目录名及宿主登记键一致。 |
+| `version` | 是 | — | 由提供方维护的包版本，用于核对升级与本地产物就绪。 |
+| `description` | 可选 | — | 面向读者的能力简介。 |
+| `framework_compat` | 可选 | — | 向读者描述适用的框架版本范围。 |
+| `provides` | 可选 | — | 手动 Skill 及既有消费者可用的资源。 |
+| `provides.skills` | 可选 | — | 手动 Skill ID 列表。每项指向本包的 skills/<Skill ID>/SKILL.md。 |
+| `provides.mcp_actions` | 可选 | — | 声明宿主角色调用的 MCP 工具及产物。连接与凭据由宿主管理。 |
+| `provides.mcp_actions.<动作ID>.tool` | 是 | — | 宿主 agent 可见的工具 ID。 |
+| `provides.mcp_actions.<动作ID>.required` | 是 | — | 影响既有消费者是否要求产物。 |
+| `provides.mcp_actions.<动作ID>.severity` | 可选 | `"MAJOR"` | 所需产物缺失时由既有消费者使用的严重级别。 |
+| `provides.mcp_actions.<动作ID>.produces` | 是 | — | 要核对的宿主工程根相对产物路径。 |
+| `provides.mcp_actions.<动作ID>.usage` | 是 | — | 面向作者的工具使用说明。 |
+| `provides.capabilities` | 可选 | — | 将键映射到原 harness capability registry 的本地 provider 和严重级别。 |
+| `provides.capabilities.<能力键>.provider` | 是 | — | 插件根相对的 capability provider 路径。 |
+| `provides.capabilities.<能力键>.severity` | 是 | — | 原 capability 检查使用的严重级别。 |
+| `provides.phase_rules_overlays` | 可选 | — | 为指定阶段追加本包规则 YAML。值为插件根相对路径。 |
+| `provides.skill_assets` | 可选 | — | 按 Skill 与资源键指定插件根相对路径，覆盖 profile 同键资源。 |
+| `bindings` | 可选 | — | 稳定的绑定 ID 与其自动投递声明。 |
+| `bindings.<绑定ID>.at` | 是 | — | 使用时点表中已发布且带版本的 ID。 |
+| `bindings.<绑定ID>.phase` | Feature 和 harness 时点必填，项目时点省略 | — | 使用当前 workflow 中的有效阶段。 |
+| `bindings.<绑定ID>.kind` | 是 | — | 按时点选择知识或动作。 |
+| `bindings.<绑定ID>.ref` | 是 | — | 知识和 lifecycle hook 填插件根相对路径。作者 Skill 或 checker MCP 贡献填对应 ID。 |
+| `bindings.<绑定ID>.summary` | 可选 | — | 显示在知识索引中的摘要。 |
+| `bindings.<绑定ID>.enabled_by_default` | 可选 | `false` | 插件首装并启用时采用的绑定开关。 |
+| `bindings.<绑定ID>.required` | 可选 | `false` | 选中后资源不可用时，在实际消费者处报告依赖缺口。 |
+| `activation` | 可选 | — | 由提供方定义准备、显式启用和退出的步骤。 |
+| `activation.steps` | 是 | — | 启用按声明顺序运行，退出按逆序撤回。 |
+| `activation.steps[].id` | 是 | — | 插件内唯一的稳定步骤 ID。 |
+| `activation.steps[].cwd` | 是 | — | 插件相对工作目录。用 “.” 表示插件根。 |
+| `activation.steps[].run` | 是 | — | 可执行程序及参数数组。 |
+| `activation.steps[].scope` | 是 | — | local 是可重复生成的本机包内文件。repo 由维护者显式执行与退出，适用于共享文件或非文件效果。 |
+| `activation.steps[].outputs` | 是 | — | 本步独占的插件相对输出。local 必须声明输出，非文件效果填空数组。 |
+| `activation.steps[].ready` | 是 | — | 声明如何判断本工作区产物或效果已就绪。两种写法选一。 |
+| `activation.steps[].ready.version_file` | 与 check 二选一 | — | 插件相对 JSON 产物路径。指定版本字段的值须等于插件 version。 |
+| `activation.steps[].ready.version_field` | 可选 | `"plugin_version"` | 使用 version_file 时可选的顶层 JSON 键。 |
+| `activation.steps[].ready.check` | 与 version_file 二选一 | — | 只读检查程序及参数。退出码 0 表示当前版本所需效果已就绪。 |
+| `activation.steps[].project_outputs` | 仅 repo 可选 | — | 显式 repo 步骤管理的宿主工程相对输出，须位于扩展根以外。 |
+| `activation.steps[].undo` | repo 步骤必填 | — | 显式退出时运行的可重复命令，只撤销当前实例效果。 |
+<!-- END GENERATED plugin-fields -->
 
 ## 2. 能注入哪些时机？
 
@@ -143,6 +141,7 @@ description: 在允许写入的蓝图目录中记录设计前核对结果。
 <!-- BEGIN GENERATED supported-timings -->
 | 时点 ID | 实际触发时刻 | 范围与阶段 | 消费者 | 资源 |
 | --- | --- | --- | --- | --- |
+| `project.entry@1` | 物化项目入口时生成供项目维护者和作者阅读的随仓知识索引。 | 项目，省略 `phase` | AGENTS.md / CLAUDE.md | `knowledge_file` |
 | `feature.before_phase_work@1` | Feature 作者动笔前准备输入，已声明 MCP 的产物随后由原 harness 检查。 | Feature，填有效 `phase` | Feature 作者 / harness checker | `knowledge_file`、`skill`、`mcp` |
 | `feature.before_phase_verify@1` | 普通 Feature checker 运行前，由原 harness 检查 MCP 的声明产物。 | Feature，填有效 `phase` | Feature harness checker | `mcp` |
 | `feature.after_phase_verify_before_close@1` | Feature 检查后、收口前，由原 receipt gate 检查 MCP 的声明产物。 | Feature，填有效 `phase` | check-receipt | `mcp` |
@@ -157,7 +156,9 @@ description: 在允许写入的蓝图目录中记录设计前核对结果。
 | `harness.post_phase@1` | 检查末尾最后一个收尾事件，在报告落盘和判断是否签发验证请求之前。 | harness，填有效 `phase` | `hook_markdown`：本轮实际组装的 verifier 提示；`hook_script`：harness checker（脚本结果）；本轮实际组装的 verifier 提示（片段） | `hook_markdown`、`hook_script` |
 <!-- END GENERATED supported-timings -->
 
-表中的资源种类对应清单的 `kind` 和 `ref`。`knowledge_file` 与 `hook_markdown` 用 `kind: knowledge`，`ref` 填扩展根相对路径。`skill`、`mcp` 和 `hook_script` 用 `kind: action`，`ref` 分别填 Skill ID、MCP 动作 ID 或扩展根相对的 `.mjs` 路径。
+表中的资源种类对应清单的 `kind` 和 `ref`。`knowledge_file` 与 `hook_markdown` 用 `kind: knowledge`，`ref` 填插件根相对路径。`skill`、`mcp` 和 `hook_script` 用 `kind: action`，`ref` 分别填 Skill ID、MCP 动作 ID 或插件根相对的 `.mjs` 路径。
+
+`project.entry@1` 在入口物化时为已启用的静态知识生成可随仓阅读的项目相对链接。需要逐 clone 生成的本地产物可绑定到实际发出准备请求的消费者。
 
 普通检查末尾依次发出 `pre_verifier → on_context_load → post_verifier → post_phase`，随后才判断是否签发 verifier 请求。
 
@@ -170,7 +171,7 @@ description: 在允许写入的蓝图目录中记录设计前核对结果。
 在原作者交回中，每条实际参与的绑定各写一行，行首用 `extension-result:`，后接 JSON 对象。正文中的代码块展示两行原始内容，实际回执不加代码围栏或项目符号。
 
 ```text
-extension-result: {"ability":"design-notes","binding":"guide","status":"read","artifacts":["doc/extensions/knowledge/design-notes/guide.md"],"reason":"已读取指南。"}
+extension-result: {"ability":"design-notes","binding":"guide","status":"read","artifacts":["doc/extensions/design-notes/knowledge/design-notes/guide.md"],"reason":"已读取指南。"}
 extension-result: {"ability":"design-notes","binding":"note","status":"generated","artifacts":["doc/features/demo/blueprint/notes.md"],"reason":"已写入并回读本次核对记录。"}
 ```
 
@@ -180,46 +181,56 @@ extension-result: {"ability":"design-notes","binding":"note","status":"generated
 
 | 宿主管理命令 | 实际效果 |
 | --- | --- |
-| `install <本地目录> [能力ID]` | 校验并导入成品包，首装按来源默认选择执行整项启用。裸 Skill 首装公布手动入口。加 `--no-enable` 先安装并暂缓启用。 |
-| `enable <能力ID> [绑定ID]` | 整项启用按顺序完成步骤并确认效果，再公布入口和选定绑定。指定绑定时保存单条选择，整项已关闭时仍需另行启用整项。已有完好效果会复用。 |
-| `disable <能力ID> [绑定ID]` | 关闭目标的新调度。整项同时撤下手动入口并逆序退出自有效果，单条保留其他选择与共用依赖。 |
-| `install <同一来源>` | 同版同内容保留选择并复用。替换版本前先预检，再退出旧能力、替换安装资源并启用新版。原来已停用的能力继续停用，新增自动绑定等待选择。 |
-| `uninstall <能力ID>` | 先关闭新调度并退出自有效果，再按指纹和归属清理独占安装副本与生成入口。宿主改写、来源原件、共享资源和已交付业务产物保留。 |
+| `install <本地目录> [插件ID]` | 校验来源包并导入同名插件目录。首装按提供方默认选择启用，裸 Skill 首装公布手动入口。加 `--no-enable` 暂缓启用。 |
+| `enable <插件ID> [绑定ID]` | 整包启用按步骤确认效果，再公布入口和选定绑定。指定绑定时保存单条选择，整包关闭时需另行启用整包。 |
+| `disable <插件ID> [绑定ID]` | 停止目标的新投递。整包撤下手动入口并按逆序退出，单条保留其他选择及共用依赖。 |
+| `install <同一来源>` | 同版本、同内容复用并保留选择。同版本来源内容变化时先由提供方升版。升版先预检和退出旧效果，再替换并按原整包开关启用，新绑定等待宿主选择。 |
+| `uninstall <插件ID>` | 停止新投递并退出，按归属和指纹清理受管副本及入口。宿主改写、自有来源及已交付业务产物保留。 |
+| `inspect [插件ID]` | 查看团队选择、磁盘就绪、在途占用和请求证据。此操作可清理已删除包的本地残留。 |
 
-受管作者仍占用原签发资源时，相关停用、卸载或升级会返回请求 ID 和待清理状态，原资源仍可用。交回后重试回执里的同一命令；清理成功后才完成退出。已结束或锁失效的请求仅提示，直接会话沿现有非受管边界。待清理期间可用 `inspect` 查看当前占用。安装新版记录提交前的替换失败会尝试恢复旧版；提交后启用失败时保留新版安装，撤回此次启用效果。
+受管作者仍占用原签发资源时，停用、卸载或升级返回请求 ID 和待清理状态，原资源保留到交回。交回后重试回执中的原命令。安装新版记录提交前的替换失败会尝试恢复旧版，提交后启用失败时保留新版并报告原因。
 
-### 声明动态步骤
+### 逐 clone 的本地准备
 
-动态步骤用清单 `2.1` 的 `activation.<能力ID>.steps`。例如，若要让上面示例从 `skills/design-notes/material.md` 生成指南，把原有 `guide.md` 内容移入该原料，并加入以下声明。
+把可重建的专属文件声明为 `scope: local`。以下示例将指南原文移入 `skills/design-notes/material.md`，生成格式为 JSON 的指南，把示例 `guide` 绑定的 `ref` 同步改为 `knowledge/index.json`。
 
 ```yaml
 activation:
-  design-notes:
-    steps:
-      - id: build-guide
-        cwd: skills/design-notes
-        run: [node, build-guide.mjs]
-        outputs: [knowledge/design-notes/guide.md]
+  steps:
+    - id: build-guide
+      cwd: skills/design-notes
+      scope: local
+      run: [node, build-guide.mjs]
+      outputs: [knowledge/index.json]
+      ready:
+        version_file: knowledge/index.json
 ```
 
 把脚本存成 `skills/design-notes/build-guide.mjs`。
 
 ```javascript
-import { copyFileSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-const guide = join(process.env.MAISON_EXTENSION_ROOT, 'knowledge/design-notes/guide.md');
-mkdirSync(dirname(guide), { recursive: true });
-copyFileSync('material.md', guide);
+const root = process.env.MAISON_EXTENSION_ROOT;
+mkdirSync(join(root, 'knowledge'), { recursive: true });
+writeFileSync(join(root, 'knowledge/index.json'), JSON.stringify({
+  plugin_version: process.env.MAISON_EXTENSION_VERSION,
+  guide: readFileSync('material.md', 'utf8'),
+}, null, 2));
 ```
 
-命令使用明确的程序和参数数组。工作目录在 `skills/<能力ID>` 树中，输出声明为该能力独占的 `skills/<能力ID>/` 或 `knowledge/<能力ID>/` 中的文件或目录。安装时可引用尚待生成的声明输出。步骤成功且实际引用可解析后才投递。脚本可用 `MAISON_EXTENSION_ROOT` 定位扩展工作根，用 `MAISON_EXTENSION_PROJECT_ROOT` 定位宿主工程，用 `MAISON_EXTENSION_INSTANCE_ID` 标记本次启用实例。生成物不随包带入。
+正式请求在交给消费者前核对本次选中的插件。所有必需产物存在且就绪时复用；缺失、同名旧版或缺少版本依据时，清理该步独占的本地产物、执行声明并复查。同一工作区的准备共用并发保护。步骤失败时，本次相关插件停止投递，其他插件继续，后续请求可再试。团队开关维持原选择。
 
-使用 npm 时，随包提供包清单、锁文件和需要的安装源，在能力自身目录执行 `npm ci --cache ./.npm-cache`，在 `outputs` 列出专属依赖目录和缓存目录。需要登记等非文件效果时，预备可重复执行的 `undo` 命令，按实例 ID 只撤销对应记录。只读校验可声明空 `outputs`。保留退出所需的源脚本，并将生成物单独列在 `outputs` 中。
+`ready.version_file` 读取插件相对 JSON 文件。顶层版本字段应在完整生成成功后写入，值须匹配插件清单中的 `version`。默认字段为 `plugin_version`。已有索引使用其他键时，例如 `generatedByVersion`，可声明 `ready: { version_file: knowledge/index.json, version_field: generatedByVersion }`。
 
-正式包的命令将于运行前展示，包括能力、版本、实际工作目录、按序命令和声明产物。JSON 模式预告在 stderr，stdout 留给最终回执。维护者通过管理入口授权成品包启用。由描述提议出的命令须先展示具体 `run`、`undo`、参数、工作目录和产物并取得用户明确确认，之后才写入清单并启用。未确认时保留手动入口。受管后台作者可检视和校验，由宿主管理入口执行任何持久开关和命令。
+也可用 `ready.check` 声明只读的程序和参数数组，退出码 0 表示当前所需产物就绪。比如 npm 的本机依赖按锁文件和安装结果检查，`npm ci --cache ./.npm-cache` 步骤在 `outputs` 中列出工作目录的 `node_modules` 和 `.npm-cache`。纯静态资源引用已随包提供的原件。
 
-框架在每步前后比较受管项目路径，校验写入落在能力私有目录及声明输出内。项目快照沿用排除项，包括 `node_modules` 和部分构建目录。声明依赖树仍由管理操作核验。项目外写入超出快照覆盖范围。步骤失败时先补偿失败步骤，再逆序撤回前序效果。把独占生成物声明为 `outputs`，框架可按生成指纹撤回。对越界新增的普通文件，命令可在独占创建后输出一行 `extension-created: {"path":"项目相对路径","postSha256":"文件SHA-256","instance_id":"本次实例ID"}`。只有快照核实步前不存在且文件内容仍匹配时，框架才清理该新增文件。对已存在文件的越界改写或删除，回执给出路径、变更和步前指纹，维护者可据此从版本库或副本恢复。宿主改写、归属不明或待补偿的残留会保留并报告。
+### 显式效果与 Git 归属
+
+维护者通过安装和启用入口授权成品包。命令运行前会展示步骤，JSON 模式将预告写到 stderr。涉及共享文件、非文件或项目级效果时，用 `scope: repo`，提供就绪检查以及只撤销当前实例效果的可重复 `undo`。包内输出用 `outputs`，扩展根外的项目相对输出用 `project_outputs`。这些效果由维护者显式执行和退出。脚本可用 `MAISON_EXTENSION_PROJECT_ROOT` 和 `MAISON_EXTENSION_INSTANCE_ID` 定位其宿主及实例。由裸 Skill 描述提议的命令需先展示参数、工作目录、产物及退出方式，得到对具体提议的确认后写入清单并启用。
+
+提交宿主登记、插件清单、源文件、锁文件、共享产物和扩展根 `.gitignore`。管理入口维护忽略文件的框架段，宿主可保留自己的规则。已跟踪文件、来源和宿主手工资料受保护。其他 clone 拉到整包停用后，下次正式准备会撤下无在途占用的受管本地产物。插件被删除后，本地产物仍受忽略。已删除包只剩可识别的受管忽略文件时，下次管理操作（含查看）或正式准备请求会清理目录并报告结果。含跟踪文件、手工资料、宿主改写或有效在途引用的目录保留。
 
 ## 5. 怎么自己验证？
 
@@ -241,15 +252,10 @@ npx ts-node scripts/extension.ts disable design-notes --project-root "<宿主根
 npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint demo --requirement-source design-notes-requirement.md --prepare-design --json
 ```
 
-再次准备应撤下两条绑定，旧笔记仍在。动态版本还可在启用后移走一份本次生成物，并用 `inspect` 确认漂移、受影响绑定和修复入口。只读 `verify` 也会报告漂移。产物缺失时可运行 `enable` 恢复。发现内容改写或无法核实时，保留现有文件，由维护者核对冲突。有待清理操作时，先按回执重试原命令。检视分别呈现支持时点、宿主当前选择和请求证据。`available`、`scheduled` 和 `evidenced` 分别表示资源可用、配置已调度和已有实际证据。
+再次准备应撤下两条绑定，旧笔记仍在。动态版本可以移走一份本地产物，再发一次正式准备请求核对是否恢复。只读校验报告当前状态，查看还可报告残留目录清理。检视中的 `available`、`scheduled` 和 `evidenced` 分别表示资源可用、配置已调度和已有实际证据。
 
-## 版本史
+## 版本与存量接入
 
-扩展清单、workflow DAG 和 lifecycle hooks 的 `schema_version` 独立演进。框架 3.1.0 发布件继续读取以下扩展清单版本。
+框架 3.1.0 使用按包的 `schema_version: "2.0"`，宿主和插件分别用 `kind: host` 与 `kind: plugin`。扩展清单、workflow DAG 和 lifecycle hooks 的版本各自演进。3.0.0 的平铺 1.0 以及早期内测清单遇到新发布件时提示按需手工接入。维护者自行选择存量资源的插件边界，按 [迁移说明](../../MIGRATION.md) 留存旧入口资料并建立新根。
 
-- **1.0** 按目录发现 Skill，知识字符串仅保留文件索引。
-- **1.1** 按 `provides.skills` 物化入口，知识按 audience 投递，并支持 `provides.mcp_actions` 和三个 Feature 槽位。字符串知识进入各 Feature 阶段索引。
-- **2.0** 加入带时点的独立绑定及宿主安装选择，保留原有知识、hooks、MCP 和规则的兼容消费者。新宿主骨架沿用 2.0。
-- **2.1** 增加可撤回启用、宿主绑定覆盖和启用结果。旧静态扩展无需补步骤。目标发布件须支持相应格式才导入或写入新版能力。宿主选择、原有手写资料和已签发请求继续有效。
-
-[管理 Skill](../../skills/project/extension/SKILL.md) · [迁移说明](../../MIGRATION.md) · [扩展概念](../concepts/extensibility.md)
+[管理 Skill](../../skills/project/extension/SKILL.md) · [扩展概念](../concepts/extensibility.md)

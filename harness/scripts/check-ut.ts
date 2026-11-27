@@ -165,7 +165,8 @@ function utSuggestionPaths(ctx: CheckContext): {
   branchExampleTestRel: string;
 } {
   const profileName = ctx.resolvedProfile?.name ?? loadFrameworkConfig(ctx.projectRoot).project_profile.name;
-  const rel = (key: UtTemplateKey): string => resolveUtTemplateRef(ctx.projectRoot, profileName, key).rel;
+  const extensionAssets = ctx.resolvedProfile?.extensionBundle?.skillAssetAbsPaths;
+  const rel = (key: UtTemplateKey): string => resolveUtTemplateRef(ctx.projectRoot, profileName, key, extensionAssets).rel;
   return {
     useCasesSchemaTemplateRel: rel('use_cases_schema'),
     mockPlanSchemaTemplateRel: rel('mock_plan_schema'),

@@ -100,7 +100,7 @@
 
 **作者与verifier职责**：原单元专用作者接收完整当前反馈；独核只消费真实request/material，保完整拒修论据、原报告与受影响diff，不能自写产品或自签PASS。主会话只接入/观察/呈现，不代施工、不重复派独核。
 
-**实例扩展与生命周期钩子**：允许在不改 `framework/` 前提下挂业务 Skill/知识/phase 钩子，落点 `doc/extensions/`（`paths.extension_dir` 可覆盖）。触发询问时机与协议 SSOT 见 reference。
+**实例扩展与生命周期钩子**：通过 `/extension` 安装和管理业务 Skill、知识与阶段钩子。各插件位于 `doc/extensions/<插件ID>/`，宿主选择记录在扩展根的 `manifest.yaml`（由 `paths.extension_dir` 配置）。协议见 reference。
 
 ## 五、当前事实与完成判定
 

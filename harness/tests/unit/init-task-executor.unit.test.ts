@@ -1,3 +1,4 @@
+import { putPlugin } from './extension-test-fixture';
 import { beginUnitCase, discoveryResult } from '../utils/unit-cases';
 // init-task-executor.unit.test.ts
 
@@ -963,11 +964,8 @@ const cases: Array<{ name: string; run: () => void }> = [
       const root = mkTmp();
       const layout = detectRepoLayout(path.join(__dirname, '../..'));
       const skillSlug = 'wallet-sdk-onboarding';
-      fs.mkdirSync(path.join(root, 'doc', 'extensions', 'skills', skillSlug), { recursive: true });
-      fs.writeFileSync(
-        path.join(root, 'doc', 'extensions', 'skills', skillSlug, 'SKILL.md'),
-        '# Demo extension skill\n',
-      );
+      putPlugin(root, 'wallet-kit', { declaration: { provides: { skills: [skillSlug] } },
+        files: { [`skills/${skillSlug}/SKILL.md`]: '# Demo extension skill\n' } });
       fs.writeFileSync(
         path.join(root, 'framework.config.json'),
         JSON.stringify(

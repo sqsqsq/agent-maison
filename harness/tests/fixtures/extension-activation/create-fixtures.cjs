@@ -8,6 +8,7 @@ const k = 'activation-knowledge';
 const n = 'activation-npm';
 const dependency = 'maison-activation-fixture';
 const guide = `knowledge/${k}/guide.md`;
+const index = `knowledge/${k}/index.json`;
 const packageRoot = id => `skills/${id}`;
 const at = 'component-design.before_discovery@1';
 
@@ -32,11 +33,11 @@ function createFixtures(dest, { version = '1', includeNpm = true } = {}) {
   const log = path.join(dest, 'steps.jsonl');
   if (!fs.existsSync(kv)) write(dest, 'kv.json', { control: 'keep' });
   write(knowledge, 'manifest.yaml', {
-    schema_version: '2.1', name: k, provides: { skills: [k] },
-    bindings: { [k]: { guide: { at: 'feature.before_phase_work@1', phase: 'coding',
-      kind: 'knowledge', ref: guide, enabled_by_default: true } } },
-    activation: { [k]: { steps: [{ id: 'build-guide', cwd: packageRoot(k),
-      run: ['node', 'scripts/build.cjs'], outputs: [guide] }] } },
+    schema_version: '2.0', kind: 'plugin', name: k, version, provides: { skills: [k] },
+    bindings: { guide: { at: 'feature.before_phase_work@1', phase: 'coding',
+      kind: 'knowledge', ref: guide, enabled_by_default: true } },
+    activation: { steps: [{ id: 'build-guide', cwd: packageRoot(k), scope: 'local',
+      run: ['node', 'scripts/build.cjs'], outputs: [guide, index], ready: { version_file: index } }] },
   });
   write(knowledge, `${packageRoot(k)}/SKILL.md`, `---\nname: ${k}\ndescription: Verify generated host knowledge.\n---\nUse the generated guide.\n`);
   write(knowledge, `${packageRoot(k)}/material.md`, `# Generated host guide v${version}\n\nConfirm wallet history before approving changes.\n`);
@@ -44,6 +45,8 @@ function createFixtures(dest, { version = '1', includeNpm = true } = {}) {
 const out = path.join(process.env.MAISON_EXTENSION_ROOT, ${JSON.stringify(guide)});
 fs.mkdirSync(path.dirname(out), { recursive: true });
 fs.copyFileSync('material.md', out);
+fs.writeFileSync(path.join(process.env.MAISON_EXTENSION_ROOT, ${JSON.stringify(index)}),
+  JSON.stringify({ plugin_version: process.env.MAISON_EXTENSION_VERSION }));
 record('build-guide');
 const neighbor = process.env.MAISON_TEST_NEIGHBOR_DIR;
 if (neighbor) {
@@ -82,15 +85,16 @@ if (process.env.MAISON_TEST_FAIL_K === '1') process.exitCode = 31;
     packages: { '': packageJson, [`node_modules/${dependency}`]: { version: depVersion, resolved: dependencySpecifier, integrity } },
   });
   write(npm, 'manifest.yaml', {
-    schema_version: '2.1', name: n, provides: { skills: [n] },
-    bindings: { [n]: { action: { at, kind: 'action', ref: n, enabled_by_default: true } } },
-    activation: { [n]: { steps: [
-      { id: 'install-dependencies', cwd: packageRoot(n), run: ['npm', 'ci', '--cache', './.npm-cache', '--offline', '--no-audit', '--no-fund'],
-        outputs: [`${packageRoot(n)}/node_modules`, `${packageRoot(n)}/.npm-cache`] },
-      { id: 'register', cwd: packageRoot(n), run: ['node', 'scripts/kv.cjs', 'register'],
-        undo: ['node', 'scripts/kv.cjs', 'unregister'], outputs: [] },
-      { id: 'verify', cwd: packageRoot(n), run: ['node', 'scripts/use.cjs'], outputs: [] },
-    ] } },
+    schema_version: '2.0', kind: 'plugin', name: n, version, provides: { skills: [n] },
+    bindings: { action: { at, kind: 'action', ref: n, enabled_by_default: true } },
+    activation: { steps: [
+      { id: 'install-dependencies', cwd: packageRoot(n), scope: 'local',
+        run: ['npm', 'ci', '--cache', './.npm-cache', '--offline', '--no-audit', '--no-fund'],
+        outputs: [`${packageRoot(n)}/node_modules`, `${packageRoot(n)}/.npm-cache`],
+        ready: { check: ['node', 'scripts/use.cjs'] } },
+      { id: 'register', cwd: packageRoot(n), scope: 'repo', run: ['node', 'scripts/kv.cjs', 'register'],
+        undo: ['node', 'scripts/kv.cjs', 'unregister'], outputs: [], ready: { check: ['node', 'scripts/kv.cjs', 'verify'] } },
+    ] },
   });
   write(pkg, 'SKILL.md', `---\nname: ${n}\ndescription: Run the installed npm test action.\n---\nRun node scripts/use.cjs and report the wallet result.\n`);
   write(pkg, 'scripts/kv.cjs', logging + `
@@ -98,6 +102,7 @@ const file = process.env.MAISON_TEST_KV_PATH;
 if (!file || !instance) throw new Error('Missing test registration context');
 const rows = JSON.parse(fs.readFileSync(file, 'utf8'));
 const mode = process.argv[2];
+if (mode === 'verify') process.exit(rows[instance] === 'test-v${version}' ? 0 : 1);
 record(mode);
 if (mode === 'register') rows[instance] = 'test-v${version}';
 else if (mode === 'unregister') {
@@ -114,8 +119,7 @@ assert.equal(require.resolve(moduleId), local);
 const answer = require(moduleId)('check');
 assert.equal(answer, 'wallet-v${version}:check');
 console.log(JSON.stringify({ answer, modulePath: local }));
-if (instance) record('verify');
-if (process.env.MAISON_TEST_FAIL_N === '1') process.exitCode = 33;
+
 `);
   return { knowledge, npm, kv, log };
 }

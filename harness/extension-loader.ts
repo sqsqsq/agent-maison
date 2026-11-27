@@ -1,14 +1,4 @@
-// ============================================================================
-// Instance extension loader — doc/extensions/manifest.yaml
-// ============================================================================
-//
-// 无 manifest / 无目录 → 空 bundle（零副作用）。
-// 根不可用时不加载任何贡献，条目错误仅隔离对应贡献。
-//
-// ============================================================================
-
 import * as fs from 'fs';
-import { createHash } from 'crypto';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import type {
@@ -18,27 +8,25 @@ import type {
   ExtensionBinding,
   ExtensionBindingTiming,
   ExtensionBundle,
-  ExtensionInstallationSelection,
-  ExtensionPendingCleanup,
+  ExtensionPlugin,
   ExtensionValidationError,
-  ExtensionKnowledgeEntry,
   ExtensionMcpAction,
-  ExtensionPhaseBinding,
-  ExtensionPhaseBindingSlot,
 } from './scripts/utils/types';
 import { normalizeCapabilityKey, normalizeCapabilitiesMap } from './scripts/utils/capability-alias';
+import { ordinaryFile, ordinaryPath } from './scripts/utils/extension-files';
 import { normalizePhaseId } from './scripts/utils/phase-alias';
-import { realProjectPath, validateProjectRelativePath } from './scripts/utils/project-relative-path';
+import { isInsideProjectRoot, realProjectPath, validateProjectRelativePath } from './scripts/utils/project-relative-path';
 import { loadFrameworkConfig } from './config';
 import { listWorkflowPhases, resolveWorkflowSpec } from './workflow-loader';
 import { workflowFeaturePhases } from './scripts/utils/runtime-policy';
-import { isExtensionActivationOutput, parseExtensionActivation, parseExtensionActivationResult } from './scripts/utils/extension-activation-contract';
+import { isExtensionActivationOutput, parseExtensionActivation } from './scripts/utils/extension-activation-contract';
 
 export type { ExtensionBundle } from './scripts/utils/types';
 
 const SEVERITY_SET = new Set<CapabilitySeverityKeyword>(['BLOCKER', 'SKIP', 'WARN', 'MAJOR', 'MINOR']);
 const ACTION_SEVERITY_SET = new Set(['MAJOR', 'BLOCKER']);
 const SAFE_ID = /^[a-z][a-z0-9_-]*$/;
+const SHA256 = /^[a-f0-9]{64}$/;
 const SAFE_SKILL = /^[a-zA-Z0-9_-]+$/;
 const FRAMEWORK_ROOT = path.resolve(__dirname, '..');
 
@@ -50,7 +38,6 @@ export interface ExtensionTiming {
   resources: TimingResource[];
   consumer?: string;
   consumers?: Partial<Record<TimingResource, string>>;
-  slot?: ExtensionPhaseBindingSlot;
   event?: string;
 }
 
@@ -60,7 +47,7 @@ export function readExtensionTimings(frameworkRoot = FRAMEWORK_ROOT): Map<string
     schema_version?: string;
     hook_events: Array<{ id: string; version: number; description: string }>;
     hook_contributions: Pick<ExtensionTiming, 'scope' | 'resources' | 'consumers'>;
-    contribution_timings: Array<ExtensionTiming & { legacy_slot?: ExtensionPhaseBindingSlot }>;
+    contribution_timings: ExtensionTiming[];
   };
   const invalid = () => new Error(`无法读取时点协议 ${file}（需要完整的 lifecycle-hooks schema_version 1.0）`);
   if (schema?.schema_version !== '1.0' || !Array.isArray(schema.hook_events)
@@ -80,863 +67,433 @@ export function readExtensionTimings(frameworkRoot = FRAMEWORK_ROOT): Map<string
     const id = `harness.${hook.id}@${hook.version}`;
     register({ ...schema.hook_contributions, id, event: hook.id, description: hook.description });
   }
-  for (const timing of schema.contribution_timings) {
-    register({ ...timing, slot: timing?.legacy_slot });
-  }
+  for (const timing of schema.contribution_timings) register(timing);
   return timings;
 }
 
+
+type LoadOptions = {
+  frameworkRoot?: string;
+  manifestRaw?: unknown;
+  excludedPlugins?: ReadonlyMap<string, string>;
+};
+
+const dict = <T>(): Record<string, T> => Object.create(null) as Record<string, T>;
+const has = (record: object, key: string): boolean => Object.prototype.hasOwnProperty.call(record, key);
+const own = <T>(record: Record<string, T>, key: string): T | undefined => has(record, key) ? record[key] : undefined;
+const isRecord = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+const unknownKeys = (value: Record<string, unknown>, allowed: readonly string[]): string[] =>
+  Object.keys(value).filter(key => !allowed.includes(key));
+const optionalString = (value: unknown): string | undefined => typeof value === 'string' && value.trim() ? value.trim() : undefined;
 
 function emptyBundle(rootDir: string | null): ExtensionBundle {
   return {
     rootDir,
     manifestPath: null,
     manifestVersion: null,
-    manifestName: null,
     manifestUsable: true,
     bindings: [],
-    activations: Object.create(null) as ExtensionBundle['activations'],
-    installations: Object.create(null) as ExtensionBundle['installations'],
+    activations: dict(),
+    plugins: dict(),
     featurePhases: [],
-    declaredSkills: [],
-    skills: [],
-    knowledgePaths: [],
-    knowledge: [],
-    mcpActions: Object.create(null) as ExtensionBundle['mcpActions'],
-    phaseBindings: {},
-    hooks: {},
-    extensionCapabilities: {},
-    phaseRuleOverlayPaths: {},
-    skillAssetAbsPaths: {},
+    manualSkills: [],
+    extensionCapabilities: dict(),
+    phaseRuleOverlayPaths: dict(),
+    skillAssetAbsPaths: dict(),
     errors: [],
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+function diagnostic(code: string, message: string, file?: string): ExtensionValidationError {
+  return { severity: 'MAJOR', code, message, path: file };
 }
 
-function safeResolve(extRoot: string, rel: string): string {
-  const safe = validateProjectRelativePath(extRoot, rel.trim().replace(/^\.\/+/, ''), 'extension 引用');
-  return realProjectPath(extRoot, safe, 'extension 引用');
+function safeResolve(root: string, relative: string): string {
+  return realProjectPath(root, relative.trim(), 'extension 引用');
 }
 
-function safeResolveProject(projectRoot: string, rel: string): string {
-  return realProjectPath(projectRoot, rel, 'mcp_actions.produces');
-}
-
-function unknownKeys(value: Record<string, unknown>, allowed: readonly string[]): string[] {
-  const set = new Set(allowed);
-  return Object.keys(value).filter(key => !set.has(key));
-}
-
-function pushError(bundle: ExtensionBundle, code: string, message: string, p?: string,
-  identity?: Pick<ExtensionValidationError, 'source' | 'ability' | 'bindingId' | 'at'>): void {
-  bundle.errors.push({ severity: 'MAJOR', code, message, path: p, ...identity });
-}
-
-function rejectManifest(bundle: ExtensionBundle): ExtensionBundle {
-  bundle.manifestUsable = false;
-  return bundle;
-}
-
-function isFile(file: string): boolean {
-  return fs.statSync(file, { throwIfNoEntry: false })?.isFile() ?? false;
-}
-
-function legacyBindingId(domain: 'phase' | 'hook', ...parts: string[]): string {
-  return `${domain}-${createHash('sha256').update(JSON.stringify(parts)).digest('hex').slice(0, 16)}`;
-}
-
-function hookResource(ref: string): 'hook_markdown' | 'hook_script' | undefined {
-  const ext = path.extname(ref).toLowerCase();
-  return ext === '.md' ? 'hook_markdown' : ext === '.mjs' ? 'hook_script' : undefined;
-}
-
-function nativeTimingResource(timing: ExtensionTiming | undefined, kind: ExtensionBinding['kind'],
-  ref: string, rawMcpActions: unknown): TimingResource | undefined {
-  if (timing?.event) {
-    const resource = hookResource(ref);
-    return kind === 'knowledge' && resource === 'hook_markdown' || kind === 'action' && resource === 'hook_script'
-      ? resource : undefined;
-  }
-  if (kind === 'knowledge') return 'knowledge_file';
-  if (kind !== 'action') return undefined;
-  if (timing?.resources.includes('mcp') && (!timing.resources.includes('skill')
-    || isRecord(rawMcpActions) && Object.prototype.hasOwnProperty.call(rawMcpActions, ref))) return 'mcp';
-  return 'skill';
-}
-
-function own<T>(record: Record<string, T> | undefined, key: string): T | undefined {
-  return record && Object.prototype.hasOwnProperty.call(record, key) ? record[key] : undefined;
+function existingFile(root: string, relative: string): string {
+  const abs = safeResolve(root, relative);
+  if (!fs.statSync(abs, { throwIfNoEntry: false })?.isFile()) throw new Error(`引用文件不可用：${relative}`);
+  return abs;
 }
 
 function bindingTiming(raw: unknown): ExtensionBindingTiming | undefined {
-  if (!isRecord(raw) || typeof raw.at !== 'string' || !raw.at.trim()
-    || raw.phase !== undefined && (typeof raw.phase !== 'string' || !raw.phase.trim())
-    || unknownKeys(raw, ['at', 'phase']).length) return undefined;
-  return typeof raw.phase === 'string' ? { at: raw.at.trim(), phase: raw.phase.trim() } : { at: raw.at.trim() };
+  if (!isRecord(raw) || unknownKeys(raw, ['at', 'phase']).length) return undefined;
+  const at = optionalString(raw.at);
+  const phase = optionalString(raw.phase);
+  if (!at || raw.phase !== undefined && !phase) return undefined;
+  return phase ? { at, phase } : { at };
 }
 
-function pendingCleanup(raw: unknown): ExtensionPendingCleanup | undefined {
-  if (!isRecord(raw) || (raw.operation !== 'disable' && raw.operation !== 'uninstall' && raw.operation !== 'install')
-    || raw.binding !== undefined && (typeof raw.binding !== 'string' || !SAFE_ID.test(raw.binding))
-    || raw.restore_enabled !== undefined && typeof raw.restore_enabled !== 'boolean'
-    || !Array.isArray(raw.command) || raw.command[0] !== raw.operation || !raw.command.every(arg => typeof arg === 'string')
-    || unknownKeys(raw, ['operation', 'binding', 'command', 'restore_enabled', 'replacement']).length) return undefined;
-  if (raw.replacement !== undefined) {
-    const replacement = raw.replacement;
-    const validHash = (hash: unknown) => typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash);
-    if (raw.operation !== 'install' || !isRecord(replacement) || typeof replacement.stage !== 'string' || !replacement.stage
-      || !Array.isArray(replacement.files) || !replacement.files.every(file => isRecord(file)
-        && typeof file.path === 'string' && !!file.path && (file.before !== undefined || file.after !== undefined)
-        && (file.before === undefined || validHash(file.before)) && (file.after === undefined || validHash(file.after))
-        && !unknownKeys(file, ['path', 'before', 'after']).length)
-      || unknownKeys(replacement, ['stage', 'files']).length) return undefined;
+export function validateExtensionManifestRoot(
+  raw: unknown, manifestPath?: string, expectedKind: 'host' | 'plugin' = 'host',
+): ExtensionValidationError[] {
+  const fail = (code: string, message: string) => [diagnostic(code, message, manifestPath)];
+  if (!isRecord(raw)) return fail('manifest_not_object', 'manifest 根必须是 object');
+  if (raw.kind === undefined && raw.plugins === undefined && ['1.0', '1.1', '2.0', '2.1'].includes(String(raw.schema_version))
+    && ['name', 'provides', 'installations', 'phase_bindings'].some(field => has(raw, field))) {
+    return fail('manifest_legacy_layout', '旧版扩展未加载，请按需手工整理后重新接入。');
   }
-  return raw as unknown as ExtensionPendingCleanup;
+  if (raw.schema_version !== '2.0') return fail('manifest_schema_version', 'schema_version 必须为字符串 "2.0"');
+  if (raw.kind !== expectedKind) return fail('manifest_kind', `这里必须使用 kind: ${expectedKind} 的清单`);
+
+  const fields = expectedKind === 'host' ? ['schema_version', 'kind', 'plugins']
+    : ['schema_version', 'kind', 'name', 'version', 'description', 'framework_compat', 'provides', 'bindings', 'activation'];
+  const extra = unknownKeys(raw, fields);
+  if (extra.length) return fail('manifest_unknown_field', `manifest 不支持字段：${extra.join(', ')}`);
+  if (expectedKind === 'host') return isRecord(raw.plugins) ? [] : fail('plugins_shape', 'plugins 必须是插件 ID 映射');
+  if (typeof raw.name !== 'string' || !SAFE_ID.test(raw.name)) return fail('manifest_name', '插件 name 必须是小写 slug');
+  if (!optionalString(raw.version)) return fail('manifest_version', '插件 version 必须是非空字符串');
+  for (const name of ['description', 'framework_compat']) {
+    if (raw[name] !== undefined && !optionalString(raw[name])) return fail('manifest_field', `${name} 必须是非空字符串`);
+  }
+  for (const name of ['provides', 'bindings', 'activation']) {
+    if (raw[name] !== undefined && !isRecord(raw[name])) return fail(`${name}_shape`, `${name} 必须是 object`);
+  }
+  return [];
 }
 
-function readInstallations(raw: unknown, bundle: ExtensionBundle, manifestPath: string): void {
-  if (!isRecord(raw)) return;
-  for (const [ability, value] of Object.entries(raw)) {
-    const source = isRecord(value) && typeof value.source === 'string' ? value.source.trim() : '';
-    if (!SAFE_SKILL.test(ability) || !source || !isRecord(value) || typeof value.enabled !== 'boolean'
-      || !isRecord(value.bindings) || !isRecord(value.files) || value.in_place !== undefined && value.in_place !== true
-      || value.version !== undefined && (typeof value.version !== 'string' || !value.version.trim())
-      || unknownKeys(value, ['source', 'enabled', 'bindings', 'files', 'in_place', 'version', 'binding_overrides', 'pending_cleanup', 'activation_result']).length
-      || !Object.values(value.files).every(hash => typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash))) {
-      pushError(bundle, 'installation_shape', `installations.${ability} 的来源、开关或文件归属格式非法`, manifestPath, { ability, source });
-      bundle.installations[ability] = { enabled: false };
-      continue;
-    }
-    for (const [id, enabled] of Object.entries(value.bindings)) {
-      if (!SAFE_ID.test(id) || typeof enabled !== 'boolean') {
-        pushError(bundle, 'installation_binding_selection', `installations.${ability}.bindings.${id} 必须是绑定 ID 对应的 boolean`,
-          manifestPath, { ability, source, bindingId: id });
-      }
-    }
-    const installation: ExtensionInstallationSelection = {
-      source, enabled: value.enabled, bindings: value.bindings, files: value.files,
-      version: typeof value.version === 'string' ? value.version : undefined,
-    };
-    bundle.installations[ability] = installation;
-    if (value.binding_overrides !== undefined) {
-      if (bundle.manifestVersion !== '2.1' || !isRecord(value.binding_overrides)) {
-        pushError(bundle, 'installation_binding_override', `installations.${ability}.binding_overrides 须为 2.1 绑定时点选择映射`, manifestPath, { ability, source });
-        installation.enabled = false;
-      } else {
-        installation.binding_overrides = value.binding_overrides;
-      }
-    }
-    if (value.pending_cleanup !== undefined) {
-      installation.pending_cleanup = pendingCleanup(value.pending_cleanup);
-      if (!installation.pending_cleanup) {
-        pushError(bundle, 'installation_pending_cleanup', `installations.${ability}.pending_cleanup 形状非法`, manifestPath, { ability, source });
-        installation.enabled = false;
-      }
-    }
-    if (value.activation_result !== undefined) {
-      try {
-        if (bundle.manifestVersion !== '2.1') throw new Error('activation_result 需要 manifest 2.1');
-        installation.activation_result = parseExtensionActivationResult(ability, value.activation_result, bundle.activations[ability] ?? []);
-      } catch (error) {
-        pushError(bundle, 'installation_activation_result', (error as Error).message, manifestPath, { ability, source });
-        installation.enabled = false;
-      }
-    }
-  }
-}
-
-type LoadOptions = { frameworkRoot?: string; manifestRaw?: unknown; allowPendingGenerated?: boolean };
-
-export function loadInstanceExtensions(projectRoot: string, extensionDirRel?: string, options?: LoadOptions): ExtensionBundle {
-  const configured = extensionDirRel ?? 'doc/extensions';
-  let extRoot: string;
-  try {
-    extRoot = realProjectPath(projectRoot, configured, 'paths.extension_dir');
-    if (fs.existsSync(extRoot) && !fs.statSync(extRoot).isDirectory()) {
-      throw new Error('paths.extension_dir 必须指向目录');
-    }
-  } catch (error) {
-    const invalid = emptyBundle(null);
-    pushError(invalid, 'extension_dir_path', (error as Error).message);
-    return rejectManifest(invalid);
-  }
-  return readExtensionManifest(extRoot, projectRoot, options, false);
-}
-
-/** Read source defaults before installation; host selections are never read from the source package. */
-export function loadInstanceExtensionSource(sourceRoot: string, projectRoot: string, options?: LoadOptions): ExtensionBundle {
-  return readExtensionManifest(path.resolve(sourceRoot), projectRoot, options, true);
-}
-
-/** Validate the shared root contract without loading any contribution resources. */
-export function validateExtensionManifestRoot(raw: unknown, manifestPath?: string): ExtensionValidationError[] {
-  const errors: ExtensionValidationError[] = [];
-  const add = (code: string, message: string) => {
-    errors.push({ severity: 'MAJOR', code, message, path: manifestPath });
-  };
-  if (!isRecord(raw)) {
-    add('manifest_not_object', 'manifest 根必须是 object');
-    return errors;
-  }
-
-  const sv = raw.schema_version;
-  const schemaVersion = typeof sv === 'string' ? sv.trim() : '';
-  if (!schemaVersion) {
-    add('manifest_schema_version', '缺少或非法 schema_version（须为非空字符串）');
-  } else if (!['1.0', '1.1', '2.0', '2.1'].includes(schemaVersion)) {
-    add(
-      'manifest_schema_version_unsupported',
-      `不支持的 schema_version="${schemaVersion}"（当前支持 1.0 / 1.1 / 2.0 / 2.1）`,
-    );
-  }
-
-  const name = raw.name;
-  if (typeof name !== 'string' || !name.trim()) {
-    add('manifest_name', 'name 必须为非空字符串');
-  } else if (schemaVersion === '1.1' && !SAFE_ID.test(name.trim())) {
-    add('manifest_name', 'manifest 1.1 name 必须是小写 slug');
-  }
-
-  if (errors.length > 0) return errors;
-
-  const modern = schemaVersion !== '1.0';
-  const native = schemaVersion === '2.0' || schemaVersion === '2.1';
-  if (modern) {
-    const allowed = ['schema_version', 'name', 'version', 'description', 'framework_compat', 'provides', 'phase_bindings'];
-    if (native) allowed.push('bindings', 'installations');
-    if (schemaVersion === '2.1') allowed.push('activation');
-    for (const key of unknownKeys(raw, allowed)) {
-      add('manifest_unknown_field', `manifest ${schemaVersion} 不支持字段：${key}`);
-    }
-  }
-  if (native && raw.installations !== undefined && !isRecord(raw.installations)) {
-    add('installations_shape', 'installations 必须是能力 ID 映射');
-  }
-  if (schemaVersion === '2.1' && raw.activation !== undefined && !isRecord(raw.activation)) {
-    add('activation_shape', 'activation 必须是能力 ID -> steps 映射');
-  }
-  return errors;
-}
-
-function readExtensionManifest(extRoot: string, projectRoot: string, options: LoadOptions | undefined,
-  sourceOnly: boolean): ExtensionBundle {
-  const candidate = options && Object.prototype.hasOwnProperty.call(options, 'manifestRaw');
-  if (!candidate && !fs.statSync(extRoot, { throwIfNoEntry: false })?.isDirectory()) return emptyBundle(null);
-  const manifestPath = path.join(extRoot, 'manifest.yaml');
-  if (!candidate && !fs.lstatSync(manifestPath, { throwIfNoEntry: false })) return emptyBundle(extRoot);
-
-  const bundle = emptyBundle(extRoot);
-  bundle.manifestPath = manifestPath;
-
+function readManifest(bundle: ExtensionBundle, root: string, kind: 'host' | 'plugin', options?: LoadOptions, id?: string) {
+  const manifestPath = path.join(root, 'manifest.yaml');
   let raw: unknown;
   try {
-    raw = candidate ? options.manifestRaw : YAML.parse(fs.readFileSync(safeResolve(extRoot, 'manifest.yaml'), 'utf-8'));
-  } catch (e) {
-    pushError(bundle, 'manifest_yaml_parse', `无法解析 YAML：${(e as Error).message}`, manifestPath);
-    return rejectManifest(bundle);
-  }
-
-  bundle.errors.push(...validateExtensionManifestRoot(raw, manifestPath));
-  if (!isRecord(raw) || bundle.errors.length > 0) return rejectManifest(bundle);
-
-  const version = (raw.schema_version as string).trim() as NonNullable<ExtensionBundle['manifestVersion']>;
-  const modern = version !== '1.0';
-  const native = version === '2.0' || version === '2.1';
-  bundle.manifestVersion = version;
-  const manifestName = (raw.name as string).trim();
-  const legacyAbility = SAFE_SKILL.test(manifestName) ? manifestName : `legacy-${legacyBindingId('hook', manifestName).slice(5)}`;
-  bundle.manifestName = manifestName;
-  const frameworkRoot = options?.frameworkRoot ?? FRAMEWORK_ROOT;
-  let featurePhases = new Set<string>();
-  let harnessPhases = new Set<string>();
-  const provides = isRecord(raw.provides) ? raw.provides : {};
-  if (raw.provides !== undefined && (modern || raw.provides !== null) && !isRecord(raw.provides)) {
-    pushError(bundle, 'provides_not_object', 'provides 必须是 object', manifestPath);
-  }
-  if (modern) {
-    for (const key of unknownKeys(provides, ['skills', 'knowledge', 'hooks', 'capabilities', 'skill_assets', 'phase_rules_overlays', 'mcp_actions'])) {
-      pushError(bundle, 'provides_unknown_field', `manifest ${version} provides 不支持字段：${key}`, manifestPath);
-    }
-  }
-  if (modern || provides.hooks !== undefined) {
-    try {
-      const workflow = resolveWorkflowSpec(projectRoot, { frameworkRoot });
-      featurePhases = new Set(workflowFeaturePhases(workflow, 'full'));
-      harnessPhases = new Set(listWorkflowPhases(workflow));
-      bundle.featurePhases = [...featurePhases].sort();
-    } catch (error) {
-      pushError(bundle, 'manifest_workflow_unresolvable', (error as Error).message, manifestPath);
-    }
-  }
-  let timings = new Map<string, ExtensionTiming>();
-  if (provides.hooks !== undefined || (modern && raw.phase_bindings !== undefined) || (native && raw.bindings !== undefined)) {
-    try {
-      timings = readExtensionTimings(frameworkRoot);
-    } catch (error) {
-      pushError(bundle, 'extension_timings_unavailable', (error as Error).message, manifestPath);
-    }
-  }
-  const phaseTimings = new Map([...timings.values()].filter(t => t.slot).map(t => [t.slot!, t]));
-  const hookTimings = new Map([...timings.values()].filter(t => t.event).map(t => [t.event!, t]));
-  const hookConfigEnabled = sourceOnly || (provides.hooks === undefined && !native)
-    || loadFrameworkConfig(projectRoot).lifecycle_hooks_enabled !== false;
-  const invalidActivations = new Set<string>();
-  if (version === '2.1' && isRecord(raw.activation)) {
-    for (const [ability, input] of Object.entries(raw.activation)) {
-      try {
-        bundle.activations[ability] = parseExtensionActivation(ability, input);
-      } catch (error) {
-        invalidActivations.add(ability);
-        pushError(bundle, 'activation_steps', (error as Error).message, manifestPath, { ability, source: manifestName });
-      }
-    }
-  }
-  if (native && !sourceOnly) readInstallations(raw.installations, bundle, manifestPath);
-  const { installations } = bundle;
-  const activated = (ability: string) => !invalidActivations.has(ability) && (!bundle.activations[ability]
-    || sourceOnly || options?.allowPendingGenerated || installations[ability]?.activation_result?.status === 'enabled');
-  const availableAbility = (ability: string) => {
-    const installation = installations[ability];
-    return installation?.enabled !== false && (!installation?.pending_cleanup || installation.pending_cleanup.binding !== undefined) && activated(ability);
-  };
-  const deferGenerated = (ability: string, ref: string) => {
-    const steps = bundle.activations[ability];
-    return !!steps && (sourceOnly || options?.allowPendingGenerated || installations[ability]?.activation_result?.status !== 'enabled')
-      && isExtensionActivationOutput(steps, validateProjectRelativePath(extRoot, ref.trim().replace(/^\.\/+/, ''), 'extension 引用'));
-  };
-  const applyOverride = (binding: ExtensionBinding): string | undefined => {
-    const override = own(installations[binding.ability]?.binding_overrides, binding.id);
-    if (override === undefined) return undefined;
-    const timing = bindingTiming(override);
-    if (!timing) return '宿主绑定时点覆盖须含 at 和适用的 phase';
-    binding.override = timing;
-    binding.at = timing.at;
-    binding.phase = timing.phase;
+    raw = options && has(options, 'manifestRaw')
+      ? options.manifestRaw : YAML.parse(fs.readFileSync(ordinaryFile(root, 'manifest.yaml'), 'utf8'));
+  } catch (error) {
+    bundle.errors.push({ ...diagnostic('manifest_yaml_parse', `无法读取清单：${(error as Error).message}`, manifestPath), ability: id });
     return undefined;
-  };
-  const timingIssue = (binding: ExtensionBinding, timing: ExtensionTiming | undefined): string | undefined => {
-    if (!timing) return `未知时点或不支持的时点版本：${binding.at}`;
-    if (timing.scope === 'project' ? binding.phase !== undefined
-      : !binding.phase || !(timing.scope === 'feature' ? featurePhases : harnessPhases).has(binding.phase)) {
-      return `时点 ${binding.at} 的 phase 不可用：${binding.phase ?? '未声明'}`;
-    }
-    if (!binding.resource || !timing.resources.includes(binding.resource)) {
-      return `时点 ${binding.at} 不支持该贡献：${binding.kind}:${binding.ref}`;
-    }
-    return undefined;
-  };
-  const selectBinding = (binding: ExtensionBinding, byDefault: boolean, issue?: string, code = 'extension_binding_invalid') => {
-    const installation = installations[binding.ability];
-    const timing = timings.get(binding.at);
-    binding.slot = timing?.slot;
-    binding.timingDescription = timing?.description;
-    binding.consumer = timing?.event ? timing.consumers?.[binding.kind === 'knowledge' ? 'hook_markdown' : 'hook_script'] : timing?.consumer;
-    binding.source = installation?.source ?? manifestName;
-    binding.issue = issue;
-    const choices = installation?.bindings;
-    const choice = choices && Object.prototype.hasOwnProperty.call(choices, binding.id) ? choices[binding.id] : undefined;
-    if (choice !== undefined && typeof choice !== 'boolean' && !binding.issue) {
-      binding.issue = '宿主绑定开关必须是 boolean';
-    }
-    if (binding.issue) {
-      if (binding.override) code = 'installation_binding_override';
-      pushError(bundle, code, `${binding.ability}/${binding.id} (${binding.at || '未声明时点'})：${binding.issue}`, manifestPath,
-        { source: binding.source, ability: binding.ability, bindingId: binding.id, at: binding.at });
-    }
-    const selected = (choice ?? (installation && !binding.legacy ? false : byDefault)) === true;
-    binding.selected = installation?.enabled !== false && selected;
-    const cleanup = installation?.pending_cleanup;
-    if (cleanup && (!cleanup.binding || cleanup.binding === binding.id)) binding.reason = '已停止新调度，待清理';
-    else if (installation?.enabled === false) binding.reason = '能力已停用';
-    else if (binding.issue) binding.reason = binding.issue;
-    else if (!selected) binding.reason = '绑定未启用';
-    else if (binding.pendingGenerated) binding.reason = '引用文件待启用步骤生成';
-    else if (!activated(binding.ability)) binding.reason = '启用步骤尚未完成';
-    else if (timing?.event && !hookConfigEnabled) binding.reason = 'lifecycle_hooks_enabled 已关闭';
-    binding.enabled = !binding.reason;
-    bundle.bindings.push(binding);
-  };
+  }
+  const errors = validateExtensionManifestRoot(raw, manifestPath, kind);
+  bundle.errors.push(...errors.map(error => ({ ...error, ability: id })));
+  return errors.length ? undefined : raw as Record<string, unknown>;
+}
 
-  const declaredSkills = new Set<string>();
-  const skillsRaw = provides.skills;
-  if (skillsRaw !== undefined) {
-    if (!Array.isArray(skillsRaw)) {
-      pushError(bundle, 'provides_skills', 'provides.skills 必须是字符串数组', manifestPath);
-    } else {
-      for (const s of skillsRaw) {
-        if (typeof s !== 'string' || !s.trim()) {
-          pushError(bundle, 'provides_skills_item', `非法 skill id：${String(s)}`, manifestPath);
-        } else if (!modern || (native ? SAFE_SKILL : SAFE_ID).test(s.trim())) {
-          const id = s.trim();
-          if (!bundle.declaredSkills.includes(id)) bundle.declaredSkills.push(id);
-          if (modern) {
-            try {
-              const skillPath = safeResolve(extRoot, `skills/${id}/SKILL.md`);
-              if (!isFile(skillPath)) throw new Error(`manifest skill 缺少 skills/${id}/SKILL.md`);
-            } catch (error) {
-              pushError(bundle, 'skill_missing', (error as Error).message, manifestPath, { ability: id, source: manifestName });
-              continue;
-            }
-          }
-          declaredSkills.add(id);
-          if (availableAbility(id) && !bundle.skills.includes(id)) bundle.skills.push(id);
-        } else {
-          pushError(bundle, 'provides_skills_item', `manifest ${version} skill id 非法：${s.trim()}`, manifestPath);
-        }
-      }
+type Registration = Pick<ExtensionPlugin, 'source' | 'enabled' | 'bindings' | 'files' | 'binding_overrides' | 'in_place'>;
+
+function registration(raw: unknown, pluginRoot: string): Registration {
+  if (!isRecord(raw) || unknownKeys(raw, ['source', 'enabled', 'bindings', 'binding_overrides', 'files', 'in_place']).length
+    || !optionalString(raw.source) || typeof raw.enabled !== 'boolean' || !isRecord(raw.bindings) || !isRecord(raw.files)
+    || raw.binding_overrides !== undefined && !isRecord(raw.binding_overrides) || raw.in_place !== undefined && raw.in_place !== true
+    || Object.entries(raw.bindings).some(([id, enabled]) => !SAFE_ID.test(id) || typeof enabled !== 'boolean')) {
+    throw new Error('登记须包含 source、enabled、bindings 和 files，绑定选择须为 boolean');
+  }
+  for (const [file, hash] of Object.entries(raw.files)) {
+    if (typeof hash !== 'string' || !SHA256.test(hash) || path.posix.normalize(file) !== file
+      || file === '.' || file.startsWith('./') || file.includes('\\') || file.endsWith('/')
+      || validateProjectRelativePath(pluginRoot, file, 'plugins.files') !== file) {
+      throw new Error(`无效的包内文件归属：${file}`);
     }
   }
+  return raw as unknown as Registration;
+}
 
-  const knowRaw = provides.knowledge;
-  if (knowRaw !== undefined) {
-    if (!Array.isArray(knowRaw)) {
-      pushError(bundle, 'provides_knowledge', 'provides.knowledge 必须是数组', manifestPath);
-    } else {
-      for (const k of knowRaw) {
-        let entry: ExtensionKnowledgeEntry | null = null;
-        if (typeof k === 'string' && k.trim()) {
-          const itemPath = k.trim();
-          entry = {
-            path: itemPath,
-            absPath: '',
-            summary: '',
-            audience: [],
-            legacy: true,
-          };
-        } else if (modern && isRecord(k)) {
-          const extra = unknownKeys(k, ['path', 'summary', 'audience']);
-          if (extra.length > 0) {
-            pushError(bundle, 'knowledge_unknown_field', `knowledge 条目不支持字段：${extra.join(', ')}`, manifestPath);
-            continue;
-          }
-          const itemPath = typeof k.path === 'string' ? k.path.trim() : '';
-          const summary = typeof k.summary === 'string' ? k.summary.trim() : '';
-          const audienceRaw = k.audience;
-          let audience: ExtensionKnowledgeEntry['audience'] | null = null;
-          if (audienceRaw === 'global' || (native && audienceRaw === 'none')) audience = audienceRaw;
-          else if (Array.isArray(audienceRaw) && audienceRaw.length > 0 && audienceRaw.every(item =>
-            typeof item === 'string' && featurePhases.has(item))) {
-            audience = [...new Set(audienceRaw as string[])];
-          }
-          if (!itemPath || (audience !== 'none' && !summary) || audience === null) {
-            pushError(bundle, 'provides_knowledge_item', 'knowledge 对象须含 path/summary 与有效 audience（保留的 1.0 路径仅需 path 与 audience: none）', manifestPath);
-            continue;
-          }
-          entry = { path: itemPath, absPath: '', summary, audience, legacy: false };
-        } else {
-          pushError(bundle, 'provides_knowledge_item', `非法 knowledge 项：${String(k)}`, manifestPath);
-          continue;
-        }
-        try {
-          const abs = safeResolve(extRoot, entry.path);
-          if (!fs.existsSync(abs) || (modern && !fs.statSync(abs).isFile())) {
-            pushError(bundle, 'knowledge_missing', `knowledge 文件不存在：${entry.path}`, abs);
-          } else {
-            bundle.knowledgePaths.push(abs);
-            bundle.knowledge.push({ ...entry, absPath: abs });
-          }
-        } catch (e) {
-          pushError(bundle, 'knowledge_resolve', (e as Error).message, manifestPath);
-        }
-      }
-    }
+export function loadInstanceExtensions(projectRoot: string, extensionDirRel?: string, options?: LoadOptions): ExtensionBundle {
+  let root: string;
+  try {
+    const project = fs.realpathSync(projectRoot);
+    root = ordinaryPath(project, extensionDirRel ?? loadFrameworkConfig(projectRoot).paths.extension_dir ?? 'doc/extensions', 'paths.extension_dir');
+    const framework = path.resolve(options?.frameworkRoot ?? FRAMEWORK_ROOT);
+    if (project !== framework && isInsideProjectRoot(framework, root)) throw new Error('paths.extension_dir 必须指向宿主内的独立扩展目录');
+    const stat = fs.statSync(root, { throwIfNoEntry: false });
+    if (!stat && !(options && has(options, 'manifestRaw'))) return emptyBundle(null);
+    if (stat && !stat.isDirectory()) throw new Error('paths.extension_dir 必须指向目录');
+  } catch (error) {
+    const bundle = emptyBundle(null);
+    bundle.manifestUsable = false;
+    bundle.errors.push(diagnostic('extension_dir_path', (error as Error).message));
+    return bundle;
   }
 
-  if (modern && provides.mcp_actions !== undefined) {
-    if (!isRecord(provides.mcp_actions)) {
-      pushError(bundle, 'provides_mcp_actions', 'provides.mcp_actions 必须是 object', manifestPath);
-    } else for (const [id, value] of Object.entries(provides.mcp_actions)) {
-      if (!SAFE_ID.test(id) || !isRecord(value)) {
-        pushError(bundle, 'mcp_action_shape', `mcp action 非法：${id}`, manifestPath);
-        continue;
-      }
-      const extra = unknownKeys(value, ['tool', 'required', 'severity', 'produces', 'usage']);
-      if (extra.length > 0) {
-        pushError(bundle, 'mcp_action_forbidden_field', `mcp_actions.${id} 不支持字段：${extra.join(', ')}`, manifestPath);
-        continue;
-      }
-      const tool = typeof value.tool === 'string' ? value.tool.trim() : '';
-      const usage = typeof value.usage === 'string' ? value.usage.trim() : '';
-      const required = value.required;
-      const severity = value.severity ?? 'MAJOR';
-      const produces = Array.isArray(value.produces)
-        ? value.produces.filter((item): item is string => typeof item === 'string' && item.trim().length > 0).map(item => item.trim())
-        : [];
-      if (!tool || !usage || typeof required !== 'boolean' || produces.length === 0 || produces.length !== (value.produces as unknown[] | undefined)?.length || !ACTION_SEVERITY_SET.has(String(severity))) {
-        pushError(bundle, 'mcp_action_shape', `mcp_actions.${id} 须含 tool/required/produces/usage，severity 仅 MAJOR|BLOCKER`, manifestPath);
-        continue;
-      }
-      try {
-        const action: ExtensionMcpAction = {
-          id, tool, usage, required, severity: severity as 'MAJOR' | 'BLOCKER', produces,
-          produceAbsPaths: produces.map(item => safeResolveProject(projectRoot, item)),
-        };
-        bundle.mcpActions[id] = action;
-      } catch (error) {
-        pushError(bundle, 'mcp_action_produces_path', (error as Error).message, manifestPath);
-      }
+  const bundle = emptyBundle(root);
+  const manifestPath = path.join(root, 'manifest.yaml');
+  if (!(options && has(options, 'manifestRaw')) && !fs.lstatSync(manifestPath, { throwIfNoEntry: false })) return bundle;
+  bundle.manifestPath = manifestPath;
+  const manifest = readManifest(bundle, root, 'host', options);
+  if (!manifest) {
+    bundle.manifestUsable = false;
+    return bundle;
+  }
+  bundle.manifestVersion = '2.0';
+  const plugins = Object.entries(manifest.plugins as Record<string, unknown>);
+  if (!plugins.length) return bundle;
+  const context = loadContext(projectRoot, options, bundle);
+  for (const [id, selection] of plugins) {
+    try {
+      if (!SAFE_ID.test(id)) throw new Error('插件 ID 须为小写 slug');
+      const pluginRoot = path.join(root, id);
+      const selected = registration(selection, pluginRoot);
+      if (!fs.lstatSync(pluginRoot, { throwIfNoEntry: false })?.isDirectory()) throw new Error('已登记插件缺少独立目录');
+      const raw = readManifest(bundle, pluginRoot, 'plugin', undefined, id);
+      if (raw) readPlugin(bundle, context, pluginRoot, id, raw, selected, options?.excludedPlugins?.get(id));
+    } catch (error) {
+      bundle.errors.push({ ...diagnostic('plugin_registration', `${id}：${(error as Error).message}`, manifestPath), ability: id });
     }
   }
-
-  const actionRequirement = (id: string) => {
-    const actions = provides.mcp_actions;
-    const action = isRecord(actions) ? actions[id] : undefined;
-    return isRecord(action) && action.required === true
-      ? { required: true, severity: (action.severity === 'BLOCKER' ? 'BLOCKER' : 'MAJOR') as 'BLOCKER' | 'MAJOR' }
-      : {};
-  };
-  const addPhaseBinding = (phase: string, slot: ExtensionPhaseBindingSlot, item: ExtensionPhaseBinding) => {
-    const slots = bundle.phaseBindings[phase] ??= {};
-    (slots[slot] ??= []).push(item);
-  };
-  const addHook = (phase: string, event: string, file: string) => {
-    const events = bundle.hooks[phase] ??= {};
-    (events[event] ??= []).push(file);
-  };
-  const mountBinding = (binding: ExtensionBinding) => {
-    if (!binding.enabled || !binding.phase) return;
-    const { at, phase, resource, ref, absPath } = binding;
-    const timing = timings.get(at);
-    if (timing?.event && absPath) addHook(phase, timing.event, absPath);
-    if (timing?.slot && (resource === 'mcp' || resource === 'skill' || resource === 'knowledge_file')) {
-      const kind = resource === 'knowledge_file' ? 'knowledge' : resource;
-      addPhaseBinding(phase, timing.slot, { kind, ref });
-      if (kind === 'knowledge' && absPath && !bundle.knowledge.some(item => item.path === ref)) {
-        bundle.knowledge.push({ path: ref, absPath, summary: '', audience: [], legacy: false });
-      }
-    }
-  };
-
-  if (modern && raw.phase_bindings !== undefined) {
-    if (!isRecord(raw.phase_bindings)) {
-      pushError(bundle, 'phase_bindings_shape', 'phase_bindings 必须是 Feature phase -> slot 映射', manifestPath);
-    } else for (const [phase, slots] of Object.entries(raw.phase_bindings)) {
-      if (!isRecord(slots)) {
-        pushError(bundle, 'phase_binding_phase', `phase_bindings.${phase} 必须是槽位映射`, manifestPath);
-        continue;
-      }
-      const knownPhase = featurePhases.has(phase);
-      if (!knownPhase) pushError(bundle, 'phase_binding_phase', `phase_bindings 仅接受 Feature phase：${phase}`, manifestPath);
-      for (const [slot, list] of Object.entries(slots)) {
-        const timing = phaseTimings.get(slot as ExtensionPhaseBindingSlot);
-        if (!timing) pushError(bundle, 'phase_binding_slot', `不支持 phase_bindings.${phase}.${slot}`, manifestPath);
-        if (!Array.isArray(list)) {
-          pushError(bundle, 'phase_binding_items', `phase_bindings.${phase}.${slot} 必须是数组`, manifestPath);
-          continue;
-        }
-        for (const [index, value] of list.entries()) {
-          const kind = isRecord(value) && (value.kind === 'knowledge' || value.kind === 'skill' || value.kind === 'mcp')
-            ? value.kind : undefined;
-          const ref = isRecord(value) && typeof value.ref === 'string' ? value.ref.trim() : '';
-          const id = legacyBindingId('phase', phase, slot, kind ?? '', ref || String(index));
-          const ability = (kind === 'skill' || kind === 'mcp') && SAFE_SKILL.test(ref) ? ref : legacyAbility;
-          const binding: ExtensionBinding = {
-            source: manifestName, ability, id, at: timing?.id ?? `${phase}.${slot}`, phase, ref,
-            kind: kind === 'knowledge' ? 'knowledge' : kind ? 'action' : undefined,
-            resource: kind === 'knowledge' ? 'knowledge_file' : kind, enabled: false, legacy: 'phase', ...(kind === 'mcp' ? actionRequirement(ref) : {}),
-          };
-          if (bundle.bindings.some(b => b.ability === ability && b.id === id)) continue;
-          const validShape = isRecord(value) && kind && ref && unknownKeys(value, ['kind', 'ref']).length === 0;
-          const knowledge = kind === 'knowledge' ? bundle.knowledge.find(item => item.path === ref) : undefined;
-          const hasResource = kind === 'mcp' ? !!bundle.mcpActions[ref] : kind === 'skill' ? declaredSkills.has(ref) : !!knowledge;
-          let issue: string | undefined;
-          let code: string | undefined;
-          if (!validShape) { issue = '条目须为 {kind,ref}'; code = 'phase_binding_item'; }
-          else if (!knownPhase || !timing) { issue = '当前发布件不存在此 Feature phase 或槽位'; code = 'phase_binding_slot'; }
-          else if (!hasResource) { issue = `引用不存在或不可用：${kind}:${ref}`; code = 'phase_binding_ref_missing'; }
-          if (knowledge) binding.absPath = knowledge.absPath;
-          if (kind === 'skill' && hasResource) binding.absPath = safeResolve(extRoot, `skills/${ref}/SKILL.md`);
-          const overrideIssue = applyOverride(binding);
-          if (overrideIssue) { issue = overrideIssue; code = 'installation_binding_override'; }
-          if (binding.override && validShape && hasResource) {
-            issue = timingIssue(binding, timings.get(binding.at));
-          }
-          selectBinding(binding, true, issue, code);
-          mountBinding(binding);
-        }
-      }
-    }
-  }
-
-  const hooksRaw = provides.hooks;
-  if (hooksRaw !== undefined) {
-    if (!isRecord(hooksRaw)) {
-      pushError(bundle, 'provides_hooks', 'provides.hooks 必须是 object', manifestPath);
-    } else for (const [ph, events] of Object.entries(hooksRaw)) {
-      if (!isRecord(events)) {
-        pushError(bundle, 'provides_hooks_phase', `hooks.${ph} 必须是 event->paths 映射`, manifestPath);
-        continue;
-      }
-      const phase = normalizePhaseId(ph, ph as 'spec');
-      if (phase !== ph) console.warn(`[extension-loader] hooks 已弃用 phase key "${ph}"，已规范化为 "${phase}"`);
-      for (const [event, list] of Object.entries(events)) {
-        if (!Array.isArray(list)) {
-          pushError(bundle, 'provides_hooks_event', `hooks.${ph}.${event} 必须是路径数组`, manifestPath);
-          continue;
-        }
-        for (const [index, value] of list.entries()) {
-          const ref = typeof value === 'string' ? value.trim() : '';
-          const id = legacyBindingId('hook', phase, event, ref || String(index));
-          if (bundle.bindings.some(b => b.ability === legacyAbility && b.id === id)) continue;
-          const resource = hookResource(ref);
-          const timing = hookTimings.get(event);
-          const binding: ExtensionBinding = {
-            source: manifestName, ability: legacyAbility, id, at: timing?.id ?? `${phase}.${event}`, phase, ref,
-            kind: resource === 'hook_markdown' ? 'knowledge' : 'action', resource, enabled: false, legacy: 'hook',
-          };
-          let issue: string | undefined;
-          let code: string | undefined;
-          const overrideIssue = applyOverride(binding);
-          const effective = binding.override ? timings.get(binding.at) : timing;
-          if (overrideIssue) { issue = overrideIssue; code = 'installation_binding_override'; }
-          else if (!effective) { issue = `未知生命周期时点 ${binding.at}`; code = 'extension_binding_unknown_timing'; }
-          else if (!binding.phase || !harnessPhases.has(binding.phase)) { issue = `当前 workflow 不存在 phase ${binding.phase}`; code = 'provides_hooks_phase'; }
-          else if (!resource || !effective.resources.includes(resource)) { issue = `时点 ${binding.at} 没有兼容的 hook 资源：${ref}`; code = 'provides_hooks_path'; }
-          else {
-            try {
-              binding.absPath = safeResolve(extRoot, ref);
-              if (!isFile(binding.absPath)) {
-                issue = `hook 文件不存在：${ref}`;
-                code = 'hook_path_missing';
-              }
-            } catch (error) {
-              issue = (error as Error).message;
-              code = 'hook_resolve';
-            }
-          }
-          selectBinding(binding, true, issue, code);
-          mountBinding(binding);
-        }
-      }
-    }
-  }
-
-  if (native && raw.bindings !== undefined) {
-    if (!isRecord(raw.bindings)) {
-      pushError(bundle, 'bindings_shape', 'bindings 必须是能力 ID -> 绑定 ID 映射', manifestPath);
-    } else for (const [ability, entries] of Object.entries(raw.bindings)) {
-      if (!SAFE_SKILL.test(ability) || !isRecord(entries)) {
-        pushError(bundle, 'bindings_ability_shape', `bindings.${ability} 必须是绑定 ID 映射`, manifestPath, { ability, source: manifestName });
-        continue;
-      }
-      for (const [id, value] of Object.entries(entries)) {
-        const data = isRecord(value) ? value : {};
-        const at = typeof data.at === 'string' ? data.at.trim() : '';
-        const ref = typeof data.ref === 'string' ? data.ref.trim() : '';
-        const kind = data.kind === 'knowledge' || data.kind === 'action' ? data.kind : undefined;
-        const phase = typeof data.phase === 'string' ? data.phase.trim() : undefined;
-        const binding: ExtensionBinding = { source: manifestName, ability, id, at, ref, kind, phase, enabled: false };
-        const overrideIssue = applyOverride(binding);
-        const timing = timings.get(binding.at);
-        const resource = binding.resource = nativeTimingResource(timings.get(at), kind, ref, provides.mcp_actions);
-        if (resource === 'mcp') Object.assign(binding, actionRequirement(ref));
-        if (data.required === true) {
-          binding.required = true;
-          binding.severity ??= 'MAJOR';
-        }
-        let issue: string | undefined;
-        let code: string | undefined;
-        if (!isRecord(value) || !SAFE_ID.test(id) || !at || !kind || !ref
-          || unknownKeys(data, ['at', 'kind', 'ref', 'phase', 'enabled_by_default', 'required']).length
-          || data.phase !== undefined && !phase
-          || data.required !== undefined && typeof data.required !== 'boolean'
-          || data.enabled_by_default !== undefined && typeof data.enabled_by_default !== 'boolean') {
-          issue = '绑定须含合法 ID 和 at/kind/ref，phase 为字符串，开关为 boolean';
-        } else if (overrideIssue) {
-          issue = overrideIssue;
-          code = 'installation_binding_override';
-        } else if ((issue = timingIssue(binding, timing))) {
-          if (!timing) code = 'extension_binding_unknown_timing';
-        } else if (resource === 'mcp') {
-          if (!bundle.mcpActions[ref]) issue = `缺少有效 provides.mcp_actions.${ref} 声明`;
-        } else {
-          try {
-            if (resource === 'skill' && !SAFE_SKILL.test(ref)) throw new Error(`无效 skill ID：${ref}`);
-            const resourceRef = resource === 'skill' ? `skills/${ref}/SKILL.md` : ref;
-            if (resource === 'skill' && !declaredSkills.has(ref)) {
-              const files = installations[ability]?.files;
-              const ownedPath = path.relative(projectRoot, path.resolve(extRoot, resourceRef)).replace(/\\/g, '/');
-              if (!files || !Object.prototype.hasOwnProperty.call(files, ownedPath)) {
-                throw new Error(`缺少 provides.skills 或安装归属中的 skill：${ref}`);
-              }
-            }
-            binding.absPath = safeResolve(extRoot, resourceRef);
-            if (!isFile(binding.absPath)) {
-              if (resource !== 'skill' && deferGenerated(ability, resourceRef)) binding.pendingGenerated = true;
-              else throw new Error(`引用文件不可用：${ref}`);
-            }
-            if (resource === 'skill' && ref !== ability && !availableAbility(ref)) {
-              throw new Error(`引用的 skill 已停用：${ref}`);
-            }
-          } catch (error) {
-            issue = (error as Error).message;
-          }
-        }
-        if (bundle.bindings.some(b => b.ability === ability && b.id === id)) {
-          code = 'extension_binding_duplicate';
-          issue = '与已有绑定 ID 冲突';
-        }
-        selectBinding(binding, data.enabled_by_default === true, issue, code);
-        mountBinding(binding);
-      }
-    }
-  }
-
-  for (const [ability, installation] of Object.entries(installations)) {
-    for (const bindingId of Object.keys(installation.binding_overrides ?? {})) {
-      if (!bundle.bindings.some(binding => binding.ability === ability && binding.id === bindingId)) {
-        pushError(bundle, 'installation_binding_override', `宿主时点覆盖找不到绑定 ${ability}/${bindingId}`, manifestPath,
-          { ability, bindingId, source: installation.source });
-      }
-    }
-  }
-
-  const capsRaw = provides.capabilities;
-  if (capsRaw !== undefined) {
-    if (!isRecord(capsRaw)) {
-      pushError(bundle, 'provides_capabilities', 'provides.capabilities 必须是 object', manifestPath);
-    } else {
-      for (const [capKey, spec] of Object.entries(capsRaw)) {
-        if (!capKey.trim()) continue;
-        if (!isRecord(spec)) {
-          pushError(bundle, 'capability_spec', `capability "${capKey}" 必须是 object`, manifestPath);
-          continue;
-        }
-        const prov = spec.provider;
-        const sev = spec.severity;
-        if (typeof prov !== 'string' || !prov.trim()) {
-          pushError(bundle, 'capability_provider', `capability "${capKey}" 缺少 provider`, manifestPath);
-          continue;
-        }
-        if (typeof sev !== 'string' || !SEVERITY_SET.has(sev as CapabilitySeverityKeyword)) {
-          pushError(
-            bundle,
-            'capability_severity',
-            `capability "${capKey}" severity 非法：${String(sev)}`,
-            manifestPath,
-          );
-          continue;
-        }
-        try {
-          const absProv = safeResolve(extRoot, prov.trim());
-          if (!fs.existsSync(absProv)) {
-            pushError(bundle, 'capability_provider_missing', `provider 文件不存在：${prov.trim()}`, absProv);
-            continue;
-          }
-          const canonKey = normalizeCapabilityKey(capKey.trim());
-          bundle.extensionCapabilities[canonKey] = {
-            provider: absProv,
-            severity: sev as CapabilitySeverityKeyword,
-          };
-        } catch (e) {
-          pushError(bundle, 'capability_resolve', (e as Error).message, manifestPath);
-        }
-      }
-    }
-  }
-
-  const skillAssetsRaw = provides.skill_assets;
-  if (skillAssetsRaw !== undefined) {
-    if (!isRecord(skillAssetsRaw)) {
-      pushError(bundle, 'provides_skill_assets', 'provides.skill_assets 必须是 object', manifestPath);
-    } else {
-      for (const [skillId, bucket] of Object.entries(skillAssetsRaw)) {
-        const sid = skillId.trim();
-        if (!sid) {
-          pushError(bundle, 'skill_assets_skill_id', 'skill_assets skill id 不能为空', manifestPath);
-          continue;
-        }
-        if (!isRecord(bucket)) {
-          pushError(bundle, 'skill_assets_bucket', `skill_assets.${sid} 必须是 assetKey→path 映射`, manifestPath, { source: manifestName, ability: sid });
-          continue;
-        }
-        const acc: Record<string, string> = {};
-        for (const [assetKey, rel] of Object.entries(bucket)) {
-          const key = assetKey.trim();
-          const identity = { source: manifestName, ability: sid, bindingId: key };
-          if (!key || typeof rel !== 'string' || !rel.trim()) {
-            pushError(bundle, 'skill_assets_entry', `skill_assets.${sid}.${assetKey} 非法`, manifestPath, identity);
-            continue;
-          }
-          try {
-            const abs = safeResolve(extRoot, rel.trim());
-            if (!fs.existsSync(abs)) {
-              pushError(bundle, 'skill_assets_missing', `skill_assets 文件不存在：${rel.trim()}`, abs, identity);
-            } else {
-              acc[key] = abs;
-            }
-          } catch (e) {
-            pushError(bundle, 'skill_assets_resolve', (e as Error).message, manifestPath, identity);
-          }
-        }
-        if (Object.keys(acc).length > 0) {
-          bundle.skillAssetAbsPaths[sid] = { ...(bundle.skillAssetAbsPaths[sid] ?? {}), ...acc };
-        }
-      }
-    }
-  }
-
-  const overRaw = provides.phase_rules_overlays;
-  if (overRaw !== undefined) {
-    if (!isRecord(overRaw)) {
-      pushError(bundle, 'provides_overlays', 'provides.phase_rules_overlays 必须是 object', manifestPath);
-    } else {
-      for (const [ph, p] of Object.entries(overRaw)) {
-        if (typeof p !== 'string' || !p.trim()) {
-          pushError(bundle, 'overlay_path', `phase "${ph}" overlay 路径非法`, manifestPath);
-          continue;
-        }
-        try {
-          const abs = safeResolve(extRoot, p.trim());
-          if (!fs.existsSync(abs)) {
-            pushError(bundle, 'overlay_missing', `phase_rules_overlay 文件不存在：${p.trim()}`, abs);
-          } else {
-            const rawPh = ph.trim();
-            const canon = normalizePhaseId(rawPh, rawPh as 'spec');
-            if (rawPh !== canon) {
-              // eslint-disable-next-line no-console
-              console.warn(
-                `[extension-loader] phase_rules_overlays 已弃用 phase key "${rawPh}"，已规范化为 "${canon}"`,
-              );
-            }
-            bundle.phaseRuleOverlayPaths[canon] = abs;
-          }
-        } catch (e) {
-          pushError(bundle, 'overlay_resolve', (e as Error).message, manifestPath);
-        }
-      }
-    }
-  }
-
   return bundle;
 }
 
-/** undefined 表示无 manifest 或 1.0 的目录发现，数组表示清单的有效技能选择。 */
-export function extensionSkillIdsForBridge(bundle: ExtensionBundle): readonly string[] | undefined {
-  if (!bundle.manifestUsable) return [];
-  return bundle.manifestVersion && bundle.manifestVersion !== '1.0' ? bundle.skills : undefined;
+/** 读取可安装的提供方包，绑定使用提供方默认值。 */
+export function loadInstanceExtensionSource(sourceRoot: string, projectRoot: string, options?: LoadOptions): ExtensionBundle {
+  const root = path.resolve(sourceRoot);
+  const bundle = emptyBundle(root);
+  bundle.manifestPath = path.join(root, 'manifest.yaml');
+  const raw = readManifest(bundle, root, 'plugin', options);
+  if (!raw) {
+    bundle.manifestUsable = false;
+    return bundle;
+  }
+  bundle.manifestVersion = '2.0';
+  const id = raw.name as string;
+  readPlugin(bundle, loadContext(projectRoot, options, bundle, true), root, id, raw,
+    { source: id, enabled: true, bindings: {}, files: {} }, undefined, true);
+  return bundle;
 }
 
-/**
- * 将目录中有效的 extension capabilities 合并进 profile，同名 key 由扩展覆盖。
- */
+function loadContext(projectRoot: string, options: LoadOptions | undefined, bundle: ExtensionBundle, sourceOnly = false) {
+  const frameworkRoot = options?.frameworkRoot ?? FRAMEWORK_ROOT;
+  let harnessPhases = new Set<string>();
+  let timings = new Map<string, ExtensionTiming>();
+  try {
+    const workflow = resolveWorkflowSpec(projectRoot, { frameworkRoot });
+    bundle.featurePhases = workflowFeaturePhases(workflow, 'full');
+    harnessPhases = new Set(listWorkflowPhases(workflow));
+  } catch (error) {
+    bundle.errors.push(diagnostic('manifest_workflow_unresolvable', (error as Error).message, bundle.manifestPath ?? undefined));
+  }
+  try {
+    timings = readExtensionTimings(frameworkRoot);
+  } catch (error) {
+    bundle.errors.push(diagnostic('extension_timings_unavailable', (error as Error).message, bundle.manifestPath ?? undefined));
+  }
+  return { projectRoot, harnessPhases, timings, hooksEnabled: sourceOnly || loadFrameworkConfig(projectRoot).lifecycle_hooks_enabled !== false };
+}
+
+function bindingResource(timing: ExtensionTiming | undefined, binding: ExtensionBinding, actions: unknown): TimingResource | undefined {
+  if (timing?.event) {
+    const ext = path.extname(binding.ref).toLowerCase();
+    if (binding.kind === 'knowledge' && ext === '.md') return 'hook_markdown';
+    if (binding.kind === 'action' && ext === '.mjs') return 'hook_script';
+    return undefined;
+  }
+  if (binding.kind === 'knowledge') return 'knowledge_file';
+  if (binding.kind !== 'action') return undefined;
+  if (isRecord(actions) && has(actions, binding.ref)
+    || timing?.resources.includes('mcp') && !timing.resources.includes('skill')) return 'mcp';
+  return 'skill';
+}
+
+function readPlugin(
+  bundle: ExtensionBundle, context: ReturnType<typeof loadContext>, rootDir: string, id: string, raw: Record<string, unknown>,
+  selection: Registration, unavailable?: string, sourceOnly = false,
+): void {
+  const manifestPath = path.join(rootDir, 'manifest.yaml');
+  const error = (code: string, message: string, binding?: ExtensionBinding) => {
+    bundle.errors.push({ ...diagnostic(code, `${id}：${message}`, manifestPath), source: selection.source,
+      ability: id, ...(binding ? { bindingId: binding.id, at: binding.at } : {}) });
+  };
+  if (raw.name !== id) {
+    error('plugin_identity', `目录和已登记 ID 必须与提供方 name ${String(raw.name)} 一致`);
+    return;
+  }
+  const plugin: ExtensionPlugin = {
+    ...selection, id, rootDir, manifestPath, version: raw.version as string, skills: [],
+    mcpActions: dict(), capabilities: dict(), phaseRuleOverlayPaths: dict(), skillAssetAbsPaths: dict(),
+  };
+  bundle.plugins[id] = plugin;
+
+  const provides = (raw.provides ?? {}) as Record<string, unknown>;
+  const extra = unknownKeys(provides, ['skills', 'mcp_actions', 'capabilities', 'phase_rules_overlays', 'skill_assets']);
+  if (extra.length) error('provides_unknown_field', `provides 不支持字段：${extra.join(', ')}`);
+  if (raw.activation !== undefined) {
+    try {
+      bundle.activations[id] = parseExtensionActivation(id, raw.activation);
+    } catch (err) {
+      unavailable = (err as Error).message;
+      error('activation_steps', unavailable);
+    }
+  }
+  const steps = bundle.activations[id] ?? [];
+  const relativeRef = (absolute: string) => path.relative(rootDir, absolute).replace(/\\/g, '/');
+  const localSteps = steps.filter(step => step.scope === 'local');
+  const generated = (relative: string) => isExtensionActivationOutput(steps, relativeRef(safeResolve(rootDir, relative)));
+  if (!selection.enabled) unavailable = '插件已停用';
+  if (unavailable && selection.enabled) error('plugin_unavailable', unavailable);
+
+  if (provides.skills !== undefined) {
+    if (!Array.isArray(provides.skills)) error('provides_skills', 'provides.skills 必须是字符串数组');
+    else for (const skillId of new Set(provides.skills)) {
+      try {
+        if (typeof skillId !== 'string' || !SAFE_SKILL.test(skillId)) throw new Error(`非法 Skill ID：${String(skillId)}`);
+        plugin.skills.push({ pluginId: id, skillId, absPath: existingFile(rootDir, `skills/${skillId}/SKILL.md`) });
+      } catch (err) { error('skill_missing', (err as Error).message); }
+    }
+  }
+
+  const readMap = (value: unknown, key: string, read: (key: string, entry: unknown) => void) => {
+    if (value === undefined) return;
+    if (!isRecord(value)) { error('provides_' + key, `${key} 必须是 object`); return; }
+    for (const [name, entry] of Object.entries(value)) {
+      try { read(name, entry); } catch (err) { error(key + '_entry', `${name}：${(err as Error).message}`); }
+    }
+  };
+  readMap(provides.mcp_actions, 'mcp_actions', (name, entry) => {
+    if (!SAFE_ID.test(name) || !isRecord(entry) || unknownKeys(entry, ['tool', 'required', 'severity', 'produces', 'usage']).length) {
+      throw new Error('MCP 动作声明格式非法');
+    }
+    const tool = optionalString(entry.tool);
+    const usage = optionalString(entry.usage);
+    const severity = entry.severity ?? 'MAJOR';
+    if (!tool || !usage || typeof entry.required !== 'boolean' || !ACTION_SEVERITY_SET.has(String(severity))
+      || !Array.isArray(entry.produces) || !entry.produces.length || !entry.produces.every(item => optionalString(item))) {
+      throw new Error('须包含 tool、usage、required、produces，severity 仅支持 MAJOR 或 BLOCKER');
+    }
+    const produces = (entry.produces as string[]).map(item => item.trim());
+    plugin.mcpActions[name] = { id: name, tool, usage, required: entry.required, severity: severity as 'MAJOR' | 'BLOCKER',
+      produces, produceAbsPaths: produces.map(item => realProjectPath(context.projectRoot, item, 'mcp_actions.produces')) };
+  });
+
+  const contributionPath = (relative: string): string => generated(relative) ? safeResolve(rootDir, relative) : existingFile(rootDir, relative);
+  readMap(provides.capabilities, 'capabilities', (name, entry) => {
+    if (!name.trim() || !isRecord(entry) || unknownKeys(entry, ['provider', 'severity']).length
+      || typeof entry.provider !== 'string' || !SEVERITY_SET.has(entry.severity as CapabilitySeverityKeyword)) {
+      throw new Error('能力须含有效 provider 和 severity');
+    }
+    plugin.capabilities[normalizeCapabilityKey(name)] = {
+      provider: contributionPath(entry.provider), severity: entry.severity as CapabilitySeverityKeyword,
+    };
+  });
+  readMap(provides.phase_rules_overlays, 'phase_rules_overlays', (phase, relative) => {
+    const canonical = normalizePhaseId(phase, phase as 'spec');
+    if (!context.harnessPhases.has(canonical) || typeof relative !== 'string') throw new Error('阶段或路径非法');
+    plugin.phaseRuleOverlayPaths[canonical] = contributionPath(relative);
+  });
+  readMap(provides.skill_assets, 'skill_assets', (skillId, assets) => {
+    if (!SAFE_SKILL.test(skillId) || !isRecord(assets)) throw new Error('Skill 资产须是名称到路径的映射');
+    readMap(assets, 'skill_assets', (key, relative) => {
+      if (!SAFE_SKILL.test(key) || typeof relative !== 'string' || skillId === 'component-design' && key === 'knowledge') {
+        throw new Error('Skill 资产声明非法，设计知识使用 knowledge 绑定');
+      }
+      const file = safeResolve(rootDir, relative);
+      if (!fs.existsSync(file) && !generated(relative)) throw new Error(`引用路径不可用：${relative}`);
+      (plugin.skillAssetAbsPaths[skillId] ??= dict())[key] = file;
+    });
+  });
+
+  const bindings = (raw.bindings ?? {}) as Record<string, unknown>;
+  for (const [bindingId, value] of Object.entries(bindings)) {
+    const data = isRecord(value) ? value : {};
+    const at = optionalString(data.at) ?? '';
+    const phase = optionalString(data.phase);
+    const ref = optionalString(data.ref) ?? '';
+    const kind = data.kind === 'knowledge' || data.kind === 'action' ? data.kind : undefined;
+    const summary = optionalString(data.summary);
+    const selected = selection.enabled && (sourceOnly ? data.enabled_by_default === true : own(selection.bindings, bindingId) === true);
+    const binding: ExtensionBinding = { source: selection.source, ability: id, id: bindingId, at, phase, ref, kind, summary, rootDir, selected, enabled: false };
+    const overrides = selection.binding_overrides;
+    const override = overrides ? own(overrides, bindingId) : undefined;
+    if (override !== undefined) {
+      binding.override = bindingTiming(override);
+      if (binding.override) {
+        binding.at = binding.override.at;
+        binding.phase = binding.override.phase;
+      }
+    }
+    const timing = context.timings.get(binding.at);
+    const resource = binding.resource = bindingResource(context.timings.get(at), binding, provides.mcp_actions);
+    binding.hookEvent = timing?.event;
+    binding.timingDescription = timing?.description;
+    binding.consumer = timing?.event && resource ? timing.consumers?.[resource] : timing?.consumer;
+    const action = resource === 'mcp' ? own(plugin.mcpActions, ref) : undefined;
+    const declaredAction = resource === 'mcp' && isRecord(provides.mcp_actions) ? own(provides.mcp_actions, ref) : undefined;
+    binding.action = action;
+    if (data.required === true || isRecord(declaredAction) && declaredAction.required === true) {
+      binding.required = true;
+      binding.severity = isRecord(declaredAction) && declaredAction.severity === 'BLOCKER' ? 'BLOCKER' : 'MAJOR';
+    }
+
+    let code = 'extension_binding_invalid';
+    try {
+      if (!SAFE_ID.test(bindingId) || !at || !kind || !ref
+        || unknownKeys(data, ['at', 'kind', 'ref', 'phase', 'enabled_by_default', 'required', 'summary']).length
+        || data.phase !== undefined && !phase || data.summary !== undefined && (!summary || kind !== 'knowledge')
+        || data.required !== undefined && typeof data.required !== 'boolean'
+        || data.enabled_by_default !== undefined && typeof data.enabled_by_default !== 'boolean') {
+        throw new Error('绑定须含合法 ID、at、kind、ref 和适用的 phase');
+      }
+      if (override !== undefined && !binding.override) throw new Error('宿主时点覆盖须含 at 和适用的 phase');
+      if (!timing) {
+        code = 'extension_binding_unknown_timing';
+        throw new Error(`未知时点或版本：${binding.at}`);
+      }
+      const phases = timing.scope === 'feature' ? bundle.featurePhases : [...context.harnessPhases];
+      if (timing.scope === 'project' ? binding.phase !== undefined : !binding.phase || !phases.includes(binding.phase)) {
+        throw new Error(`时点 ${binding.at} 的 phase 不可用：${binding.phase ?? '未声明'}`);
+      }
+      if (!resource || !timing.resources.includes(resource)) throw new Error(`时点 ${binding.at} 不支持 ${kind}:${ref}`);
+      if (resource === 'mcp') {
+        if (!action) throw new Error(`缺少有效 provides.mcp_actions.${ref} 声明`);
+      } else if (resource === 'skill') {
+        binding.absPath = plugin.skills.find(item => item.skillId === ref)?.absPath;
+        if (!binding.absPath) throw new Error(`缺少已声明的 Skill：${ref}`);
+      } else {
+        binding.absPath = safeResolve(rootDir, ref);
+        const declaredOutput = relativeRef(binding.absPath);
+        if (isExtensionActivationOutput(localSteps, declaredOutput)) binding.localOutput = true;
+        if (binding.at === 'project.entry@1' && binding.localOutput) throw new Error('项目入口索引只能引用随仓知识');
+        if (!fs.statSync(binding.absPath, { throwIfNoEntry: false })?.isFile()) {
+          if (!isExtensionActivationOutput(steps, declaredOutput)) throw new Error(`引用文件不可用：${ref}`);
+          binding.pendingGenerated = true;
+        }
+      }
+    } catch (err) {
+      binding.issue = (err as Error).message;
+      error(override !== undefined ? 'installation_binding_override' : code, `${bindingId} (${binding.at})：${binding.issue}`, binding);
+    }
+    binding.reason = unavailable ?? binding.issue ?? (!selected ? '绑定未启用'
+      : binding.hookEvent && !context.hooksEnabled ? 'lifecycle_hooks_enabled 已关闭'
+      : binding.pendingGenerated ? '引用文件待准备步骤生成' : undefined);
+    binding.enabled = !binding.reason;
+    bundle.bindings.push(binding);
+  }
+  for (const bindingId of new Set([...Object.keys(selection.bindings), ...Object.keys(selection.binding_overrides ?? {})])) {
+    if (!has(bindings, bindingId)) error('installation_binding_selection', `宿主选择找不到绑定 ${bindingId}`);
+  }
+  if (unavailable) return;
+
+  for (const skill of plugin.skills) {
+    const other = bundle.manualSkills.find(item => item.skillId === skill.skillId);
+    if (other) error('plugin_skill_conflict', `Skill ${skill.skillId} 也由 ${other.pluginId} 提供，入口将按现有冲突规则分配`);
+    bundle.manualSkills.push(skill);
+  }
+  for (const map of ['capabilities', 'phaseRuleOverlayPaths'] as const) {
+    const output = map === 'capabilities' ? bundle.extensionCapabilities : bundle.phaseRuleOverlayPaths;
+    for (const key of Object.keys(plugin[map])) {
+      const previous = Object.values(bundle.plugins).find(other => other.id !== id && output[key] !== undefined
+        && other[map][key] === output[key]);
+      if (previous) error('plugin_contribution_conflict', `${map}.${key} 同时由 ${previous.id} 提供，当前使用 ${id}`);
+    }
+    if (map === 'capabilities') Object.assign(bundle.extensionCapabilities, plugin.capabilities);
+    else Object.assign(bundle.phaseRuleOverlayPaths, plugin.phaseRuleOverlayPaths);
+  }
+  for (const [skillId, assets] of Object.entries(plugin.skillAssetAbsPaths)) {
+    const existing = bundle.skillAssetAbsPaths[skillId] ??= dict();
+    for (const [key, file] of Object.entries(assets)) {
+      const previous = Object.values(bundle.plugins).find(other => other.id !== id && existing[key] !== undefined
+        && other.skillAssetAbsPaths[skillId]?.[key] === existing[key]);
+      if (previous) error('plugin_contribution_conflict', `skill_assets.${skillId}.${key} 同时由 ${previous.id} 提供，当前使用 ${id}`);
+      existing[key] = file;
+    }
+  }
+}
+
 export function applyInstanceExtensions(
-  resolved: HarnessResolvedProfile,
-  projectRoot: string,
-  extensionDirRel?: string,
-  options?: LoadOptions,
+  resolved: HarnessResolvedProfile, projectRoot: string, extensionDirRel?: string, options?: LoadOptions,
 ): HarnessResolvedProfile {
   const bundle = loadInstanceExtensions(projectRoot, extensionDirRel, options);
-  const mergedCaps: Record<string, ProfileCapabilitySpec> = {
-    ...(resolved.capabilities as Record<string, ProfileCapabilitySpec>),
-  };
-  Object.assign(mergedCaps, bundle.extensionCapabilities);
   return {
     ...resolved,
-    capabilities: normalizeCapabilitiesMap(mergedCaps),
+    capabilities: normalizeCapabilitiesMap({ ...resolved.capabilities, ...bundle.extensionCapabilities }),
     extensionBundle: bundle,
   };
 }

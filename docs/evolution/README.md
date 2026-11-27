@@ -14,7 +14,7 @@
 | ---- | ---- |
 | [`compat-protocol-v1.md`](./compat-protocol-v1.md) | Feature 目录 `compat.yaml`：降级算法、过期、与回填脚本 / Context Gate 边界 |
 | [`extension-e2e-acceptance.md`](./extension-e2e-acceptance.md) | 实例扩展与 lifecycle hook、`render-agents-md` 桥接手动手验收 |
-| [`extension-protocol-v1.md`](./extension-protocol-v1.md) | extension / workflow / hooks 三套协议的 schema_version 与 breaking 约定（v1 起点） |
+| [`extension-protocol-v1.md`](./extension-protocol-v1.md) | 宿主与插件清单、消费时点、准备与退出、随包样例 |
 
 ## 候选议题（按需补）
 

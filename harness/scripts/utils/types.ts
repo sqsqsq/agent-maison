@@ -960,7 +960,7 @@ export interface ProfileYamlStub {
   [key: string]: unknown;
 }
 
-/** 实例扩展 manifest 校验错误（非 extensions phase 仅记入 ExtensionBundle.errors） */
+/** 扩展诊断包含包和绑定身份，以便隔离问题。 */
 export interface ExtensionValidationError {
   severity: 'MAJOR';
   code: string;
@@ -974,35 +974,30 @@ export interface ExtensionValidationError {
 
 export interface ExtensionBinding {
   source: string;
+  /** 插件 ID，沿用请求与交回记录中的 ability 字段。 */
   ability: string;
   id: string;
   at: string;
   kind?: 'knowledge' | 'action';
   resource?: 'knowledge_file' | 'skill' | 'mcp' | 'hook_markdown' | 'hook_script';
   ref: string;
+  rootDir: string;
   phase?: string;
-  slot?: ExtensionPhaseBindingSlot;
+  hookEvent?: string;
   timingDescription?: string;
   consumer?: string;
   absPath?: string;
+  action?: ExtensionMcpAction;
+  summary?: string;
   enabled: boolean;
-  selected?: boolean;
+  selected: boolean;
+  localOutput?: true;
   pendingGenerated?: true;
   override?: ExtensionBindingTiming;
   required?: boolean;
   severity?: 'MAJOR' | 'BLOCKER';
-  /** Present for a missing dependency or unsupported declaration, including an invalid disabled declaration. */
   issue?: string;
   reason?: string;
-  legacy?: 'phase' | 'hook';
-}
-
-export interface ExtensionKnowledgeEntry {
-  path: string;
-  absPath: string;
-  summary: string;
-  audience: 'global' | 'none' | string[];
-  legacy: boolean;
 }
 
 export interface ExtensionMcpAction {
@@ -1015,61 +1010,48 @@ export interface ExtensionMcpAction {
   usage: string;
 }
 
-export interface ExtensionPhaseBinding {
-  kind: 'knowledge' | 'skill' | 'mcp';
-  ref: string;
-}
-
-export type ExtensionPhaseBindingSlot =
-  | 'before_phase_work'
-  | 'before_phase_verify'
-  | 'after_phase_verify_before_close';
-
 export interface ExtensionBindingTiming {
   at: string;
   phase?: string;
 }
 
-export interface ExtensionPendingCleanup {
-  operation: 'disable' | 'uninstall' | 'install';
-  binding?: string;
-  command: string[];
-  restore_enabled?: boolean;
-  replacement?: { stage: string; files: Array<{ path: string; before?: string; after?: string }> };
+export interface ExtensionManualSkill {
+  pluginId: string;
+  skillId: string;
+  absPath: string;
 }
 
-export interface ExtensionInstallationSelection {
-  source?: string;
-  version?: string;
+export interface ExtensionPlugin {
+  id: string;
+  rootDir: string;
+  manifestPath: string;
+  version: string;
+  source: string;
   enabled: boolean;
-  bindings?: Record<string, unknown>;
-  files?: Record<string, unknown>;
+  bindings: Record<string, boolean>;
+  files: Record<string, string>;
   binding_overrides?: Record<string, unknown>;
-  pending_cleanup?: ExtensionPendingCleanup;
-  activation_result?: import('./extension-activation-contract').ExtensionActivationResult;
+  in_place?: true;
+  skills: ExtensionManualSkill[];
+  mcpActions: Record<string, ExtensionMcpAction>;
+  capabilities: Record<string, ProfileCapabilitySpec>;
+  phaseRuleOverlayPaths: Record<string, string>;
+  skillAssetAbsPaths: Record<string, Record<string, string>>;
 }
 
-/** doc/extensions 解析产物（manifest 缺失则为零值 + rootDir=null） */
+/** 由已登记且有效的插件构成的扩展运行视图。 */
 export interface ExtensionBundle {
   rootDir: string | null;
   manifestPath: string | null;
-  manifestVersion: '1.0' | '1.1' | '2.0' | '2.1' | null;
-  manifestName: string | null;
+  manifestVersion: '2.0' | null;
   manifestUsable: boolean;
   bindings: ExtensionBinding[];
   activations: Record<string, import('./extension-activation-contract').ExtensionActivationStep[]>;
-  installations: Record<string, ExtensionInstallationSelection>;
+  plugins: Record<string, ExtensionPlugin>;
   featurePhases: string[];
-  declaredSkills: string[];
-  skills: string[];
-  knowledgePaths: string[];
-  knowledge: ExtensionKnowledgeEntry[];
-  mcpActions: Record<string, ExtensionMcpAction>;
-  phaseBindings: Record<string, Partial<Record<ExtensionPhaseBindingSlot, ExtensionPhaseBinding[]>>>;
-  hooks: Record<string, Record<string, string[]>>;
+  manualSkills: ExtensionManualSkill[];
   extensionCapabilities: Record<string, ProfileCapabilitySpec>;
   phaseRuleOverlayPaths: Record<string, string>;
-  /** skillId → assetKey → 已校验的绝对路径（extension 覆盖/增补 profile skill-assets） */
   skillAssetAbsPaths: Record<string, Record<string, string>>;
   errors: ExtensionValidationError[];
 }
