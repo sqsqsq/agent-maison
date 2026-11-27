@@ -1,4 +1,5 @@
 import { runUnitCasesAsync } from '../utils/unit-cases';
+import { testCliArgs } from '../utils/test-cli-args';
 import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
@@ -28,7 +29,7 @@ import { prepareDesignRequest } from '../../scripts/utils/automatic-request';
 const frameworkRoot = path.resolve(__dirname, '../../..');
 const put = (root: string, file: string, text: string) => { const target = path.join(root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, text, 'utf8'); };
 const cli = (root: string, script: string, args: string[], preload?: string) => spawnSync(process.execPath,
-  [...(preload ? ['--require', preload] : []), require.resolve('ts-node/dist/bin.js'), '--transpile-only', path.join(frameworkRoot, 'harness', script), ...args],
+  [...(preload ? ['--require', preload] : []), ...testCliArgs(path.join(frameworkRoot, 'harness', script)), ...args],
   { cwd: root, encoding: 'utf8', timeout: 60000, env: { ...process.env, TS_NODE_PROJECT: path.join(frameworkRoot, 'harness/tsconfig.json'), MAISON_GOAL_RUN_ID: '', MAISON_GOAL_RUNNER: '' } });
 
 function seed(root: string) {
@@ -57,7 +58,6 @@ function seed(root: string) {
 
 const cases: Array<{ name: string; run(): void | Promise<void> }> = [
   { name: 'typed scope accepts deterministic graph bootstrap independently of file forecasts and preserves curated nodes', run() {
-    for (const authorized of [false, true]) {
     const { root, frameworkRoot: fw, feature } = setupRunlessProject();
     const priorBase = process.env.HARNESS_DIFF_BASE_REF, priorRun = process.env.MAISON_GOAL_RUN_ID;
     try {
@@ -67,21 +67,34 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const nodes = [{ id: 'curated-value', core: true, intent: '已确认的余额入口', invariant: '不可重复映射', anchor: { file: 'src/demo/value.ts', symbol: 'value', content_hash: 'keep-curated-anchor' } }];
       const derived = { signatures: [{ file: 'old.ts', symbol: 'old', signature: 'stale derived signature' }] };
       put(root, graphFile, YAML.stringify({ schema_version: '1.0', module: 'demo', derived, nodes }));
-      if (authorized) {
-        const contractsFile = featureFilePath(root, feature, 'contracts.yaml');
-        const contracts = YAML.parse(fs.readFileSync(contractsFile, 'utf8'));
-        contracts.files.push(graphFile); fs.writeFileSync(contractsFile, YAML.stringify(contracts));
-        prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: fw, feature, completionTarget: 'feature',
-          requestedResults: ['value is 42'], requestedPhases: ['coding', 'review', 'ut'], requirement: '把 value 改成 42', overwrite: true,
-          impact: { userVisibleBehaviorChange: false, reason: '仅内部取值变化', basisPaths: ['src/demo/value.ts'] } });
+      // Two design scopes observe the same physical graph update. Only one forecasts that file.
+      const listed = feature + '-listed';
+      fs.mkdirSync(path.dirname(featureFilePath(root, listed, 'contracts.yaml')), { recursive: true });
+      for (const artifact of ['spec.md', 'plan.md'] as const) {
+        fs.copyFileSync(featureFilePath(root, feature, artifact), featureFilePath(root, listed, artifact));
       }
+      for (const artifact of ['acceptance.yaml', 'contracts.yaml'] as const) {
+        const content = YAML.parse(fs.readFileSync(featureFilePath(root, feature, artifact), 'utf8'));
+        content.feature = listed;
+        if (artifact === 'contracts.yaml') content.files.push(graphFile);
+        fs.writeFileSync(featureFilePath(root, listed, artifact), YAML.stringify(content));
+      }
+      prepareFeatureScopeCandidate({ projectRoot: root, frameworkRoot: fw, feature: listed, completionTarget: 'feature',
+        requestedResults: ['value is 42'], requestedPhases: ['coding', 'review', 'ut'], requirement: '把 value 改成 42',
+        impact: { userVisibleBehaviorChange: false, reason: '仅内部取值变化', basisPaths: ['src/demo/value.ts'] } });
       const git = (...args: string[]) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-      git('init', '-q'); git('add', 'src', 'doc', 'framework.config.json'); git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline');
+      git('init', '-q');
+      // The framework junctions mount the development checkout. Only the fixture owns this Git exclusion.
+      fs.appendFileSync(path.join(root, '.git/info/exclude'), '\n/framework/\n');
+      git('add', 'src', 'doc', 'framework.config.json');
+      git('-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'baseline');
       process.env.HARNESS_DIFF_BASE_REF = git('rev-parse', 'HEAD'); delete process.env.MAISON_GOAL_RUN_ID;
-      assert.equal(ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: fw, feature }).status, 'frozen');
-      const resolved = resolveCapabilityInputs({ projectRoot: root, frameworkRoot: fw, feature, phase: 'coding', track: 'full',
-        inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } }).inputs!;
-      const ctx = { projectRoot: root, frameworkRoot: fw, feature, phase: 'coding', resolvedInputs: resolved } as CheckContext;
+      const scopes = [feature, listed].map(subject => {
+        assert.equal(ensureFeatureExecutionScopeFrozen({ projectRoot: root, frameworkRoot: fw, feature: subject }).status, 'frozen');
+        const resolvedInputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot: fw, feature: subject, phase: 'coding', track: 'full',
+          inputContext: { schema_version: '1.1', subject: { feature: subject }, obligations: {}, required_outputs: [] } }).inputs!;
+        return { projectRoot: root, frameworkRoot: fw, feature: subject, phase: 'coding', resolvedInputs } as CheckContext;
+      });
       const graphBefore = fs.readFileSync(path.join(root, graphFile), 'utf8');
       assembleKnowledge({ projectRoot: root, frameworkRoot: fw, phase: 'coding', role: 'author', targetFiles: ['src/demo/value.ts'] });
       assert.equal(fs.readFileSync(path.join(root, graphFile), 'utf8'), graphBefore, '发现不得刷新图谱');
@@ -90,15 +103,16 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       const refreshed = YAML.parse(fs.readFileSync(path.join(root, graphFile), 'utf8'));
       assert.deepEqual(refreshed.nodes, nodes, 'bootstrap 必须保留策展节点与原 anchor');
       assert.notDeepEqual(refreshed.derived, derived, '真实 bootstrap 必须刷新派生内容');
-      const result = checkDiffWithinScope(ctx);
-      assert(result.length > 0 && result.every(check => check.status === 'PASS'), JSON.stringify(result));
+      for (const ctx of scopes) {
+        const result = checkDiffWithinScope(ctx);
+        assert(result.length > 0 && result.every(check => check.status === 'PASS'), JSON.stringify(result));
+      }
       const guidance = renderKnowledge(assembleKnowledge({ projectRoot: root, frameworkRoot: fw, phase: 'coding' }));
       assert(guidance.includes('不在 run 内擅自刷新图谱'));
     } finally {
       if (priorBase === undefined) delete process.env.HARNESS_DIFF_BASE_REF; else process.env.HARNESS_DIFF_BASE_REF = priorBase;
       if (priorRun === undefined) delete process.env.MAISON_GOAL_RUN_ID; else process.env.MAISON_GOAL_RUN_ID = priorRun;
       fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache();
-    }
     }
   } },
   { name: 'custom paths, term/alias disambiguation, noncore navigation and budget preserve original sources', run() {

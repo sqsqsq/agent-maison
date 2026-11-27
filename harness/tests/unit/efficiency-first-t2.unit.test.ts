@@ -574,7 +574,7 @@ const cases: Array<{ name: string; run: () => void }> = [
     // 证据不可消费（unbound / failed 的 visual 绑定）**仍然计 `failed`**，不进 gap 分母。
     // 第 ② 段是**特征化锚**：它一旦变红，说明发布链已经能拦住全 gap，届时可以重新评估
     // G15–G17；在那之前不得把三档转换加回来。
-    name: 'P3-T8 unconsumable visual evidence still counts as failed, and an all-gap P0 set reaches a releasable state (measured: why the tier-3 conversion is withdrawn)',
+    name: 'P3-T8 unconsumable visual evidence fails and unverified P0 gaps remain release-blocking',
     run: () => {
       const root = mkProject();
       try {
@@ -615,8 +615,7 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert.strictEqual(covered[0].status, 'PASS', covered[0].details);
         assert.strictEqual((covered[0].structured as Record<string, unknown>).failed, 0);
 
-        // ② 实测：全部 P0 都是 gap（verified_pass=0 / verified_coverage=0%）时，
-        //    p0_* 全 PASS、质量四轴全 PASS、release_readiness=READY——发布链**拦不住**。
+        // ② 通道计数承认这两个 gap。阶段可交回，缺少可消费的视觉实证仍阻断发布。
         const allGap = { ...base, unsupportedGapTcIds: ['TC-006', 'TC-009'] };
         const cov = evaluateP0CoverageIntegrity(allGap);
         const sem = evaluateP0SemanticCoverage(allGap);
@@ -639,12 +638,8 @@ const cases: Array<{ name: string; run: () => void }> = [
         assert.deepStrictEqual(gaps, { p0: 2, total: 2 });
         assert.strictEqual(projectCompletionStatus(projected, gaps), 'COMPLETE_WITH_P0_GAPS');
         assert.strictEqual(projectPhaseAdvanceVerdict(projected, 'testing'), 'PASS');
-        assert.strictEqual(
-          projectReleaseReadiness(projected), 'READY',
-          '实测锚：全 P0 为 gap 时发布链仍判 READY（质量轴只吃 BLOCKER FAIL，gap 让 failed 归零）——'
-          + '这正是 G15–G17「证据不可消费→三档」被撤回的理由。此断言变红 = 发布链已能拦住全 gap，'
-          + '届时才可重新评估该转换。',
-        );
+        assert.strictEqual(projected.visual.verdict, 'UNVERIFIED');
+        assert.strictEqual(projectReleaseReadiness(projected), 'BLOCKED');
       } finally {
         fs.rmSync(root, { recursive: true, force: true });
       }

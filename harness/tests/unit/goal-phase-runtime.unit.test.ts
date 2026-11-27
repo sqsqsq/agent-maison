@@ -4,6 +4,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { AttendedGoalPhaseExecutor, createWorkUnitExecutionContext, observeWorkUnitProviderSession, rebuildWorkUnitExecutionContext, DetachedGoalPhaseExecutor, validateWorkUnitExecutionContext, PHASE_EXECUTION_CONTEXT_FORBIDDEN_FIELDS, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
 import { GoalPhaseRuntime } from '../../scripts/utils/goal-phase-runtime';
+import { writePhaseExecutionRequestMaterial } from '../../scripts/utils/session-execution-handoff';
 import { enrichOutcomesWithProjection } from '../../scripts/goal-phase-runtime';
 import { projectCanonicalLifecycle } from '../../scripts/utils/goal-canonical-lifecycle';
 import type { HeadlessInvokePlan } from '../../scripts/utils/agent-invoke';
@@ -92,19 +93,25 @@ const cases: Case[] = [                      {
     },
   },
   {
-    name: 'M2 runtime precondition: missing immutable baseline stops before executor without agent retry',
+    name: 'M2 runtime preserves an absent historical baseline and rejects an invalid recorded SHA before execution',
     run: async () => {
       let invoked = false;
       const executor = new AttendedGoalPhaseExecutor(async (ctx) => {
         invoked = true;
         return { status: 'passed', phase: ctx.phase };
       });
+      const runtime = new GoalPhaseRuntime();
+      const legacy = context({
+        owner: { run_id: 'run-1', owner_id: 'dry-run', epoch: 0, kind: 'session' },
+        runtimeFacts: { receiptRequired: true, resume: false, successor: false },
+      });
+      const result = await runtime.executeExecutor(legacy, executor);
+      assert(invoked && result.status === 'passed' && legacy.runtimeFacts.runBaseSha === undefined,
+        'ordinary work must proceed without inventing a historical baseline');
+      invoked = false;
       let error = '';
       try {
-        await new GoalPhaseRuntime().executeExecutor(context({
-          owner: { run_id: 'run-1', owner_id: 'dry-run', epoch: 0, kind: 'session' },
-          runtimeFacts: { receiptRequired: true, resume: false, successor: false },
-        }), executor);
+        await runtime.executeExecutor(context({ ...legacy, runtimeFacts: { ...legacy.runtimeFacts, runBaseSha: 'invalid' } }), executor);
       } catch (caught) {
         error = (caught as Error).message;
       }
@@ -209,7 +216,8 @@ const cases: Case[] = [                      {
         fs.mkdirSync(dir, { recursive: true });
         const authority = { write_mode: 'full-access' as const, approval_mode: 'never' as const };
         const old = context({ projectRoot: root, runDir, authority, attemptId: 'old-attempt' });
-        fs.writeFileSync(path.join(dir, 'request-e1.json'), JSON.stringify({ context: old }));
+        const material = { issuedAt: new Date().toISOString(), gateTimeoutMs: 0, cleanupReserveMs: 0, preSnapshot: null, writeBoundary: null };
+        writePhaseExecutionRequestMaterial({ ...material, context: old, invokeId: 'old-invoke' });
         fs.writeFileSync(path.join(dir, 'agent-events.jsonl'), JSON.stringify({ type: 'thread.started', thread_id: 'precise-alpha' }) + '\n');
         const starts = [{ type: 'agent_invoke_start', phase: 'coding', invoke_id: 'old-invoke' }];
         fs.writeFileSync(path.join(runDir, 'events.jsonl'), [...starts, { type: 'agent_invoke_end', invoke_id: 'old-invoke' }].map(row => JSON.stringify(row)).join('\n') + '\n');
@@ -239,8 +247,7 @@ const cases: Case[] = [                      {
         assert(observedContext().provider_session_id === 'precise-alpha', 'the existing orphan reconciliation did not unlock exact continuation');
         fs.writeFileSync(path.join(runDir, 'events.jsonl'), [...starts, { type: 'legacy_run_override', run_id: 'run-1' }].map(row => JSON.stringify(row)).join('\n') + '\n');
         assert(observedContext().provider_session_id === 'precise-alpha', 'the explicit legacy cleanup acknowledgement was ignored');
-        const later = path.join(runDir, 'phases', 'coding', 'unclosed-new'); fs.mkdirSync(later);
-        fs.writeFileSync(path.join(later, 'request-e1.json'), JSON.stringify({ context: old }));
+        writePhaseExecutionRequestMaterial({ ...material, context: { ...old, attemptId: 'later-attempt' }, invokeId: 'unclosed-new' });
         fs.appendFileSync(path.join(runDir, 'events.jsonl'), JSON.stringify({ type: 'agent_invoke_start', phase: 'coding', invoke_id: 'unclosed-new' }) + '\n');
         const laterOutstanding = observeWorkUnitProviderSession(context({ projectRoot: root, runDir, authority, attemptId: 'new-invoke' }));
         assert('status' in laterOutstanding && laterOutstanding.status === 'waiting' && laterOutstanding.details?.includes('unclosed-new'),

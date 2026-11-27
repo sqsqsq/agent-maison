@@ -20,7 +20,7 @@ import { resolveCapabilityInputs } from '../../scripts/utils/capability-resoluti
 import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
 import { SpecLoader } from '../../scripts/utils/spec-loader';
 import { generateScriptReport } from '../../scripts/utils/report-generator';
-import { type CheckResult, type Phase } from '../../scripts/utils/types';
+import { type AcceptanceSpec, type CheckResult, type Phase } from '../../scripts/utils/types';
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [];
 function test(name: string, run: () => Promise<void>): void { cases.push({ name, run }); }
@@ -58,11 +58,7 @@ export function withProject(body: (p: RealChainProject, birthChain: string[]) =>
 // 随后 plan 产出真契约并发修订。判据（plan §5 原文）：implementation 义务 basis
 // **随新 contracts 刷新**、不留 `basis=[]`、重解析不抛 stale。
 //
-// **偏离 plan §5 的触发阶段（spec → plan），理由是实测的生产行为**（详见 plan §10.9 偏差 1）：
-// 验收在冻结时已满足时，spec 再改 acceptance 不是修订路径——`resolveCapabilityInputs`
-// 判该绑定 `state=invalid / "input binding stale; return to scope owner"`，
-// `designScopeRevisionChecks`（blueprint-skill-projection.ts:51）因 `state !== 'resolved'`
-// 直接早退，根本不发提案。本条末尾把这条"优雅拒绝而不是抛异常"的真实行为一并锁住。
+// 冻结的验收发生变更时，spec 要能读取当前内容重核；下游 review 继续核原签发的绑定。
 // ===========================================================================
 
 test('RC-2 runless：修订后 implementation basis 随新契约刷新、重解析不抛 stale（历史 reader；新独立出口不修订）', withProject(async project => {
@@ -192,8 +188,7 @@ test('RC-2 runless：修订后 implementation basis 随新契约刷新、重解�
     .filter(([, v]) => v.state === 'invalid' && /stale/.test((v as { detail?: string }).detail ?? ''));
   assert(staleInputs.length === 0, `coding 重解析出现 stale 绑定（W2 的失败形态）：${codingStates}`);
 
-  // ④ 另一半真实行为（见本条头部偏离说明）：**已满足**的验收被 spec 再改时，
-  //    重解析不抛异常，而是优雅判 invalid 并指回 scope owner。W2 当年是直接抛。
+  // ④ 同一次手改，分别从验收的原责任方和依赖其签发结果的下游读取。
   const acceptanceAbs = featureFilePath(root, feature, 'acceptance.yaml');
   const acceptance = YAML.parse(fs.readFileSync(acceptanceAbs, 'utf-8')) as { criteria: Array<Record<string, unknown>> };
   acceptance.criteria.push({
@@ -205,13 +200,16 @@ test('RC-2 runless：修订后 implementation basis 随新契约刷新、重解�
   const specBridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase: 'spec', featuresDir: relFeaturesDir(root) });
   const specInputs = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'spec', track: 'full', ...specBridge }).inputs!;
   const acceptanceValue = specInputs.values.acceptance;
-  // 判据核**原因**而不只是 `/stale/` 二字：这条锁的是「指回 scope owner」这条出路
-  //（`capability-resolution.ts:666` 的原文），换成别的 stale 文案即归因换了人（codex 阻断 2）。
+  assert(acceptanceValue?.state === 'resolved' && (acceptanceValue.value as AcceptanceSpec).criteria.some(item => item.id === 'AC-3'),
+    'spec must receive the changed criterion for revalidation');
+  const reviewBridge = resolveCapabilityResolutionEntryInput({ projectRoot: root, frameworkRoot, feature, phase: 'review', featuresDir: relFeaturesDir(root) });
+  const review = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'review', track: 'full', ...reviewBridge }).inputs!.values.acceptance;
   assert(
-    acceptanceValue?.state === 'invalid'
-      && (acceptanceValue as { detail?: string }).detail === 'input binding stale; return to scope owner',
-    `改已满足的验收后重解析的结论变了：${JSON.stringify(acceptanceValue)}`,
+    review?.state === 'invalid' && review.detail === 'input binding stale; return to scope owner',
+    `review 必须等待原责任方重签已变更的验收：${JSON.stringify(review)}`,
   );
+  assert(JSON.stringify(featureEffectiveScope(readFeatureFrozenScope(root, feature)!)) === JSON.stringify(after),
+    'reading current acceptance must not re-sign the frozen scope');
 }));
 
 // Current resource ownership and upstream evidence boundaries live in phase-write-boundary/upstream-issues; RC10 keeps the real host integration.

@@ -31,7 +31,8 @@ function codexSession(sessionId, env = process.env) {
     db = new DatabaseSync(index, { readOnly: true });
     const row = db.prepare('SELECT id, rollout_path, cwd FROM threads WHERE id=?').get(sessionId);
     if (!row || typeof row.rollout_path !== 'string' || !row.rollout_path) return { gap: 'Codex当前精确线程没有可读原件定位' };
-    return { file: row.rollout_path, sessionId: row.id, cwd: row.cwd };
+    const file = row.rollout_path.replace(/^\\\\\?\\(?=[a-z]:\\)/i, '');
+    return { file, sessionId: row.id, cwd: row.cwd };
   } catch { return { gap: '当前Node运行时无法只读消费Codex精确线程索引' }; }
   finally { db?.close(); }
 }

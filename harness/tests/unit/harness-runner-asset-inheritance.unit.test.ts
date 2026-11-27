@@ -197,8 +197,8 @@ const cases: Array<{ name: string; run: () => void | Promise<void> }> = [
       const ledger = deriveVisualDebt(FEATURE, checks, null);
       assertTrue(countBlockingDebt(ledger).open >= 1, `非 MINOR SKIP 须开账：${JSON.stringify(ledger.entries)}`);
       const testing = deriveSummaryVerdictLattice(checks, { phase: 'testing', visualApplicable: true, assetApplicable: false });
-      assertEq(testing.quality_axes.visual.verdict, 'PASS', '构造性前提：mount PASS 令 visual 轴 PASS（盲档 SKIP 单靠能力投影不阻断）');
-      assertEq(testing.release_readiness, 'READY', '构造性前提：压轴前 release READY——账本是唯一阻断');
+      assertEq(testing.quality_axes.visual.verdict, 'UNVERIFIED', '挂载检查通过，视觉比对仍缺执行证据');
+      assertEq(testing.release_readiness, 'BLOCKED', '缺少视觉实证即阻断发布');
       applyVisualDebtPipeline(root, minimalReport('testing', root, checks), testing);
       assertTrue(countBlockingDebt(loadVisualDebt(root, FEATURE)).open >= 1, '账本落盘 open≥1');
       assertEq(testing.quality_axes.visual.verdict, 'UNVERIFIED', 'testing 期 visual 压 UNVERIFIED');

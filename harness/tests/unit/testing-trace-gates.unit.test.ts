@@ -1,4 +1,5 @@
 import { runUnitCasesAsync } from '../utils/unit-cases';
+import { testCliArgs } from '../utils/test-cli-args';
 /**
  * testing-trace-gates — unit tests for Hylyre outcome gate & report reconciliation.
  */
@@ -1239,14 +1240,9 @@ test('report-reconcile-only: 真实 CLI 跳过 provider、视觉采集与 execut
     fs.cpSync(source, target, {
       recursive: true,
       filter: (candidate: string) => {
-        const rel = path.relative(sourceRoot, candidate).replace(/\\/g, '/');
-        return !rel.includes('/node_modules/') &&
-          !rel.includes('/.git/') &&
-          !rel.startsWith('harness/reports/') &&
-          !rel.startsWith('harness/state/') &&
-          !rel.startsWith('harness/trace/') &&
-          !rel.startsWith('harness/tests/') &&
-          !rel.includes('/vendor/');
+        const [top, directory] = path.relative(sourceRoot, candidate).split(path.sep);
+        if (top === 'harness' && ['dist', 'reports', 'state', 'trace', 'tests'].includes(directory)) return false;
+        return !['node_modules', '.git', 'vendor'].includes(path.basename(candidate));
       },
     });
   };
@@ -1299,7 +1295,6 @@ test('report-reconcile-only: 真实 CLI 跳过 provider、视觉采集与 execut
     const traceBefore = sha256(fixture.tracePath);
     fs.writeFileSync(path.join(fixture.reportsDir, 'script-report.json'), JSON.stringify({ stale: true }));
     fs.writeFileSync(path.join(fixture.reportsDir, 'summary.json'), JSON.stringify({ stale: true }));
-    const tsNodeRegister = path.join(sourceRoot, 'harness', 'node_modules', 'ts-node', 'register', 'transpile-only.js');
     const env = {
       ...process.env,
       NODE_PATH: [
@@ -1313,8 +1308,7 @@ test('report-reconcile-only: 真实 CLI 跳过 provider、视觉采集与 execut
     const run = spawnSync(
       process.execPath,
       [
-        '-r', tsNodeRegister,
-        path.join(fixture.root, 'harness', 'harness-runner.ts'),
+        ...testCliArgs(path.join(fixture.root, 'harness', 'harness-runner.ts')),
         '--phase', 'testing', '--feature', 'demo', '--report-reconcile-only', '--failures-only',
       ],
       { cwd: path.join(fixture.root, 'harness'), env, encoding: 'utf8', timeout: 120000, windowsHide: true },

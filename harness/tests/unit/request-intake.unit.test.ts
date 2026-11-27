@@ -569,6 +569,39 @@ for (let i=0;i<11;i++) test('case ' + i, () => assert.equal(require('../src/valu
     assert.equal(paged.user.id, 'native-user'); assert.deepEqual(paged.gaps, []);
     assert(paged.source_results?.some(item => item.detail.includes('history_base')));
   } },
+  { name: 'Codex opens the exact user rollout when its SQLite index stores a Windows extended drive path', run(f) {
+    const home = path.join(f.root, '.native-codex');
+    const sid = 'indexed-extended-thread';
+    const sessions = path.join(home, 'sessions');
+    fs.mkdirSync(sessions, { recursive: true });
+    const localFile = path.join(sessions, sid + '.jsonl');
+    const driveFile = process.platform === 'win32' ? localFile : path.win32.join('C:\\Maison', sid + '.jsonl');
+    const indexed = path.win32.toNamespacedPath(driveFile);
+    assert(indexed.startsWith('\\\\?\\'));
+    const index = path.join(home, 'state_5.sqlite');
+    let sqlite: typeof import('node:sqlite');
+    try { sqlite = require('node:sqlite'); } catch {
+      fs.writeFileSync(index, 'unavailable');
+      assert(!native.codexSession(sid, { CODEX_HOME: home }).file);
+      return;
+    }
+    const db = new sqlite.DatabaseSync(index);
+    try {
+      db.exec('CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT, cwd TEXT)');
+      db.prepare('INSERT INTO threads VALUES (?, ?, ?)').run(sid, indexed, f.root);
+      const located = native.codexSession(sid, { CODEX_HOME: home });
+      assert.deepEqual(located, { file: driveFile, sessionId: sid, cwd: f.root });
+      assert.equal(db.prepare('SELECT rollout_path FROM threads WHERE id=?').get(sid)?.rollout_path, indexed);
+      if (process.platform === 'win32') {
+        process.env.CODEX_HOME = home;
+        fs.writeFileSync(localFile, [
+          { type: 'session_meta', payload: { id: sid, cwd: f.root } },
+          { type: 'response_item', payload: { type: 'message', role: 'user', id: 'original-user', content: [{ type: 'input_text', text: '核对当前交付' }] } },
+        ].map(row => JSON.stringify(row)).join('\n') + '\n');
+        assert.equal(native.readNativeSession(located.file + '#original-user', f.root).request.id, 'original-user');
+      }
+    } finally { db.close(); }
+  } },
   { name: 'R2 design entry consumes the same historical decision and cannot steal an existing managed run', run(f) {
     const s = setup(f);
     const configFile = path.join(f.root, 'framework.config.json');

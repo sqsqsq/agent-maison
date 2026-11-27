@@ -32,4 +32,3 @@ export function readRequestCompileHap(projectRoot: string): RequestBuildArtifact
   const sha256 = computeHapSha256Full(realProjectPath(projectRoot, safe, 'request compile HAP'));
   return sha256 ? { path: safe, sha256, module: candidate.moduleName } : null;
 }
-
