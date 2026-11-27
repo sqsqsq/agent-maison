@@ -119,7 +119,8 @@ export function readPhaseRecoveryFile(projectRoot: string, file: string): { actu
  */
 export function capturePhaseInvocationSnapshot(
   resolution: Pick<PhaseWriteBoundaryResolution, 'projectRoot' | 'protectedRoots' | 'executionRole' | 'immutableInputPaths' | 'verifierResultPath'>,
-  options: { ownedPrefixes?: readonly string[]; runtimeExcluded?: readonly string[]; includeFiles?: readonly string[] } = {},
+  options: { ownedPrefixes?: readonly string[]; runtimeExcluded?: readonly string[]; includeFiles?: readonly string[];
+    wholeProject?: boolean; onObservedPath?: (relative: string) => void } = {},
 ): PhaseInvocationSnapshot {
   const entries: PhaseInvocationSnapshotEntry[] = [];
   const seen = new Set<string>();
@@ -155,6 +156,7 @@ export function capturePhaseInvocationSnapshot(
     }
     if (rel.split('/').some((segment) => SNAPSHOT_EXCLUDED_SEGMENTS.has(segment))) return null;
     if (excludedByRuntime(rel)) return null;
+    options.onObservedPath?.(rel);
     if (stat.isSymbolicLink()) {
       try {
         if (!seen.has(rel)) {
@@ -191,7 +193,12 @@ export function capturePhaseInvocationSnapshot(
     }
   };
 
-  for (const root of resolution.protectedRoots) {
+  let roots = resolution.protectedRoots;
+  if (options.wholeProject) {
+    try { roots = fs.readdirSync(resolution.projectRoot); }
+    catch (error) { return snapshotFailure(`readdir failed: ${resolution.projectRoot}: ${(error as Error).message}`); }
+  }
+  for (const root of roots) {
     const failure = visit(path.join(resolution.projectRoot, root), false);
     if (failure) return snapshotFailure(failure);
   }

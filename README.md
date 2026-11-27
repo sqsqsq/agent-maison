@@ -26,6 +26,8 @@
 
 叠加顺序：**framework 默认 → profile → workflow → instance extensions**。详见 [docs/concepts/extensibility.md](docs/concepts/extensibility.md)。
 
+开发或安装本地实例扩展时，查阅 [Extension 接入协议](docs/evolution/extension-protocol-v1.md)。发布件带有完整时点表、可安装例子和启停自测命令。
+
 ### Profile 加载顺序
 
 1. `framework.config.json > project_profile.name` 选择 active profile；缺失时兼容回退 `hmos-app`，并输出一次 advisory，提示通过 framework-init UPDATE 补字段。

@@ -100,7 +100,7 @@ flowchart TB
 - [`framework/specs/instance-extension-manifest.schema.yaml`](../../specs/instance-extension-manifest.schema.yaml) — `doc/extensions/manifest.yaml`
 - [`framework/specs/lifecycle-hooks-schema.yaml`](../../specs/lifecycle-hooks-schema.yaml) — lifecycle hook 事件与上下文
 
-演进与 breaking 约定见：[extension-protocol-v1.md](../evolution/extension-protocol-v1.md)。
+字段、时点、动态启停和版本演进见 [Extension 接入协议](../evolution/extension-protocol-v1.md)。
 
 Manifest 1.1 由 [`/extension`](../../skills/project/extension/SKILL.md) 管理：`knowledge` 按 audience
 路由到 AGENTS.md 或 Feature phase `ai-prompt.md`，`mcp_actions` 只声明宿主执行与仓内

@@ -423,6 +423,7 @@ extension Skill
   只标 `agent_self_report`，不冒充完成证据。
 - 最小 manifest 见 [`samples/extension-m7-manifest.yaml`](samples/extension-m7-manifest.yaml)。其中路径与
   tool id 是示例，接入时须替换为真实项目值。
+- 直接安装 [design-notes](samples/design-notes/) 可验证设计前知识和作者动作。[样例清单](samples/design-notes/manifest.yaml)声明指南和生成核对记录的 Skill，安装与自测见 [Extension 接入协议](../evolution/extension-protocol-v1.md)。
 
 ---
 

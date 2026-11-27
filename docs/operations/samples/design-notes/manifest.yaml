@@ -1,0 +1,18 @@
+schema_version: "2.1"
+name: design-notes
+version: "1.0.0"
+description: 设计前核对需求与待确认问题。
+provides:
+  skills: [design-notes]
+bindings:
+  design-notes:
+    guide:
+      at: component-design.before_discovery@1
+      kind: knowledge
+      ref: knowledge/design-notes/guide.md
+      enabled_by_default: true
+    note:
+      at: component-design.before_discovery@1
+      kind: action
+      ref: design-notes
+      enabled_by_default: true

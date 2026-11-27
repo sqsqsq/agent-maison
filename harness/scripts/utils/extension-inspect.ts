@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { extensionSkillIdsForBridge, loadInstanceExtensions } from '../../extension-loader';
+import { extensionSkillIdsForBridge, loadInstanceExtensions, readExtensionTimings, type ExtensionTiming } from '../../extension-loader';
 import { loadFrameworkConfigWithSources } from '../../config';
 import {
   loadReservedBridgeIds,
@@ -13,7 +13,10 @@ import {
 } from './instance-skill-bridge';
 import { inspectExtensionProduce } from './extension-runtime';
 import { extensionKnowledgeRoutes } from './knowledge-context';
-import type { ExtensionValidationError } from './types';
+import { extensionActivationDrift, type ExtensionActivationDrift } from './extension-activation';
+import type { ExtensionActivationResult } from './extension-activation-contract';
+import { extensionRequestsUsingAbility } from './extension-requests';
+import type { ExtensionPendingCleanup, ExtensionValidationError } from './types';
 
 export type ExtensionStrength = 'available' | 'scheduled' | 'evidenced';
 
@@ -27,6 +30,7 @@ export interface ExtensionInspectRow {
   ability?: string;
   bindingId?: string;
   at?: string;
+  phase?: string;
   packageSource?: string;
 }
 
@@ -37,10 +41,25 @@ export interface ExtensionReconciliationFinding {
   ability?: string;
 }
 
+interface InspectedInstallation {
+  ability: string;
+  source?: string;
+  version?: string;
+  state: 'installed' | 'enabled' | 'failed' | 'pending_cleanup';
+  bindingOverrides?: Record<string, unknown>;
+  activation?: ExtensionActivationResult;
+  pendingCleanup?: ExtensionPendingCleanup & ReturnType<typeof extensionRequestsUsingAbility>;
+  drift?: ExtensionActivationDrift[];
+}
+
 export interface ExtensionInspection {
   schemaVersion: '1.0';
   extensionRoot: string | null;
   manifest: string | null;
+  targetFramework: string;
+  timings: Array<ExtensionTiming & { phaseRequired: boolean }>;
+  timingCatalogError?: string;
+  installations: InspectedInstallation[];
   rows: ExtensionInspectRow[];
   findings: ExtensionReconciliationFinding[];
   manifestErrors: ExtensionValidationError[];
@@ -86,6 +105,42 @@ export function inspectInstanceExtensions(
   const bundle = loadInstanceExtensions(projectRoot, extensionDir, { frameworkRoot: frameworkDir });
   const rows: ExtensionInspectRow[] = [];
   const findings: ExtensionReconciliationFinding[] = [];
+  const timingCatalog = { targetFramework: frameworkDir, timings: [] as ExtensionInspection['timings'], timingCatalogError: undefined as string | undefined };
+  if (!options.ability) {
+    try {
+      timingCatalog.timings = [...readExtensionTimings(frameworkDir).values()]
+        .map(timing => ({ ...timing, phaseRequired: timing.scope !== 'project' }));
+    } catch (error) {
+      timingCatalog.timingCatalogError = (error as Error).message;
+    }
+  }
+  const installations: InspectedInstallation[] = [];
+  for (const [ability, installation] of Object.entries(bundle.installations)) {
+    if (options.ability && options.ability !== ability) continue;
+    const { source, version, pending_cleanup: pending, activation_result: activation } = installation;
+    const pendingCleanup = pending && source
+      ? { ...pending, ...extensionRequestsUsingAbility(projectRoot, ability, source, pending.binding) }
+      : undefined;
+    const drift = activation?.status === 'enabled' && bundle.rootDir ? extensionActivationDrift(bundle.rootDir, activation) : [];
+    const state = pendingCleanup ? 'pending_cleanup' : activation?.status === 'failed' ? 'failed'
+      : installation.enabled && (!bundle.activations[ability] || activation?.status === 'enabled') ? 'enabled' : 'installed';
+    installations.push({ ability, source, version, state, bindingOverrides: installation.binding_overrides, activation, pendingCleanup,
+      ...(drift.length ? { drift } : {}) });
+    if (!drift.length) continue;
+    const affected = bundle.bindings.filter(binding => binding.ability === ability && binding.selected).map(binding => binding.id);
+    const hasConflict = drift.some(item => item.kind !== 'missing');
+    const driftReasons = { missing: '产物缺失', changed: '当前内容与生成指纹不符', unverifiable: '无法核实当前产物' };
+    for (const item of drift) {
+      const preserve = item.kind === 'missing' ? '' : '保留当前内容。';
+      const advice = pendingCleanup ? '请按待清理回执重试原操作。'
+        : item.kind !== 'missing' ? '请维护者核对并处理冲突。'
+        : hasConflict ? '请先处理本能力的其他产物冲突。'
+        : `运行 extension enable ${ability} 修复。`;
+      findings.push({ code: 'extension_activation_drift', ability,
+        path: bundle.rootDir ? path.posix.join(rel(projectRoot, bundle.rootDir), item.path) : item.path,
+        message: `${ability} 启用效果漂移：${driftReasons[item.kind]}${item.reason ? `（${item.reason}）` : ''}。${affected.length ? `所选绑定：${affected.join(', ')}。` : ''}${preserve}${advice}` });
+    }
+  }
   const scanned = bundle.manifestUsable ? scanExtensionSkills(projectRoot, extensionDir) : [];
   const declared = new Set(bundle.declaredSkills);
   const scannedIds = new Set(scanned.map(row => row.sourceSlug));
@@ -156,7 +211,7 @@ export function inspectInstanceExtensions(
       source: [identity, resource].filter(Boolean).join(' · '), timing: where || '时点未声明',
       consumer: binding.consumer ?? '无已识别消费者', state: scheduled ? 'scheduled' : 'available',
       status: scheduled ? 'declared' : `未启用：${binding.reason ?? `工具 ${action?.tool} 当前不可见（agent 自报）`}`,
-      ability: binding.ability, bindingId: binding.id, at: binding.at, packageSource: binding.source,
+      ability: binding.ability, bindingId: binding.id, at: binding.at, phase: binding.phase, packageSource: binding.source,
     });
   }
   for (const action of Object.values(bundle.mcpActions)) {
@@ -205,6 +260,7 @@ export function inspectInstanceExtensions(
   return {
     schemaVersion: '1.0', extensionRoot: bundle.rootDir ? rel(projectRoot, bundle.rootDir) : null,
     manifest: bundle.manifestPath ? rel(projectRoot, bundle.manifestPath) : null,
+    ...timingCatalog, installations,
     rows: options.ability ? rows.filter(row => row.ability === options.ability) : rows,
     findings: options.ability ? findings.filter(item => item.ability === options.ability) : findings,
     manifestErrors: bundle.errors.filter(error => !options.ability || !error.ability || error.ability === options.ability)
@@ -216,12 +272,43 @@ export function formatExtensionInspection(inspection: ExtensionInspection): stri
   const lines = [
     `extension_root: ${inspection.extensionRoot ?? '(absent)'}`,
     `manifest: ${inspection.manifest ?? '(absent)'}`,
-    '',
+  ];
+  if (inspection.timingCatalogError || inspection.timings.length) {
+    lines.push('', `目标发布件 ${inspection.targetFramework}`);
+    if (inspection.timingCatalogError) lines.push(`时点清单不可用：${inspection.timingCatalogError}`);
+    else lines.push('| 支持时点 | 触发时刻 | 适用范围及阶段 | 消费者 | 允许资源 |', '|---|---|---|---|---|',
+      ...inspection.timings.map(timing => `| ${timing.id} | ${timing.description} | ${timing.scope} · ${timing.phaseRequired ? '需要 phase' : '省略 phase'} | ${timing.consumer ?? Object.entries(timing.consumers ?? {}).map(([resource, consumer]) => `${resource}：${consumer}`).join('；')} | ${timing.resources.join(', ')} |`));
+  }
+  if (inspection.installations.length) {
+    lines.push('', '安装状态');
+    const states = { installed: '已安装未启用', enabled: '已启用', failed: '启用失败', pending_cleanup: '已停止目标的新调度，待清理' };
+    for (const item of inspection.installations) {
+      lines.push(`- ${item.ability}${item.version ? ` ${item.version}` : ''}：${states[item.state]}`);
+      if (item.activation?.status === 'running') {
+        lines.push(`  - 启用步骤尚未完成。${item.pendingCleanup ? '' : `恢复时运行 extension enable ${item.ability}。`}`);
+      }
+      if (item.activation?.failure) lines.push(`  - 失败：${item.activation.failure}`);
+      for (const step of item.activation?.steps ?? []) {
+        lines.push(`  - ${step.id} · ${step.status}${step.outputs.length ? ` · 产物 ${step.outputs.map(out => out.path).join(', ')}` : ''}${step.failure ? ` · ${step.failure}` : ''}`);
+      }
+      for (const residual of item.activation?.residuals ?? []) {
+        lines.push(`  - 残留 ${residual.path} · ${residual.how} · preSha256=${residual.preSha256 ?? '—'}`);
+      }
+      if (item.pendingCleanup) {
+        const pending = item.pendingCleanup;
+        lines.push(`  - ${pending.operation} ${pending.binding ?? '整项'}：${pending.requestIds.length
+          ? `资源仍被请求 ${pending.requestIds.join(', ')} 占用，待清理` : '占用已解除，待清理'}。`);
+        lines.push(`  - 重试原操作：extension ${pending.command.map(arg => JSON.stringify(arg)).join(' ')}`);
+        for (const request of pending.inactiveRequests) lines.push(`  - ${request.requestId}：${request.reason}（${request.requestFile}）`);
+      }
+    }
+  }
+  lines.push('',
     '| 类型 | 来源 | 生效时机 | 消费者 | 强度 | 状态 |',
     '|---|---|---|---|---|---|',
     ...inspection.rows.map(row =>
       `| ${row.type} | ${row.source} | ${row.timing} | ${row.consumer} | ${row.state} | ${row.status} |`),
-  ];
+  );
   if (inspection.rows.length === 0) lines.push('| — | — | — | — | — | empty |');
   if (inspection.manifestErrors.length || inspection.findings.length) {
     lines.push('', '对账：');

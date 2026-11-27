@@ -330,12 +330,27 @@ cases.push({
       assert.equal(denied.status, 1, denied.stderr + denied.stdout);
       assert.match(denied.stderr, /宿主管理入口/);
       const changed = cli({});
-      assert.equal(changed.status, 0, changed.stderr + changed.stdout);
-      assert.equal(JSON.parse(changed.stdout).mutation.changed, true);
+      assert.equal(changed.status, 1, changed.stderr + changed.stdout);
+      const waiting = JSON.parse(changed.stdout).mutation;
+      const pending = { operation: 'disable', command: ['disable', 'ux'] };
+      assert.equal(waiting.changed, true);
+      assert.deepEqual(waiting.requestIds, [invokeId]);
+      assert.deepEqual(waiting.outcomes, [{ ability: 'ux', state: 'pending', pending }]);
+      const selection = () => YAML.parse(fs.readFileSync(path.join(project.root, manifest), 'utf8')).installations.ux;
+      assert.equal(selection().enabled, false);
+      assert.deepEqual(selection().pending_cleanup, pending);
       assert.deepEqual((await next()).request, first.request, 'ordinary next reuses the original signed inputs');
       assert.equal(fs.readFileSync(path.join(project.root, skill), 'utf8'), '# Original UX action\n');
       await next({ requestPath: reference.path, report: { status: 'passed', phase: context.phase, details: '执行结束，初建设计仍未交付。' } });
       assert.equal(handoff.acceptedSessionReport(prepared.runDir, issued)?.event.status, 'passed');
+      assert.deepEqual(selection().pending_cleanup, pending);
+      const stopped = cli({});
+      assert.equal(stopped.status, 0, stopped.stderr + stopped.stdout);
+      const completed = JSON.parse(stopped.stdout).mutation;
+      assert.equal(completed.requestIds, undefined);
+      assert.equal(completed.outcomes[0]?.state, 'disabled');
+      assert.equal(selection().pending_cleanup, undefined);
+      assert.equal(fs.readFileSync(path.join(project.root, skill), 'utf8'), '# Original UX action\n');
       const events = handoff.sessionEvents(prepared.runDir);
       assert(events.some(event => event.type === 'phase_write_observed' && event.invoke_id === invokeId
         && 'producer' in event && event.producer === 'extension-management' && 'produced' in event

@@ -149,6 +149,7 @@ function main(): void {
   const argv = parseArgs({ options: {
     action: { type: 'string' }, 'project-root': { type: 'string' }, source: { type: 'string' },
     ability: { type: 'string' }, binding: { type: 'string' }, request: { type: 'string' }, json: { type: 'boolean' },
+    'no-enable': { type: 'boolean' }, at: { type: 'string' }, phase: { type: 'string' },
     'tool-visible': { type: 'string' }, 'tool-missing': { type: 'string' },
   }, allowPositionals: true });
   const values = argv.values;
@@ -160,6 +161,8 @@ function main(): void {
   const ability = values.ability ?? positional.shift();
   const binding = action === 'enable' || action === 'disable' ? values.binding ?? positional.shift() : values.binding;
   if (positional.length || (source && action !== 'install') || (binding && action !== 'enable' && action !== 'disable')
+    || (values['no-enable'] && action !== 'install')
+    || ((values.at !== undefined || values.phase !== undefined) && (action !== 'enable' || !binding))
     || (values.request && action !== 'inspect') || (ability && ['init', 'materialize', 'verify'].includes(action))) {
     throw new Error('extension 操作参数与用法不匹配');
   }
@@ -181,17 +184,28 @@ function main(): void {
       const priorSections = buildAgentsTemplateVars(sources.projectRaw ?? {}, {
         entryFile: 'AGENTS.md', projectRoot, frameworkRoot: frameworkDir,
       }) as EntrySections;
+      const closedMaterializations: Record<string, unknown>[] = [];
       const result = changeExtension(action, {
         projectRoot, frameworkRoot: frameworkDir, source, ability, binding, observeWrite,
+        noEnable: values['no-enable'], at: values.at, phase: values.phase,
+        closeEntries: () => {
+          closedMaterializations.push(materializeExtensions(projectRoot, frameworkDir, priorSections, observeWrite));
+        },
       });
-      if (result.requestIds?.length) {
-        process.exitCode = 1;
-        return { ...result, message: action === 'install' ? '等待已有请求交回后重试安装。' : '等待已有请求交回后重试卸载。' };
-      }
+      const pending = result.requestIds?.length;
+      const failed = result.outcomes.some(item => item.state === 'failed');
+      if (pending || failed) process.exitCode = 1;
+      const message = pending && (action === 'install' ? '等待已有请求交回后重试安装。'
+        : action === 'enable' ? '等待资源占用解除后重试启用。'
+          : '已停止新调度。资源仍被受管请求占用，交回后请重试原命令。');
       return {
         ...result,
-        ...(action === 'install' ? { skeletonFilesWritten: initExtension(projectRoot, frameworkDir, observeWrite) } : {}),
-        materialization: materializeExtensions(projectRoot, frameworkDir, priorSections, observeWrite),
+        ...(message ? { message, occupancyScope: '受管蓝图和 CU 作者的原签发。直接交互会话沿用非受管边界。' } : {}),
+        ...(closedMaterializations.length ? { closedMaterializations } : {}),
+        ...(action === 'install' && (result.changed || result.outcomes.some(item => item.state === 'installed' || item.state === 'enabled'))
+          ? { skeletonFilesWritten: initExtension(projectRoot, frameworkDir, observeWrite) } : {}),
+        ...(result.changed || !pending && !failed
+          ? { materialization: materializeExtensions(projectRoot, frameworkDir, priorSections, observeWrite) } : {}),
       };
     }));
   }
@@ -203,7 +217,8 @@ function main(): void {
     process.stdout.write(`${formatExtensionInspection(inspection)}\n`);
     if (request) process.stdout.write(`\n${JSON.stringify(request, null, 2)}\n`);
   }
-  if (action === 'verify' && inspection.manifestErrors.length > 0) process.exitCode = 1;
+  if (action === 'verify' && (inspection.manifestErrors.length || inspection.timingCatalogError
+    || inspection.findings.some(finding => finding.code === 'extension_activation_drift'))) process.exitCode = 1;
 }
 
 if (require.main === module) {

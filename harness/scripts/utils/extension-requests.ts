@@ -132,11 +132,12 @@ function extensionRequestUsage(active: AuthorRequest[], inactiveRequests: Inacti
   return { requestIds: [...new Set(requestIds)].sort(), inactiveRequests };
 }
 
-export function extensionRequestsUsingAbility(projectRoot: string, ability: string, source: string): ExtensionRequestUsage {
+export function extensionRequestsUsingAbility(projectRoot: string, ability: string, source: string, bindingId?: string): ExtensionRequestUsage {
   const active: AuthorRequest[] = [];
   const inactive: InactiveExtensionRequest[] = [];
   for (const request of authorRequests(projectRoot, undefined, true)) {
-    if (!request.bindings.some(binding => binding.ability === ability && binding.source === source)) continue;
+    if (!request.bindings.some(binding => binding.ability === ability && binding.source === source
+      && (bindingId === undefined || binding.id === bindingId))) continue;
     const reason = inactiveReason(request);
     if (reason) inactive.push({ requestId: request.requestId, runId: request.runId, requestFile: request.requestFile, reason });
     else active.push(request);

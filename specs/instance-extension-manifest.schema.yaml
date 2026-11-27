@@ -1,10 +1,11 @@
 # Instance extension manifest schema (doc/extensions/manifest.yaml)
 # schema_version is independent from workflow-schema and lifecycle-hooks-schema.
-schema_version: "2.0"
+schema_version: "2.1"
 description: >
   Schema describing a local extension source or the host doc/extensions/manifest.yaml.
   Validation and normalization are implemented in harness/extension-loader.ts. Versions 1.0
-  and 1.1 remain readable, and 2.0 adds named bindings and host installation selections.
+  and 1.1 remain readable. 2.0 adds named bindings and host installation selections.
+  2.1 adds reversible activation steps and host timing overrides.
 
 root_object:
   type: object
@@ -15,55 +16,58 @@ root_object:
   properties:
     schema_version:
       type: string
-      enum: ["1.0", "1.1", "2.0"]
+      enum: ["1.0", "1.1", "2.0", "2.1"]
+      description: 选择字段的解析协议。动态步骤和宿主时点覆盖使用 2.1。
     name:
       type: string
-      description: Extension source identity. In 1.1 it must be a lowercase slug.
+      description: 声明来源身份。在 1.1 中须为小写 slug。
     version:
       type: string
-      description: Optional package version for agentskills.io-style frontmatter parity.
+      description: 标明包版本，供管理端记录与核对重装、升级。
     description:
       type: string
+      description: 面向读者的能力简介，仅供说明。
     framework_compat:
       type: string
-      description: Optional semver range string (informative until a resolver exists).
+      description: 以 semver 范围描述适用框架版本，仅供说明。
 
     provides:
       type: object
       additionalProperties: false
+      description: 声明手动技能及既有消费者可用的资源。
       properties:
         skills:
           type: array
           items: { type: string }
-          description: Logical skill ids (directories under doc/extensions/skills/<id>/).
+          description: 手动入口的逻辑 Skill ID，指向扩展根的 skills/<id>/SKILL.md，1.0 入口按目录发现。
         knowledge:
           type: array
           items:
             oneOf:
               - { type: string }
               - type: object
+                x-since: "1.1"
                 additionalProperties: false
                 required: [path, audience]
                 allOf:
                   - if: { properties: { audience: { not: { const: none } } } }
                     then: { required: [summary] }
                 properties:
-                  path: { type: string }
-                  summary: { type: string }
+                  path: { type: string, description: 扩展根相对知识路径。 }
+                  summary: { type: string, x-required: audience 非 none 时必填, description: 显示在投递索引中的摘要。 }
                   audience:
+                    description: global 进入项目入口，非空阶段数组进入对应 Feature 作者索引，none 仅保留文件登记（2.0 起）。
                     oneOf:
                       - { enum: [global, none] }
                       - type: array
                         minItems: 1
                         items: { type: string }
           description: >
-            1.0 accepts strings only. In 1.1, strings target every Feature phase and never
-            AGENTS.md; object entries route to global AGENTS.md or named Feature phases.
-            Version 2.0 keeps 1.1 routing and additionally accepts audience none to preserve
-            1.0 entries during migration without introducing an automatic consumer.
+            1.0 字符串只登记文件。1.1 起，字符串进入所有 Feature 阶段的动态索引，
+            对象按 audience 投递。2.0 起可用 audience none 保留旧路径的登记。
         hooks:
           type: object
-          description: Map phase id -> map event -> list of paths relative to doc/extensions/.
+          description: 兼容写法。按阶段和事件列出扩展根相对的 .md 或 .mjs，由原 harness 消费。
           additionalProperties:
             type: object
             additionalProperties:
@@ -71,64 +75,72 @@ root_object:
               items: { type: string }
         capabilities:
           type: object
+          x-key: <能力键>
           description: >
-            Arbitrary capability keys (string) -> { provider: relative path, severity: BLOCKER|MAJOR|... }.
+            将键映射到原 harness capability registry 的本地 provider 和严重级别。
           additionalProperties:
             type: object
             required: [provider, severity]
             properties:
-              provider: { type: string }
+              provider: { type: string, description: 扩展根相对的 capability provider 路径。 }
               severity:
                 type: string
                 enum: [BLOCKER, SKIP, WARN, MAJOR, MINOR]
+                description: 原 capability 检查使用的严重级别。
         phase_rules_overlays:
           type: object
-          description: Map phase string -> relative path to overlay yaml under doc/extensions/.
+          description: 为指定阶段追加扩展根内的规则 YAML，由原规则合并器读取。
           additionalProperties: { type: string }
         skill_assets:
           type: object
           description: >
-            Map skill id -> map asset key -> relative path under doc/extensions/.
-            Merged over profile skill-assets.yaml (extension wins on key collision).
+            按 Skill 与资源键指定扩展根相对路径，覆盖 profile 同键资源。
           additionalProperties:
             type: object
             additionalProperties: { type: string }
         mcp_actions:
           type: object
-          description: Host-executed tool declarations; no server, URL, token, command, or login fields.
+          x-key: <动作ID>
+          x-since: "1.1"
+          description: 供宿主角色调用的 MCP 工具与产物。连接与凭据由宿主管理。
           additionalProperties:
             type: object
             additionalProperties: false
             required: [tool, required, produces, usage]
             properties:
-              tool: { type: string }
-              required: { type: boolean }
-              severity: { type: string, enum: [MAJOR, BLOCKER] }
+              tool: { type: string, description: 宿主 agent 看到的工具 ID。 }
+              required: { type: boolean, description: 声明当前消费者是否要求产物。 }
+              severity: { type: string, enum: [MAJOR, BLOCKER], default: MAJOR, description: 所需产物不满足时原消费者使用的严重级别。 }
               produces:
                 type: array
                 minItems: 1
                 items: { type: string }
-              usage: { type: string }
+                description: 要核对的宿主工程根相对产物路径。
+              usage: { type: string, description: 面向作者的工具用法说明。 }
 
     phase_bindings:
       type: object
+      x-since: "1.1"
+      x-key: <阶段>
       description: >
-        Compatibility input in 1.1 and 2.0. Feature phase bindings; exactly before_phase_work,
-        before_phase_verify, and after_phase_verify_before_close are supported.
+        Feature 旧式绑定，按阶段和兼容槽位选择。可选槽位与消费约束见下文。
       additionalProperties:
         type: object
         additionalProperties: false
         properties:
-          before_phase_work: { $ref: "#/$defs/legacy_slots" }
-          before_phase_verify: { $ref: "#/$defs/legacy_slots" }
-          after_phase_verify_before_close: { $ref: "#/$defs/legacy_slots" }
+          before_phase_work: { $ref: "#/$defs/legacy_slots", description: 动笔前将兼容资源交给 Feature 作者，原 checker 检查 MCP 声明产物。 }
+          before_phase_verify: { $ref: "#/$defs/legacy_slots", description: 由原 Feature checker 核对 MCP 声明产物。 }
+          after_phase_verify_before_close: { $ref: "#/$defs/legacy_slots", description: 由原收口检查核对 MCP 声明产物。 }
 
     bindings:
       type: object
-      description: Manifest 2.0 only. Ability ID → stable binding ID → declaration.
+      x-since: "2.0"
+      x-key: <能力ID>
+      description: 将能力 ID 和稳定绑定 ID 映射到一条自动投递声明。
       propertyNames: { pattern: "^[A-Za-z0-9_-]+$" }
       additionalProperties:
         type: object
+        x-key: <绑定ID>
         propertyNames: { pattern: "^[a-z][a-z0-9_-]*$" }
         additionalProperties:
           type: object
@@ -137,55 +149,130 @@ root_object:
           properties:
             at:
               type: string
-              description: Exact versioned ID from lifecycle-hooks-schema.yaml.
-            kind: { type: string, enum: [knowledge, action] }
+              description: 使用已发布且带版本的时点 ID，见时点表。
+            kind: { type: string, enum: [knowledge, action], description: 按时点选择知识或动作。 }
             ref:
               type: string
               minLength: 1
               description: >
-                Local path for knowledge and lifecycle .mjs hooks. For an action consumed by
-                an author or produces checker, use an applicable provides.skills or
-                provides.mcp_actions ID.
+                知识和生命周期 hook 使用扩展根相对路径。作者 Skill 或 checker MCP 贡献填对应的 ID。
             phase:
               type: string
-              description: Required for Feature and harness timings. Use a phase in the active workflow.
-            enabled_by_default: { type: boolean, default: false }
+              x-required: Feature、harness 时点必填，项目时点省略
+              description: 选择当前 workflow 中有效的阶段。
+            enabled_by_default: { type: boolean, default: false, description: 成品包首装且启用整项时采用的自动绑定开关。 }
             required:
               type: boolean
               default: false
-              description: Report an unavailable selected binding as a dependency at its consumer.
+              description: 选择该绑定后资源不可用时，在实际消费者处报告依赖缺口。
+
+    activation:
+      type: object
+      x-since: "2.1"
+      x-key: <能力ID>
+      description: 能力启用的有序步骤。宿主也可在明确确认命令后维护同一声明。
+      propertyNames: { pattern: "^[A-Za-z0-9_-]+$" }
+      additionalProperties:
+        type: object
+        additionalProperties: false
+        required: [steps]
+        properties:
+          steps:
+            type: array
+            minItems: 1
+            description: 启用按顺序运行，退出按逆序撤回。所有步骤及生效资源通过校验后才开放调度。
+            items:
+              type: object
+              additionalProperties: false
+              required: [id, cwd, run, outputs]
+              properties:
+                id: { type: string, pattern: "^[a-z][a-z0-9_-]*$", description: 同一能力内唯一的稳定步骤 ID。 }
+                cwd: { type: string, description: 扩展根相对工作目录，使用 skills/<能力ID> 或其子目录。 }
+                run: { $ref: "#/$defs/command", description: 启用时运行的可执行程序及参数数组。 }
+                outputs:
+                  type: array
+                  items: { type: string }
+                  description: 本步独占创建的扩展根相对文件或目录。没有文件产物时填空数组。
+                undo: { $ref: "#/$defs/command", x-required: 产生非文件效果时必填, description: 补偿或停用时运行的可重复命令，必须只撤销当前实例的效果。 }
 
     installations:
       type: object
-      description: Host selections for 2.0, keyed by ability ID. Ignored when reading source defaults.
+      x-since: "2.0"
+      x-author: 宿主
+      x-key: <能力ID>
+      description: 管理入口持久化的宿主选择、归属与实际启停结果，键为能力 ID。来源包的该字段不参与安装。
       propertyNames: { pattern: "^[A-Za-z0-9_-]+$" }
       additionalProperties:
         type: object
         additionalProperties: false
         required: [source, enabled, bindings, files]
         properties:
-          source: { type: string, minLength: 1 }
-          enabled: { type: boolean }
+          source: { type: string, minLength: 1, description: 能力的安装来源身份。 }
+          version: { type: string, minLength: 1, description: 已导入来源包的版本。 }
+          enabled: { type: boolean, description: 宿主整项开关，动态能力还需启用结果才能参与。 }
           bindings:
             type: object
             propertyNames: { pattern: "^[a-z][a-z0-9_-]*$" }
             additionalProperties: { type: boolean }
+            description: 各绑定的宿主开关，重装保留已有选择。
           files:
             type: object
-            description: Host-relative file path → SHA-256 of imported bytes.
+            description: 导入副本的宿主根相对路径与 SHA-256，用于核对所有权。
             additionalProperties: { type: string, pattern: "^[0-9a-f]{64}$" }
           in_place:
             const: true
-            description: Original files are managed in place and are retained on uninstall.
+            description: 原始文件在扩展目录就地管理，卸载时保留原件。
+          binding_overrides:
+            type: object
+            x-since: "2.1"
+            x-key: <绑定ID>
+            description: 按绑定 ID 保存宿主选择的时点，取代来源绑定的 at 和 phase。
+            propertyNames: { pattern: "^[a-z][a-z0-9_-]*$" }
+            additionalProperties:
+              type: object
+              additionalProperties: false
+              required: [at]
+              properties:
+                at: { type: string, description: 校验通过的版本化时点 ID。 }
+                phase: { type: string, x-required: Feature、harness 时点必填，项目时点省略, description: 当前 workflow 下选定的阶段。 }
+          pending_cleanup:
+            type: object
+            description: 已停止目标的新调度，等待当前请求交回或清理重试。由框架管理。
+            required: [operation, command]
+            additionalProperties: false
+            properties:
+              operation: { type: string, enum: [disable, uninstall, install], description: 待完成的管理操作。 }
+              binding: { type: string, description: 单条待退出绑定，缺省为整项。 }
+              command: { $ref: "#/$defs/command", description: 待重试的原操作参数，从操作名开始。 }
+              restore_enabled: { type: boolean, description: 升级保留的原整项开关。 }
+              replacement: { type: object, description: 升级替换中的暂存定位和前后指纹，用于恢复尚未提交的文件替换。 }
+          activation_result:
+            type: object
+            x-since: "2.1"
+            description: 本次实例、输入指纹、步骤结果、生成指纹及失败或补偿残留，由框架管理。
 
   allOf:
     - if: { properties: { schema_version: { enum: ["1.0", "1.1"] } } }
       then:
         properties:
           bindings: false
+          activation: false
           installations: false
+    - if: { properties: { schema_version: { const: "2.0" } } }
+      then:
+        properties:
+          activation: false
+          installations:
+            additionalProperties:
+              properties:
+                binding_overrides: false
+                activation_result: false
 
 $defs:
+  command:
+    type: array
+    minItems: 1
+    items: { type: string }
   legacy_slots:
     type: array
     items:
@@ -193,5 +280,5 @@ $defs:
       additionalProperties: false
       required: [kind, ref]
       properties:
-        kind: { type: string, enum: [knowledge, skill, mcp] }
-        ref: { type: string }
+        kind: { type: string, enum: [knowledge, skill, mcp], description: 兼容绑定资源类别。 }
+        ref: { type: string, description: 对应的知识路径、Skill 或 MCP 动作 ID。 }

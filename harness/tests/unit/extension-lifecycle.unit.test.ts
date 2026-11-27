@@ -67,7 +67,9 @@ async function inProject(body: (projectRoot: string, source: string, extensionDi
   }
 }
 
-function state(projectRoot: string, action: ExtensionMutation, opts: { ability?: string; source?: string; binding?: string } = {}) {
+function state(projectRoot: string, action: ExtensionMutation, opts: {
+  ability?: string; source?: string; binding?: string; noEnable?: boolean; at?: string; phase?: string;
+} = {}) {
   return withExtensionWrite(projectRoot, frameworkRoot, () => changeExtension(action, {
     projectRoot, frameworkRoot, ability: 'ux', ...opts,
   }));
@@ -89,6 +91,26 @@ function cli(projectRoot: string, ...words: string[]) {
 
 function publishedBindings(projectRoot: string) {
   return loadInstanceExtensions(projectRoot, 'doc/extensions', { frameworkRoot }).bindings;
+}
+
+function dynamicSource(source: string, version: string, fail = false): void {
+  const output = 'knowledge/ux/guide.md';
+  write(path.join(source, 'manifest.yaml'), YAML.stringify({
+    schema_version: '2.1', name: 'local-ux', version, provides: { skills: ['ux'] },
+    bindings: { ux: {
+      read: { at: 'feature.before_phase_work@1', phase: 'coding', kind: 'knowledge', ref: output, enabled_by_default: true },
+      fill: { at, kind: 'action', ref: 'ux', enabled_by_default: true },
+    } },
+    activation: { ux: { steps: [{ id: 'make', cwd: 'skills/ux', run: ['node', 'make.cjs'], outputs: [output] }] } },
+  }));
+  write(path.join(source, 'skills/ux/make.cjs'), `
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const out = path.join(process.env.MAISON_EXTENSION_ROOT, '${output}');
+    fs.mkdirSync(path.dirname(out), { recursive: true });
+    fs.writeFileSync(out, '${version}');
+    ${fail ? 'process.exit(23);' : ''}
+  `);
 }
 
 const testRunId = '20261125T000000Z-abc123';
@@ -409,7 +431,46 @@ const cases = [
     }),
   },
   {
-    name: '作者的真锁进程中途被杀后，升级和卸载仅提示，原签发与运行历史保持可查',
+    name: '缺少旧版版本字段时，同内容重装保持在途绑定，真正升级仍待原签发交回',
+    run: () => inProject((project, source, extensionDir) => {
+      const sourceManifest = path.join(source, 'manifest.yaml');
+      const offered = YAML.parse(fs.readFileSync(sourceManifest, 'utf8'));
+      offered.version = '1.0.0';
+      write(sourceManifest, YAML.stringify(offered));
+      state(project, 'install', { source });
+      state(project, 'disable', { binding: 'read' });
+      const file = path.join(extensionDir, 'manifest.yaml');
+      const installed = () => YAML.parse(fs.readFileSync(file, 'utf8'));
+      const legacy = installed();
+      delete legacy.installations.ux.version;
+      write(file, YAML.stringify(legacy));
+      const expectedBindings = publishedBindings(project).map(row => [row.id, row.enabled]);
+      const author = issueDesign(project, 'versioned-inflight-author', 'local-ux');
+
+      const same = state(project, 'install', { source });
+      assert.deepEqual(same.filesWritten, []);
+      assert.equal(same.requestIds, undefined);
+      assert.equal(installed().installations.ux.version, '1.0.0');
+      assert.equal(installed().installations.ux.pending_cleanup, undefined);
+      assert.deepEqual(publishedBindings(project).map(row => [row.id, row.enabled]), expectedBindings);
+
+      offered.version = '2.0.0';
+      write(sourceManifest, YAML.stringify(offered));
+      const resource = 'skills/ux/reference/stable.md';
+      write(path.join(source, resource), '# version two\n');
+      assert.deepEqual(state(project, 'install', { source }).requestIds, ['versioned-inflight-author']);
+      assert.equal(installed().installations.ux.enabled, false);
+      assert.equal(installed().installations.ux.version, '1.0.0');
+      assert.equal(fs.readFileSync(path.join(extensionDir, resource), 'utf8'), '# initial\n');
+      author.append({ type: 'agent_invoke_end', invoke_id: 'versioned-inflight-author', phase: author.phase, exit_code: 0 });
+      assert.equal(state(project, 'install', { source }).outcomes[0].state, 'enabled');
+      assert.equal(installed().installations.ux.version, '2.0.0');
+      assert.equal(fs.readFileSync(path.join(extensionDir, resource), 'utf8'), '# version two\n');
+      assert.deepEqual(publishedBindings(project).map(row => [row.id, row.enabled]), expectedBindings);
+    }),
+  },
+  {
+    name: '作者真锁失效后沿原卸载命令完成清理，原签发历史保持可查',
     run: () => inProject(async (project, source, extensionDir) => {
       const asset = 'doc/extensions/skills/ux/reference/stable.md';
       state(project, 'install', { source });
@@ -455,17 +516,16 @@ const cases = [
         assert.equal(isLockStale(readLockRecord(lockPath)!), true);
 
         const expected = [{ requestId: 'killed-author', runId: testRunId, requestFile: signed.path, reason: '运行锁已失效或已释放' }];
-        const upgrade = cli(project, 'install', source, 'ux').mutation;
-        assert.deepEqual(upgrade.inactiveRequests, expected);
-        assert.deepEqual(upgrade.filesWritten, [asset]);
-        assert.equal(fs.readFileSync(path.join(project, asset), 'utf8'), '# upgrade after orphan\n');
-
         releaseLock(lockPath, lock.ownerId);
         assert(!fs.existsSync(lockPath));
+        assert.throws(() => state(project, 'install', { source }), /重试 uninstall ux/);
         const removed = state(project, 'uninstall');
         assert.deepEqual(removed.inactiveRequests, expected);
         assert(removed.filesRemoved.includes(asset));
         assert(!fs.existsSync(path.join(extensionDir, 'skills/ux/SKILL.md')));
+        const installed = cli(project, 'install', source, 'ux').mutation;
+        assert(installed.filesWritten.includes(asset));
+        assert.equal(fs.readFileSync(path.join(project, asset), 'utf8'), '# upgrade after orphan\n');
         assert.deepEqual(fs.readFileSync(path.join(project, signed.path)), original);
         assert.deepEqual(fs.readFileSync(eventsPath), events);
         const history = inspectExtensionRequest(project, signed.path, 'ux');
@@ -615,6 +675,257 @@ const cases = [
       assert(!fs.existsSync(generated));
       assert(fs.readFileSync(rootEntry, 'utf8').startsWith(handWritten));
       assert(!fs.readFileSync(rootEntry, 'utf8').includes('skills/ux/SKILL.md'));
+    }),
+  },
+  {
+    name: '裸 Skill 按 frontmatter 名称发布手动入口，同源重装保留宿主阶段声明且不运行包内命令',
+    run: () => inProject((project, source, extensionDir) => {
+      const bare = path.join(path.dirname(source), 'unrelated-folder-name');
+      const skill = '---\nname: bare-guide\ndescription: 读取指南\n---\n# 在编码前读说明\n';
+      write(path.join(bare, 'SKILL.md'), skill);
+      write(path.join(bare, 'guide.md'), '# Handled by the owner\n');
+      write(path.join(bare, 'package.json'), '{"scripts":{"install":"node run.cjs"}}');
+      write(path.join(bare, 'run.cjs'), 'require("node:fs").writeFileSync("ran", "bad");');
+      write(path.join(bare, '.git'), 'gitdir: D:/other/local-metadata\n');
+      write(path.join(bare, 'reference/.git/HEAD'), 'ref: refs/heads/main\n');
+      write(path.join(bare, 'reference/example.md'), '# Available reference\n');
+      write(path.join(bare, 'node_modules/bundled/index.cjs'), 'module.exports = true;');
+      const installed = cli(project, 'install', bare);
+      assert.equal(installed.mutation.outcomes[0].ability, 'bare-guide');
+      assert.equal(installed.mutation.outcomes[0].state, 'enabled');
+      assert(fs.existsSync(path.join(project, '.claude/commands/bare-guide.md')));
+      assert.deepEqual(publishedBindings(project), []);
+      assert.equal(fs.readFileSync(path.join(extensionDir, 'skills/bare-guide/SKILL.md'), 'utf8'), skill);
+      const manifest = path.join(extensionDir, 'manifest.yaml');
+      const raw = YAML.parse(fs.readFileSync(manifest, 'utf8'));
+      raw.bindings = { 'bare-guide': { guide: {
+        at: 'feature.before_phase_work@1', phase: 'coding', kind: 'knowledge', ref: 'skills/bare-guide/guide.md',
+      } } };
+      write(manifest, YAML.stringify(raw));
+      cli(project, 'enable', 'bare-guide', 'guide', '--phase', 'review');
+      const accepted = fs.readFileSync(manifest, 'utf8');
+      assert.equal(cli(project, 'install', bare).mutation.changed, false);
+      assert.equal(fs.readFileSync(manifest, 'utf8'), accepted);
+      assert.deepEqual(publishedBindings(project).map(row => [row.id, row.phase, row.enabled]), [['guide', 'review', true]]);
+      assert(!fs.existsSync(path.join(bare, 'ran')) && !fs.existsSync(path.join(extensionDir, 'skills/bare-guide/ran')));
+      assert(!fs.existsSync(path.join(extensionDir, 'skills/bare-guide/.git')));
+      assert(!fs.existsSync(path.join(extensionDir, 'skills/bare-guide/reference/.git')));
+      assert(fs.existsSync(path.join(extensionDir, 'skills/bare-guide/node_modules/bundled/index.cjs')));
+      assert.deepEqual(fs.readdirSync(bare).sort(), ['.git', 'SKILL.md', 'guide.md', 'node_modules', 'package.json', 'reference', 'run.cjs']);
+    }),
+  },
+  {
+    name: '改写或无法核实的输出不下架现有启用，单纯缺失可显式补齐',
+    run: () => inProject((project, source, extensionDir) => {
+      dynamicSource(source, '1.0.0');
+      const sourceManifest = path.join(source, 'manifest.yaml');
+      const offered = YAML.parse(fs.readFileSync(sourceManifest, 'utf8'));
+      offered.activation.ux.steps[0].outputs.push('knowledge/ux/healthy.md');
+      write(sourceManifest, YAML.stringify(offered));
+      fs.appendFileSync(path.join(source, 'skills/ux/make.cjs'), '\nfs.writeFileSync(path.join(path.dirname(out), "healthy.md"), "still active");\n');
+      cli(project, 'install', source, 'ux');
+      const guide = path.join(extensionDir, 'knowledge/ux/guide.md');
+      const healthy = path.join(extensionDir, 'knowledge/ux/healthy.md');
+      const file = path.join(extensionDir, 'manifest.yaml');
+      const before = fs.readFileSync(file);
+      const previous = YAML.parse(before.toString()).installations.ux.activation_result.instance_id;
+
+      write(guide, 'host edit');
+      for (const kind of ['changed', 'unverifiable']) {
+        if (kind === 'unverifiable') {
+          fs.unlinkSync(guide);
+          fs.symlinkSync(path.dirname(source), guide, process.platform === 'win32' ? 'junction' : 'dir');
+        }
+        const failed = runCli(project, 'enable', 'ux');
+        assert.equal(failed.status, 1, failed.stderr + failed.stdout);
+        assert(!failed.stderr.includes('[extension activation]'));
+        const receipt = JSON.parse(failed.stdout).mutation;
+        assert.equal(receipt.changed, false);
+        assert.equal(receipt.outcomes[0].activation.instance_id, previous);
+        assert.match(receipt.outcomes[0].reason, /knowledge\/ux\/guide\.md/);
+        assert.deepEqual(fs.readFileSync(file), before);
+        assert(fs.existsSync(path.join(project, '.claude/commands/ux.md')));
+        assert.equal(publishedBindings(project).find(row => row.id === 'fill')?.enabled, true);
+        assert.equal(fs.readFileSync(healthy, 'utf8'), 'still active');
+        if (kind === 'changed') assert.equal(fs.readFileSync(guide, 'utf8'), 'host edit');
+        else assert(fs.lstatSync(guide).isSymbolicLink());
+      }
+      fs.unlinkSync(guide);
+      const installedScript = path.join(extensionDir, 'skills/ux/make.cjs');
+      const script = fs.readFileSync(installedScript, 'utf8');
+      write(installedScript, '# host modified the input script');
+      const invalidInput = runCli(project, 'enable', 'ux');
+      assert.equal(invalidInput.status, 1);
+      assert.match(invalidInput.stderr, /已安装源文件被改写/);
+      assert.deepEqual(fs.readFileSync(file), before);
+      write(installedScript, script);
+      assert.equal(cli(project, 'enable', 'ux').mutation.outcomes[0].state, 'enabled');
+      assert.equal(fs.readFileSync(guide, 'utf8'), '1.0.0');
+      assert.notEqual(YAML.parse(fs.readFileSync(file, 'utf8')).installations.ux.activation_result.instance_id, previous);
+    }),
+  },
+  {
+    name: '动态只安装和显式启用，变更阶段复用结果，在途关闭即回执，原命令重试才清理',
+    run: () => inProject((project, source, extensionDir) => {
+      dynamicSource(source, '1.0.0');
+      const output = path.join(extensionDir, 'knowledge/ux/guide.md');
+      const manifest = () => YAML.parse(fs.readFileSync(path.join(extensionDir, 'manifest.yaml'), 'utf8'));
+      const onlyInstall = cli(project, 'install', source, 'ux', '--no-enable');
+      assert.equal(onlyInstall.mutation.outcomes[0].state, 'installed');
+      assert(publishedBindings(project).every(row => !row.enabled));
+      assert(!fs.existsSync(output));
+      assert(!fs.existsSync(path.join(project, '.claude/commands/ux.md')));
+      const enabled = runCli(project, 'enable', 'ux');
+      assert.equal(enabled.status, 0, enabled.stderr + enabled.stdout);
+      assert.match(enabled.stderr, /\[extension activation\].*make\.cjs/);
+      const instance = manifest().installations.ux.activation_result.instance_id;
+      assert.equal(fs.readFileSync(output, 'utf8'), '1.0.0');
+      assert(fs.existsSync(path.join(project, '.claude/commands/ux.md')));
+      const moved = runCli(project, 'enable', 'ux', 'read', '--at', 'feature.before_phase_work@1', '--phase', 'review');
+      assert.equal(moved.status, 0, moved.stderr + moved.stdout);
+      assert(!moved.stderr.includes('[extension activation]'));
+      assert.equal(manifest().installations.ux.activation_result.instance_id, instance);
+      assert.deepEqual(publishedBindings(project).filter(row => row.id === 'read').map(row => [row.phase, row.enabled]), [['review', true]]);
+      const author = issueDesign(project, 'still-running', 'local-ux');
+      assert.equal(cli(project, 'disable', 'ux', 'read').mutation.requestIds, undefined);
+      const deferred = runCli(project, 'disable', 'ux');
+      assert.equal(deferred.status, 1, deferred.stderr + deferred.stdout);
+      const mutation = JSON.parse(deferred.stdout).mutation;
+      assert.deepEqual(mutation.requestIds, ['still-running']);
+      assert.deepEqual(mutation.outcomes[0].pending.command, ['disable', 'ux']);
+      assert(!fs.existsSync(path.join(project, '.claude/commands/ux.md')));
+      assert(publishedBindings(project).every(item => !item.enabled));
+      assert.equal(fs.readFileSync(output, 'utf8'), '1.0.0');
+      author.append({ type: 'run_end', status: 'INTERRUPTED' });
+      assert.deepEqual(cli(project, 'inspect', 'ux').inspection.installations[0].pendingCleanup.requestIds, []);
+      cli(project, 'disable', 'ux');
+      assert(!fs.existsSync(output));
+      assert.equal(manifest().installations.ux.pending_cleanup, undefined);
+      cli(project, 'enable', 'ux');
+      assert.notEqual(manifest().installations.ux.activation_result.instance_id, instance);
+      assert.equal(publishedBindings(project).find(row => row.id === 'read')?.enabled, false);
+    }),
+  },
+  {
+    name: '动态升级提交前恢复旧资源和启用，提交后失败保留新版，重试可修复',
+    run: () => inProject((project, source, extensionDir) => {
+      dynamicSource(source, '1.0.0');
+      const asset = path.join(extensionDir, 'skills/ux/make.cjs');
+      const output = path.join(extensionDir, 'knowledge/ux/guide.md');
+      const manifest = () => YAML.parse(fs.readFileSync(path.join(extensionDir, 'manifest.yaml'), 'utf8')).installations.ux;
+      const before = state(project, 'install', { source });
+      assert.equal(before.outcomes[0].state, 'enabled');
+      const oldScript = fs.readFileSync(asset, 'utf8');
+      dynamicSource(source, '2.0.0', true);
+      const rename = fs.renameSync;
+      let injected = false;
+      const fault = mock.method(require('fs') as typeof fs, 'renameSync', (from: fs.PathLike, to: fs.PathLike) => {
+        if (!injected && path.basename(String(to)) === 'make.cjs') {
+          injected = true;
+          throw new Error('injected swap failure');
+        }
+        return rename(from, to);
+      });
+      try {
+        const restored = state(project, 'install', { source });
+        assert.equal(restored.outcomes[0].state, 'failed');
+        assert.match(restored.outcomes[0].reason ?? '', /injected swap failure.*已恢复旧版文件和原开关/);
+      } finally { fault.mock.restore(); }
+      assert(injected);
+      assert.equal(manifest().version, '1.0.0');
+      assert.equal(manifest().enabled, true);
+      assert.equal(fs.readFileSync(asset, 'utf8'), oldScript);
+      assert.equal(fs.readFileSync(output, 'utf8'), '1.0.0');
+      const failed = state(project, 'install', { source });
+      assert.equal(failed.outcomes[0].state, 'failed');
+      assert.match(failed.outcomes[0].reason ?? '', /23/);
+      assert.equal(manifest().version, '2.0.0');
+      assert.equal(manifest().enabled, false);
+      assert(!fs.existsSync(output));
+      dynamicSource(source, '2.0.1');
+      assert.equal(state(project, 'install', { source }).outcomes[0].state, 'installed');
+      assert.equal(state(project, 'enable').outcomes[0].state, 'enabled');
+      assert.equal(fs.readFileSync(output, 'utf8'), '2.0.1');
+    }),
+  },
+  {
+    name: '受管作者无持久写权，多能力安装单项失败仍保留相邻手动能力',
+    run: () => inProject((project, source, extensionDir) => {
+      dynamicSource(source, '1.0.0', true);
+      const sourceManifest = path.join(source, 'manifest.yaml');
+      const raw = YAML.parse(fs.readFileSync(sourceManifest, 'utf8'));
+      raw.provides.skills.push('story');
+      write(sourceManifest, YAML.stringify(raw));
+      write(path.join(source, 'skills/story/SKILL.md'), '# Story');
+      const prior = process.env.MAISON_GOAL_RUN_ID;
+      process.env.MAISON_GOAL_RUN_ID = 'managed-author';
+      try {
+        const rejected = runCli(project, 'install', source);
+        assert.equal(rejected.status, 1);
+        assert.match(rejected.stderr, /受管 Goal 作者只能检视或校验扩展/);
+        assert(!fs.existsSync(path.join(extensionDir, 'manifest.yaml')));
+      } finally {
+        if (prior === undefined) delete process.env.MAISON_GOAL_RUN_ID;
+        else process.env.MAISON_GOAL_RUN_ID = prior;
+      }
+      const merged = runCli(project, 'install', source);
+      assert.equal(merged.status, 1, merged.stderr + merged.stdout);
+      assert.deepEqual(JSON.parse(merged.stdout).mutation.outcomes.map((row: { ability: string; state: string }) => [row.ability, row.state]), [
+        ['story', 'enabled'], ['ux', 'failed'],
+      ]);
+      assert(fs.existsSync(path.join(project, '.claude/commands/story.md')));
+      assert(!fs.existsSync(path.join(project, '.claude/commands/ux.md')));
+      assert(!fs.existsSync(path.join(extensionDir, 'knowledge/ux/guide.md')));
+    }),
+  },
+  {
+    name: '升级资源替换期间中断，原安装入口可恢复新增及删除的文件再提交新版',
+    run: () => inProject((project, source, extensionDir) => {
+      dynamicSource(source, '1.0.0');
+      state(project, 'install', { source });
+      const removed = 'skills/ux/reference/stable.md';
+      const created = 'skills/ux/reference/created.md';
+      const restored = 'skills/ux/reference/restored.md';
+      const installedRemoved = path.join(extensionDir, removed);
+      dynamicSource(source, '2.0.0');
+      fs.unlinkSync(path.join(source, removed));
+      write(path.join(source, created), 'new resource');
+      write(path.join(source, restored), 'second new resource');
+
+      const hook = path.join(path.dirname(source), 'crash-swap.cjs');
+      write(hook, `
+        const fs = require('node:fs');
+        const unlink = fs.unlinkSync;
+        fs.unlinkSync = (target) => {
+          unlink(target);
+          if (target === ${JSON.stringify(installedRemoved)}) process.exit(87);
+        };
+      `);
+      const harness = path.join(frameworkRoot, 'harness');
+      const interrupted = spawnSync(process.execPath, ['-r', hook,
+        ...testCliArgs(path.join(harness, 'scripts/extension.ts')), 'install', source, 'ux', '--project-root', project, '--json',
+      ], { cwd: harness, encoding: 'utf8', timeout: 15_000 });
+      assert.equal(interrupted.status, 87, interrupted.stderr + interrupted.stdout);
+      const manifest = () => YAML.parse(fs.readFileSync(path.join(extensionDir, 'manifest.yaml'), 'utf8')).installations.ux;
+      const saved = manifest();
+      assert.equal(saved.version, '1.0.0');
+      assert.equal(saved.enabled, false);
+      const records = saved.pending_cleanup.replacement.files as Array<{ path: string; before?: string; after?: string }>;
+      assert.deepEqual(Object.keys(records.find(item => item.path === created)!).sort(), ['after', 'path']);
+      assert.deepEqual(Object.keys(records.find(item => item.path === removed)!).sort(), ['before', 'path']);
+      assert(!fs.existsSync(installedRemoved));
+      assert.equal(fs.readFileSync(path.join(extensionDir, created), 'utf8'), 'new resource');
+
+      // An interrupted recovery can already have removed one newly published file.
+      fs.unlinkSync(path.join(extensionDir, restored));
+      const upgraded = state(project, 'install', { source });
+      assert.equal(upgraded.outcomes[0].state, 'enabled');
+      assert(upgraded.filesWritten.includes(`doc/extensions/${removed}`));
+      assert(upgraded.filesRemoved.includes(`doc/extensions/${created}`));
+      assert.equal(manifest().pending_cleanup, undefined);
+      assert.equal(manifest().version, '2.0.0');
+      assert(!fs.existsSync(installedRemoved));
+      assert.equal(fs.readFileSync(path.join(extensionDir, 'knowledge/ux/guide.md'), 'utf8'), '2.0.0');
     }),
   },
 ];

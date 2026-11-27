@@ -5,7 +5,7 @@ Define how locally installed instance contributions are selected, handed to exis
 ## Requirements
 ### Requirement: The manifest normalizes versioned and legacy declarations
 
-The loader MUST accept `schema_version: "2.0"` and normalize its `bindings.<ability>.<id>` entries by source, ability ID, binding ID, timing, kind, and reference. It MUST accept 1.1 object knowledge entries, `provides.mcp_actions`, and top-level `phase_bindings` with their prior audience and execution semantics. A 1.0 manifest MUST retain directory-driven skill discovery and its legacy knowledge boundary. Reading or inspecting a manifest MUST leave it untouched. On the first persistent change requiring 2.0, migration MUST preserve effective legacy choices, host identity, rules, hand-authored material, and existing adapters. The loader MUST reject unknown fields in closed manifest structures and forbidden MCP connection or credential fields. No manifest or no extension directory MUST yield an empty bundle with no side effects.
+The loader MUST accept manifest 2.0 and 2.1 and normalize `bindings.<ability>.<id>` entries by source, ability ID, binding ID, timing, kind, and reference. Manifest 2.1 adds ordered activation steps and host binding timing overrides. The loader MUST accept 1.1 object knowledge entries, `provides.mcp_actions`, and top-level `phase_bindings` with their prior audience and execution semantics. A 1.0 manifest MUST retain directory-driven skill discovery and its legacy knowledge boundary. Reading or inspecting a manifest MUST leave it untouched. On the first persistent change requiring a newer schema, migration MUST preserve effective legacy choices, host identity, rules, hand-authored material, and existing adapters. The loader MUST reject unknown fields in closed manifest structures and forbidden MCP connection or credential fields. No manifest or no extension directory MUST yield an empty bundle with no side effects.
 
 #### Scenario: 1.0 remains behaviorally unchanged
 - **WHEN** a project uses a valid 1.0 manifest containing string knowledge and directory skills
@@ -32,7 +32,7 @@ The loader MUST accept `schema_version: "2.0"` and normalize its `bindings.<abil
 
 ### Requirement: Materialization uses the versioned SSOT and protects owned derivatives
 
-For 1.1 manifests, bridge materialization MUST use `provides.skills[]`; for 2.0 it MUST project its effective enabled selection from the host manifest. Both versions MUST target every project-level `materialized_adapters[]`. For 1.0 it MUST remain directory-driven. Generated extension bridges MUST carry ownership metadata. A marked canonical derivative MAY be overwritten or removed, a marked derivative with content drift MUST be reported and preserved, and an unmarked file MUST remain untouched.
+For 1.1 manifests, bridge materialization MUST use `provides.skills[]`; for 2.0 and 2.1 it MUST project its effective enabled selection from the host manifest, including successful activation when required. Modern manifests MUST target every project-level `materialized_adapters[]`. For 1.0 it MUST remain directory-driven. Generated extension bridges MUST carry ownership metadata. A marked canonical derivative MAY be overwritten or removed, a marked derivative with content drift MUST be reported and preserved, and an unmarked file MUST remain untouched.
 
 #### Scenario: all project adapters receive a declared skill
 - **WHEN** a 1.1 manifest declares one existing extension skill and the project declares multiple materialized adapters
@@ -51,6 +51,11 @@ For 1.1 manifests, bridge materialization MUST use `provides.skills[]`; for 2.0 
 #### Scenario: M7 consumer is explicit
 - **WHEN** an action produces a requirement materialization or blueprint feedback artifact
 - **THEN** inspect names `/component-design` and the corresponding M7 seam as its consumer
+
+#### Scenario: A host with no extensions can discover the target catalog
+- **WHEN** unfiltered inspect runs against a target release with no installed extensions
+- **THEN** both text and JSON show the complete supported timing catalog, including actual trigger, scope, phase requirement, consumer and resources
+- **AND** those timings produce no scheduled or evidenced contribution rows; a missing or unsupported catalog identifies the target release and cause
 
 > **Enforced by:** `harness/scripts/utils/extension-inspect.ts`, `harness/scripts/check-extensions.ts`, `/extension inspect`
 
@@ -132,7 +137,12 @@ The published `specs/lifecycle-hooks-schema.yaml` MUST define the finite support
 
 ### Requirement: Local installation is scoped, repeatable, and safe to remove
 
-The `/extension` CLI and materialized adapter entry points MUST provide install, inspect, enable, disable, and uninstall operations, with equivalent natural-language intent reaching the same operation. Install MUST read a local source directory with a manifest, verify that the target can read 2.0 before writing, and import selected resources within the configured path and resolved link boundaries. The host manifest MUST own package identity, selected abilities, binding switches, and host-relative file ownership hashes. Initial install applies explicit source defaults. Reinstallation keeps existing choices and disables newly introduced automatic bindings by default. Selection updates and manifest writes MUST preserve unrelated declarations and user documents. Failed or interrupted installation MUST be recoverable by repeating the same operation against the manifest and files.
+The `/extension` CLI and materialized adapter entry points MUST provide install, inspect, enable, disable, and uninstall operations, with equivalent natural-language intent reaching the same operation. Install MUST accept a local source manifest or a valid bare Skill, verify the target release can read the needed schema before writing, and import selected resources within the configured path and resolved link boundaries. The host manifest MUST own package identity, selected abilities, binding switches, host-relative import fingerprints, and management lifecycle facts. First install of a manifest-backed package applies explicit source defaults through enable unless requested to install only. A bare Skill MUST publish only its manual entry at first install, with no extension command invoked or automatic binding declared. Selection updates and manifest writes MUST preserve unrelated declarations and user documents. Reinstallation keeps existing choices and disables newly introduced automatic bindings by default. Failed or interrupted changes MUST be recoverable against the manifest and files.
+
+#### Scenario: A bare source describes an optional automatic command
+- **WHEN** a bare Skill describes an additional capability or contains an install script
+- **THEN** install leaves the source untouched and publishes its manual entry without invoking the script
+- **AND** the management Skill can propose a named binding with timing, phase, resource, consumer and rationale; a proposed command requires approval of its concrete run, undo, working directory, parameters and outputs before it is written or executed
 
 #### Scenario: the bundled UX ability can be selected at two levels
 - **WHEN** the host installs UX and disables just its fill-missing binding
@@ -141,8 +151,44 @@ The `/extension` CLI and materialized adapter entry points MUST provide install,
 
 #### Scenario: disable applies to new work and uninstall respects prior requests
 - **WHEN** the host disables an ability while a request bound to it is still open
-- **THEN** new requests omit it and the prior request can still access its signed inputs and installed resources
-- **AND** uninstall reports its blocking request IDs and preserves the copy until the requests complete
-- **AND** a later uninstall removes only attributable unchanged, unshared managed resources and generated entries and reports retained content
+- **THEN** new requests omit the target and the prior request can still access its signed inputs and installed resources
+- **AND** the command records pending cleanup inside the installation, releases its lock, and returns the active request IDs and original retry command before the request hands back
+- **AND** inspect shows whether use has ended and cleanup remains pending; repeating the same command removes only attributable unchanged, unshared effects and resources, and reports retained content
 
 > **Enforced by:** `harness/scripts/extension.ts`, `harness/scripts/utils/extension-lifecycle.ts`, `harness/scripts/utils/instance-skill-bridge.ts`
+
+### Requirement: Activation is an ordered and reversible management operation
+
+Manifest 2.1 MAY declare per-ability activation steps using a stable ID, local working directory, executable argument array, exclusive file outputs and an undo command for non-file effects. Discovery MAY validate a missing binding resource against an output of its own ability. Activation MUST record a recoverable step before starting it, preview resolved commands, and record actual attributable effects. A binding and the manual entry MUST become available only after the activation required for that ability has succeeded. Project snapshots MUST detect writes outside the authorized capability scope. Preview and project snapshots operate within the actual management authorization and snapshot coverage.
+
+#### Scenario: Activation fails after creating effects
+- **WHEN** a later step fails or violates the observed boundary
+- **THEN** the manager compensates the failing step and earlier steps in reverse order, using the instance ID for undo and matching fingerprints for generated content
+- **AND** an attributable new out-of-scope file is deleted only when its current bytes match its recorded post-step fingerprint; changed or removed preexisting files are reported with their prior fingerprint rather than overwritten or restored
+- **AND** the package remains installed with the failure and any retryable compensation or residuals, and remains unavailable to new consumers
+
+#### Scenario: A completed activation drifts
+- **WHEN** a previously successful activation output is missing, changed or unverifiable
+- **THEN** inspect and verify report drift, affected selections and the enable entry point without writing
+- **AND** explicit enable reuses valid results, repairs missing effects where attributable, and preserves and reports conflicting host changes
+
+#### Scenario: Upgrade replaces an enabled version
+- **WHEN** the manager installs a changed version of an enabled package
+- **THEN** it preflights the new package, stops new use and reverses the old effects before replacing managed inputs
+- **AND** a failed replacement before commitment recovers old inputs and attempts to restore old activation; a failed activation after commitment leaves the new package installed and failed
+
+> **Enforced by:** `harness/scripts/utils/extension-activation.ts`, `harness/scripts/utils/extension-lifecycle.ts`, `harness/scripts/utils/extension-inspect.ts`
+
+### Requirement: Host timing selection applies consistently to new consumers
+
+The host MAY store a timing and phase override for a named binding in its 2.1 installation selection. The loader MUST validate the effective timing, resource and active workflow phase, preserve source defaults and identify incompatible overrides. All consumers MUST receive the effective selection for new requests. Previously signed inputs retain their original authority.
+
+#### Scenario: A phase changes after activation
+- **WHEN** an enabled knowledge binding is changed from coding to review with the same valid activation inputs and effects
+- **THEN** newly prepared review input receives the same knowledge, newly prepared coding input omits it, and no run or undo command is repeated
+
+#### Scenario: An enabled source changes the binding incompatibly
+- **WHEN** the stored host override is incompatible with the new binding resource or current workflow
+- **THEN** inspect identifies the affected binding and retains the choice for adjustment, and unrelated valid contributions remain eligible
+
+> **Enforced by:** `harness/extension-loader.ts`, `harness/scripts/utils/extension-lifecycle.ts`, `specs/lifecycle-hooks-schema.yaml`

@@ -9,6 +9,7 @@ import assert from 'assert';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { mock } from 'node:test';
 import type { UnitCaseResult } from '../run-unit';
 import type { GoalManifest } from '../../scripts/utils/goal-manifest';
 import {
@@ -28,6 +29,8 @@ import { clearFrameworkConfigCache } from '../../config';
 import { withRuntimeTest } from '../utils/runtime-test-control';
 import { loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { readExecutionRequestOriginal } from '../../scripts/utils/session-execution-handoff';
+import { changeExtension, withExtensionWrite } from '../../scripts/utils/extension-lifecycle';
+import { releaseLock, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const READ_INSTRUCTION =
@@ -80,6 +83,7 @@ function captureWarn(): { warns: string[]; restore: () => void } {
 async function driveSpecRun(
   feature: string,
   extFiles: Record<string, string>,
+  beforeAuthorSignature?: (root: string, prompt: string) => void,
 ): Promise<{ exitCode: number; prompts: string[]; warns: string[]; root: string }> {
   const root = setupMinimalHost(feature);
   for (const [rel, body] of Object.entries(extFiles)) {
@@ -96,6 +100,14 @@ async function driveSpecRun(
   const prevCwd = process.cwd();
   const prevTrustDir = process.env.MAISON_GOAL_CHECKPOINT_DIR;
   const warn = captureWarn();
+  const write = fs.writeFileSync;
+  const observePrompt = beforeAuthorSignature ? mock.method(require('fs') as typeof fs, 'writeFileSync', (...args: Parameters<typeof write>) => {
+    write(...args);
+    const [file, data] = args;
+    if (typeof file === 'string' && path.basename(file) === 'prompt.md' && file.includes('work-unit-author')) {
+      beforeAuthorSignature(root, String(data));
+    }
+  }) : undefined;
   process.env.MAISON_GOAL_CHECKPOINT_DIR = path.join(root, 'trust-cp');
   try {
     __testing_setInvokeAgent((async (_plan: unknown, _root: unknown, o: unknown) => {
@@ -133,6 +145,7 @@ async function driveSpecRun(
     const exitCode = await withRuntimeTest({ root: root }, () => goalMain());
     return { exitCode, prompts, warns: warn.warns, root };
   } finally {
+    observePrompt?.mock.restore();
     __testing_resetGoalRunnerSeams();
     process.argv = prevArgv;
     process.chdir(prevCwd);
@@ -143,6 +156,58 @@ async function driveSpecRun(
 }
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [
+  {
+    name: 'CU waits for extension management, rebuilds stale material, and signs automatically in the same run',
+    run: async () => {
+      const feature = 'author-extension-race';
+      const body = '竞态夹具的旧知识正文';
+      let oldPrompts = 0;
+      let managementCompletedAt: number | undefined;
+      let managementError: unknown;
+      const r = await driveSpecRun(feature, {
+        'doc/extensions/manifest.yaml': [
+          'schema_version: "2.0"', 'name: test-race', 'provides: {}', 'bindings:', '  guide:',
+          '    read: {at: feature.before_phase_work@1, phase: spec, kind: knowledge, ref: knowledge/guide.md, enabled_by_default: true}',
+        ].join('\n'),
+        'doc/extensions/knowledge/guide.md': body,
+        'framework/specs/instance-extension-manifest.schema.yaml':
+          fs.readFileSync(path.join(REPO_ROOT, 'specs/instance-extension-manifest.schema.yaml'), 'utf8'),
+      }, (root, prompt) => {
+        if (!prompt.includes(body)) return;
+        oldPrompts++;
+        const file = path.join(root, 'doc/extensions/.manifest.lock');
+        const lock = tryAcquireLock(file, {});
+        assert(lock);
+        setTimeout(() => {
+          releaseLock(file, lock.ownerId);
+          try {
+            const closed = withExtensionWrite(root, REPO_ROOT, () => changeExtension('disable', {
+              projectRoot: root, frameworkRoot: REPO_ROOT, ability: 'guide',
+            }));
+            assert.equal(closed.outcomes[0]?.state, 'disabled');
+            assert.equal(closed.requestIds?.length ?? 0, 0);
+            managementCompletedAt = Date.now();
+          } catch (error) { managementError = error; }
+        }, 400);
+      });
+      try {
+        if (managementError) throw managementError;
+        assert(managementCompletedAt);
+        assert.equal(oldPrompts, 1, 'old material was assembled before management closed selection');
+        assert(r.prompts.length > 0 && r.prompts.every(prompt => !prompt.includes(body)));
+        const runs = path.join(r.root, 'doc/features', feature, 'goal-runs');
+        const runDir = path.join(runs, fs.readdirSync(runs).find(name => !name.startsWith('.'))!);
+        const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
+        const start = events.find(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
+        assert(start?.handoff_request, 'direct transport must append the first original reference');
+        assert(Date.parse(start.ts!) >= managementCompletedAt, 'the start must timestamp actual issuance after the lock releases');
+        assert(!events.slice(0, events.indexOf(start)).some(event => event.type === 'phase_halt' || event.type === 'run_end'));
+        const issued = readExecutionRequestOriginal(runDir, start.invoke_id, events);
+        assert(issued && !issued.request.context.instruction?.includes(body));
+        assert(!issued.request.context.workInput?.material.segments.some(segment => JSON.stringify(segment).includes('extension_feature_bindings')));
+      } finally { fs.rmSync(r.root, { recursive: true, force: true }); }
+    },
+  },
   {
     name: 't2 buildPhasePrompt：extensionInputs 注入在 Skill absolute path 之后，读取指令先于索引；缺省不注入',
     run: async () => {
