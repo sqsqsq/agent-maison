@@ -24,7 +24,7 @@ const { MAISON_EXTENSION_INSTANCE_ID: instance, MAISON_TEST_LOG_PATH: log } = pr
 const record = step => { if (log) fs.appendFileSync(log, JSON.stringify({ step, instance }) + '\\n'); };
 `;
 
-function createFixtures(dest, { version = '1' } = {}) {
+function createFixtures(dest, { version = '1', includeNpm = true } = {}) {
   dest = path.resolve(dest);
   const knowledge = path.join(dest, 'knowledge-source');
   const npm = path.join(dest, 'npm-source');
@@ -61,6 +61,7 @@ if (neighbor) {
 }
 if (process.env.MAISON_TEST_FAIL_K === '1') process.exitCode = 31;
 `);
+  if (!includeNpm) return { knowledge, npm, kv, log };
 
   const depSource = path.join(dest, 'dependency-source');
   const depVersion = `${version}.0.0`;
@@ -69,7 +70,7 @@ if (process.env.MAISON_TEST_FAIL_K === '1') process.exitCode = 31;
   write(depSource, 'index.cjs', `module.exports = value => 'wallet-v${version}:' + value;\n`);
   const pkg = path.join(npm, packageRoot(n));
   fs.mkdirSync(path.join(pkg, 'deps'), { recursive: true });
-  const pack = spawn.sync('npm', ['pack', '--ignore-scripts', '--cache', path.join(dest, 'pack-cache'),
+  const pack = spawn.sync('npm', ['pack', '--ignore-scripts', '--offline', '--no-audit', '--no-fund', '--cache', path.join(dest, 'pack-cache'),
     '--pack-destination', path.join(pkg, 'deps')], { cwd: depSource, encoding: 'utf8', windowsHide: true });
   assert.equal(pack.status, 0, pack.error?.message ?? pack.stderr);
   const dependencySpecifier = `file:${tarball}`;
@@ -84,7 +85,7 @@ if (process.env.MAISON_TEST_FAIL_K === '1') process.exitCode = 31;
     schema_version: '2.1', name: n, provides: { skills: [n] },
     bindings: { [n]: { action: { at, kind: 'action', ref: n, enabled_by_default: true } } },
     activation: { [n]: { steps: [
-      { id: 'install-dependencies', cwd: packageRoot(n), run: ['npm', 'ci', '--cache', './.npm-cache'],
+      { id: 'install-dependencies', cwd: packageRoot(n), run: ['npm', 'ci', '--cache', './.npm-cache', '--offline', '--no-audit', '--no-fund'],
         outputs: [`${packageRoot(n)}/node_modules`, `${packageRoot(n)}/.npm-cache`] },
       { id: 'register', cwd: packageRoot(n), run: ['node', 'scripts/kv.cjs', 'register'],
         undo: ['node', 'scripts/kv.cjs', 'unregister'], outputs: [] },

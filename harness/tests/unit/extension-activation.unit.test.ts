@@ -13,7 +13,7 @@ import {
 import { runUnitCases } from '../utils/unit-cases';
 
 const { createFixtures } = require('../fixtures/extension-activation/create-fixtures.cjs') as {
-  createFixtures(dest: string): { knowledge: string; npm: string; kv: string; log: string };
+  createFixtures(dest: string, options?: { includeNpm?: boolean }): { knowledge: string; npm: string; kv: string; log: string };
 };
 const knowledge = 'activation-knowledge';
 const npm = 'activation-npm';
@@ -37,7 +37,7 @@ function inHost(body: (folder: string, project: string, extensionRoot: string) =
 function install(folder: string, extensionRoot: string, ability: string): {
   steps: ExtensionActivationStep[]; kv: string; log: string;
 } {
-  const fixtures = createFixtures(path.join(folder, 'fixtures'));
+  const fixtures = createFixtures(path.join(folder, 'fixtures'), { includeNpm: ability === npm });
   const source = ability === npm ? fixtures.npm : fixtures.knowledge;
   const skills = path.join(extensionRoot, 'skills', ability);
   fs.cpSync(path.join(source, 'skills', ability), skills, { recursive: true });
