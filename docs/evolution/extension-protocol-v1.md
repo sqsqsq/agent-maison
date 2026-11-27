@@ -157,6 +157,8 @@ description: 在允许写入的蓝图目录中记录设计前核对结果。
 | `harness.post_phase@1` | 检查末尾最后一个收尾事件，在报告落盘和判断是否签发验证请求之前。 | harness，填有效 `phase` | `hook_markdown`：本轮实际组装的 verifier 提示；`hook_script`：harness checker（脚本结果）；本轮实际组装的 verifier 提示（片段） | `hook_markdown`、`hook_script` |
 <!-- END GENERATED supported-timings -->
 
+表中的资源种类对应清单的 `kind` 和 `ref`。`knowledge_file` 与 `hook_markdown` 用 `kind: knowledge`，`ref` 填扩展根相对路径。`skill`、`mcp` 和 `hook_script` 用 `kind: action`，`ref` 分别填 Skill ID、MCP 动作 ID 或扩展根相对的 `.mjs` 路径。
+
 普通检查末尾依次发出 `pre_verifier → on_context_load → post_verifier → post_phase`，随后才判断是否签发 verifier 请求。
 
 宿主可以为已装绑定保存时点选择。例如，来源按 `feature.before_phase_work@1 / coding` 投递，宿主可执行 `extension enable wallet-rules guide --phase review` 改为评审阶段。也可同时指定 `--at feature.before_phase_work@1 --phase review`。项目级时点省略 `--phase`。已有启用结果完好时，改选阶段只改变后续投递。升级后已存选择失效时，检视会点名受影响绑定，宿主可重新选择。
@@ -230,7 +232,9 @@ npx ts-node scripts/extension.ts enable design-notes --project-root "<宿主根>
 npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint demo --requirement-source design-notes-requirement.md --prepare-design --json
 ```
 
-首次检视应列出宿主支持的时点。只安装回执显示已安装未启用。启用后，准备输出的 `extension_preparation.bindings` 应含 `guide` 和 `note`，知识正文在 `knowledge` 中，超出内联预算时提供回读路径。请直接或受管 `component-design` 作者按真实需求原件启动新建蓝图，明确授权其在 `demo` 蓝图目录写入。把准备结果交给直接作者，受管作者读取正式签发的同一输入。验收时核对笔记中的约束来源、离线问题，以及作者原交回中上文两条 `extension-result`。持有已签发受管请求 ID 时，用 `extension inspect design-notes --request "<请求ID>" --json` 查询交付和已取得的交回证据。
+首次检视应列出宿主支持的时点。只安装回执显示已安装未启用。启用后，准备输出的 `extension_preparation.bindings` 应含 `guide` 和 `note`，知识正文在 `knowledge` 中，超出内联预算时提供回读路径。
+
+在宿主 Agent 中发起 `/component-design demo`，说明「请以 `design-notes-requirement.md` 为需求原件创建蓝图，授权在 `demo` 的蓝图目录写入首稿和本次核对记录」。若客户端仅提供自然语言入口，请它按 `component-design` Skill 执行相同请求。直接作者按正常入口取得准备结果，受管作者读取正式签发的同一输入。验收时核对笔记中的约束来源、离线问题，以及作者原交回中上文两条 `extension-result`。持有已签发受管请求 ID 时，用 `extension inspect design-notes --request "<请求ID>" --json` 查询交付和已取得的交回证据。
 
 ```bash
 npx ts-node scripts/extension.ts disable design-notes --project-root "<宿主根>" --json
