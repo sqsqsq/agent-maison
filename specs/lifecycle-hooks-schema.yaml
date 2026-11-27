@@ -12,7 +12,7 @@ defaults:
     profile: BLOCKER
     extension: MAJOR
 
-# The loader resolves both manifest 2.0 timing IDs and compatible shorthand
+# The loader resolves both versioned manifest timing IDs and compatible shorthand
 # from these definitions. The owner named here still controls actual dispatch.
 hook_events:
   - id: pre_phase

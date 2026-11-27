@@ -29,7 +29,13 @@
 
 旧设计背景保持 extension 覆盖 profile 的优先级。给已有宿主加 UX 时，使用 `read-upstream` 和 `fill-missing` 的独立时点绑定。原有手写引用保持原样。保留手动 Skill 与读稿、停用自动补稿可执行 `extension disable ux-behavior-spec fill-missing`。后续直接或受管作者按本次签发的通用设计输入及扩展自身的取用指引执行。直接准备可用 `--material-source <项目相对文件>` 传显式补充材料，原 `--ux-source` 作为同一参数的兼容写法。能够归因的错误清单项从整体退出改为局部诊断，作用范围与原因可经 `inspect` 和现有扩展校验查到。
 
-安装及证据规则见 [实例扩展协议](docs/evolution/extension-protocol-v1.md)。
+安装及证据规则见 [Extension 接入协议](docs/evolution/extension-protocol-v1.md)。
+
+## 3.1.0 动态扩展与宿主阶段选择（plan ee85b0d3）
+
+更新 `framework/` 后，原 `1.0`、`1.1` 和 `2.0` 扩展继续可读，Story、UX 等静态能力沿用原声明。使用动态启用步骤或为旧绑定保存时点覆盖时，管理入口先核对目标发布件可读 `2.1`，再写入所需格式。新的宿主骨架仍可使用 `2.0`。提供方字段、启用步骤的执行与撤回及自测见 [Extension 接入协议](docs/evolution/extension-protocol-v1.md)。
+
+成品包首装按默认绑定启用，`install --no-enable` 保持只安装。裸 Skill 首装只公布手动入口，额外绑定可按授权在现有宿主清单中维护。若停用或卸载时原签发请求仍在使用扩展，回执会立即列出占用与原命令。交回后重试同一命令完成清理。检视也会报告新调度状态、剩余占用、启用失败和生成物漂移。宿主选择、已签资源与宿主自有文件继续保留。
 
 ## 3.1.0 初建设计准入与有进展续作（plan d18f6c42）
 

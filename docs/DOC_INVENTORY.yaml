@@ -156,8 +156,8 @@ docs:
       - 新增顶层扩展目录约定
 
   - path: framework/docs/evolution/extension-protocol-v1.md
-    role: extension/workflow/hooks 三套协议的 schema_version 与 breaking 约定（v1 起点）
-    audience: framework 维护者 / 做多仓库发布件同步的维护者
+    role: Extension 接入协议，提供字段和时点表、可安装示例、启停和作者自测
+    audience: 扩展提供方 / 宿主管理者 / framework 维护者
     sources:
       - framework/specs/workflow-schema.json
       - framework/specs/instance-extension-manifest.schema.yaml
@@ -165,7 +165,7 @@ docs:
       - framework/MIGRATION.md
       - framework/skills/project/extension/SKILL.md
     update_triggers:
-      - 任一则 schema 主版本升级
+      - 扩展字段、时点、管理生命周期或随包示例变更
       - MIGRATION.md 增加与本协议相关的迁移章节
 
   # --------------------------------------------------------------------------

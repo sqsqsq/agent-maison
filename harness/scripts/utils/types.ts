@@ -987,6 +987,8 @@ export interface ExtensionBinding {
   absPath?: string;
   enabled: boolean;
   selected?: boolean;
+  pendingGenerated?: true;
+  override?: ExtensionBindingTiming;
   required?: boolean;
   severity?: 'MAJOR' | 'BLOCKER';
   /** Present for a missing dependency or unsupported declaration, including an invalid disabled declaration. */
@@ -1023,14 +1025,40 @@ export type ExtensionPhaseBindingSlot =
   | 'before_phase_verify'
   | 'after_phase_verify_before_close';
 
+export interface ExtensionBindingTiming {
+  at: string;
+  phase?: string;
+}
+
+export interface ExtensionPendingCleanup {
+  operation: 'disable' | 'uninstall' | 'install';
+  binding?: string;
+  command: string[];
+  restore_enabled?: boolean;
+  replacement?: { stage: string; files: Array<{ path: string; before?: string; after?: string }> };
+}
+
+export interface ExtensionInstallationSelection {
+  source?: string;
+  version?: string;
+  enabled: boolean;
+  bindings?: Record<string, unknown>;
+  files?: Record<string, unknown>;
+  binding_overrides?: Record<string, unknown>;
+  pending_cleanup?: ExtensionPendingCleanup;
+  activation_result?: import('./extension-activation-contract').ExtensionActivationResult;
+}
+
 /** doc/extensions 解析产物（manifest 缺失则为零值 + rootDir=null） */
 export interface ExtensionBundle {
   rootDir: string | null;
   manifestPath: string | null;
-  manifestVersion: '1.0' | '1.1' | '2.0' | null;
+  manifestVersion: '1.0' | '1.1' | '2.0' | '2.1' | null;
   manifestName: string | null;
   manifestUsable: boolean;
   bindings: ExtensionBinding[];
+  activations: Record<string, import('./extension-activation-contract').ExtensionActivationStep[]>;
+  installations: Record<string, ExtensionInstallationSelection>;
   featurePhases: string[];
   declaredSkills: string[];
   skills: string[];
