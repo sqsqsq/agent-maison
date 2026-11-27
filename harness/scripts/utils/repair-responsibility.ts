@@ -15,6 +15,7 @@ import {
   featureDir,
   featureFilePath,
   featurePhaseReportsDir,
+  loadFrameworkConfig,
   receiptDirPath,
   relFeaturesDir,
   resolveFeatureArtifact,
@@ -82,6 +83,7 @@ export interface PhaseWriteBoundaryResolution {
   executionRole?: 'author' | 'verifier';
   verifierResultPath?: string;
   immutableInputPaths?: string[];
+  extensionControlRoot?: string;
 }
 
 export interface ResolvePhaseWriteBoundaryOptions {
@@ -123,6 +125,10 @@ export function workUnitProtectedRecordPaths(projectRoot: string, feature: strin
   return [featureFilePath(projectRoot, feature, FEATURE_COMPLETION_FILENAME),
     ...(runDir ? [path.resolve(projectRoot, runDir, FEATURE_COMPLETION_FILENAME)] : [])]
     .map(file => normalizeResponsibilityPath(projectRoot, file));
+}
+
+export function workUnitExtensionControlRoot(projectRoot: string): string {
+  return loadFrameworkConfig(projectRoot).paths.extension_dir ?? 'doc/extensions';
 }
 
 /** Write permission is a view of the unit's actual inputs/outputs, never its current method. */

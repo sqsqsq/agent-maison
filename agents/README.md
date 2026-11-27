@@ -158,8 +158,10 @@ S1 探测任务表（`materialize-adapter-file:*` 驱动）必须 **逐文件** 
 
 切换/增删 adapter：UPDATE init 更新 `materialized_adapters` 并重跑物化；**旧 adapter 目录可能残留**，列给用户手工处理，不自动 `rm -rf`。
 
-实例扩展另走 `/extension materialize`：它只读项目级 `materialized_adapters[]`，为每个已物化 adapter
-刷新 extension Skill bridge 与 AGENTS/CLAUDE 扩展段；不读个人 active adapter。
+实例扩展的安装、单项启停、卸载和检视共用 [extension Skill](../skills/project/extension/SKILL.md)。
+Claude Code、Cursor、CodeAgent 可经项目的命令入口传递具名动词或自然语言。Codex、DeepSeek Harness、OpenCode 经
+物化的 Skill 调用。Generic 及其他已配置 adapter 沿项目入门 bundle 或根指引找到同一 Skill。它们都调用发布件的
+`harness/scripts/extension.ts`。入口刷新读取项目 `materialized_adapters[]`，生成桥接与 AGENTS/CLAUDE 扩展段。
 
 ## Adapter 选定建议（personal setup · framework-initb）
 

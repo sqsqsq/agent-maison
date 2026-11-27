@@ -26,6 +26,8 @@ import { setupMinimalHost } from '../utils/existing-goal-delivery-fixture';
 import { inferRepoLayout } from '../../repo-layout';
 import { clearFrameworkConfigCache } from '../../config';
 import { withRuntimeTest } from '../utils/runtime-test-control';
+import { loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
+import { readExecutionRequestOriginal } from '../../scripts/utils/session-execution-handoff';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const READ_INSTRUCTION =
@@ -179,7 +181,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         assert(p.includes('## Instance extension inputs') && p.includes('### Knowledge index'), '主干同款标题');
         assert(p.includes('- `doc/extensions/knowledge/spec-author.md`'), '相对路径须在作者实收 prompt 中');
         assert(p.includes('canonical_module') && p.includes('动笔之前发现，不等价于完成审查'), '原生术语候选与消歧也必须送达实际作者');
-        assert(!r.warns.some(w => w.includes('作者前置输入未注入')), '合法 manifest 不得 warn');
+        assert(!r.warns.some(w => w.includes('作者前置输入诊断')), '合法 manifest 不得 warn');
         // 辅助断言：落盘 prompt.md 同内容
         const runsDir = path.join(r.root, 'doc', 'features', feature, 'goal-runs');
         const onDisk = fs.readdirSync(runsDir)
@@ -200,6 +202,43 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
     },
   },
   {
+    name: '5247db24 actual signed Feature author receives extension text and the retained action resource location',
+    run: async () => {
+      const feature = 'signed-feature-extensions';
+      const r = await driveSpecRun(feature, {
+        'doc/extensions/manifest.yaml': [
+          'schema_version: "2.0"', 'name: actual-feature-bindings', 'provides:', '  skills: [design-intake]',
+          'bindings:', '  design-intake:',
+          '    facts: {at: feature.before_phase_work@1, phase: spec, kind: knowledge, ref: knowledge/facts.md, enabled_by_default: true}',
+          '    action: {at: feature.before_phase_work@1, phase: spec, kind: action, ref: design-intake, enabled_by_default: true}',
+        ].join('\n'),
+        'doc/extensions/knowledge/facts.md': '# 当前作者的唯一验收材料',
+        'doc/extensions/skills/design-intake/SKILL.md': '# 已安装动作',
+      });
+      try {
+        assert(r.prompts[0]?.includes('当前作者的唯一验收材料'));
+        assert(r.prompts[0]?.includes('doc/extensions/skills/design-intake/SKILL.md'));
+        const runsDir = path.join(r.root, 'doc/features', feature, 'goal-runs');
+        const first = fs.readdirSync(runsDir).filter(name => !name.startsWith('.')).flatMap(name => {
+          const runDir = path.join(runsDir, name);
+          const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
+          const start = events.find(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
+          return start?.invoke_id ? [readExecutionRequestOriginal(runDir, start.invoke_id, events)] : [];
+        })[0];
+        const segments = first?.request.context.workInput?.material.segments as Array<Record<string, unknown>> | undefined;
+        const signed = segments?.find(segment => typeof segment === 'object' && 'extension_feature_bindings' in segment);
+        assert.deepEqual(signed?.extension_feature_bindings, [
+          { source: 'actual-feature-bindings', ability: 'design-intake', id: 'facts', at: 'feature.before_phase_work@1',
+            kind: 'knowledge', ref: 'knowledge/facts.md', phase: 'spec', path: 'doc/extensions/knowledge/facts.md', delivery: 'inline' },
+          { source: 'actual-feature-bindings', ability: 'design-intake', id: 'action', at: 'feature.before_phase_work@1',
+            kind: 'action', ref: 'design-intake', phase: 'spec', path: 'doc/extensions/skills/design-intake/SKILL.md', delivery: 'action' },
+        ]);
+      } finally {
+        fs.rmSync(r.root, { recursive: true, force: true });
+      }
+    },
+  },
+  {
     name: 't4 manifest 非法（knowledge 文件不存在）：warn 指向 --phase extensions，不注入，invoke 仍发生',
     run: async () => {
       const r = await driveSpecRun('ext-author-inputs-bad', {
@@ -210,7 +249,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         assert(r.prompts.length > 0, `manifest 非法不得阻止作者 invoke，exit=${r.exitCode}`);
         assert(!r.prompts[0].includes('Instance extension inputs'), '非法 manifest 不注入');
         assert(
-          r.warns.some(w => w.includes('作者前置输入未注入') && w.includes('--phase extensions')),
+          r.warns.some(w => w.includes('作者前置输入诊断') && w.includes('--phase extensions')),
           `须 warn 并指向 --phase extensions，实际 warns=${JSON.stringify(r.warns)}`,
         );
       } finally {
@@ -240,7 +279,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
           'schema_version: "1.1"\nname: x\nprovides:\n  knowledge:\n    - { path: knowledge/missing.md, summary: 缺文件, audience: [spec] }\n');
         clearFrameworkConfigCache();
         assert(!extensionInputsForPhase(root, 'spec').includes('Instance extension inputs'));
-        assert(warn.warns.some(w => w.includes('knowledge_missing') && w.includes('作者前置输入未注入')), 'errors 须出声');
+        assert(warn.warns.some(w => w.includes('knowledge_missing') && w.includes('作者前置输入诊断')), 'errors 须出声');
 
         fs.writeFileSync(path.join(ext, 'knowledge', 'plan-author.md'), '# plan\n');
         fs.writeFileSync(path.join(ext, 'manifest.yaml'),

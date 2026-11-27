@@ -142,7 +142,7 @@ function main(): void {
       ? paths.extension_dir.trim()
       : 'doc/extensions';
   const bundle = loadInstanceExtensions(REPO_ROOT, extDir, { frameworkRoot: FRAMEWORK_DIR });
-  if (bundle.errors.length > 0) {
+  if (!bundle.manifestUsable) {
     fail(`extension manifest/路径非法：${bundle.errors.map(error => `${error.code}: ${error.message}`).join('；')}`);
   }
   const tpl = loadTemplate();

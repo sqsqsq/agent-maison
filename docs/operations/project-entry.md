@@ -123,7 +123,7 @@ compile/request 准备上下文时按最终实际内容派生专项，不新增�
 | catalog-bootstrap / glossary | 请求词条、上下文、已有术语与 semantic owner；`--phase glossary --term <term>`（可按 `--module` 选择） | 合并选中词条；跨条目消歧仍校验，不要求整个 catalog 完整 |
 | code-graph / module-graph | 模块源码、有效 catalog 或显式 package-path；`bootstrap-code-graph.ts --project-root <root> --module <name> [--package-path <path>]` | 只刷新该模块 derived、保留 nodes；仅策展请求进入策展确认，完成不启动 UT |
 | docs（无独立 Skill） | 文档 inventory、请求路径及已登记 source；`--phase docs --path <inventory-path-or-directory>` | 校验选中文档存在、来源与 freshness；不创建 Feature 或补全部文档 |
-| extension / extensions | 现有 manifest、动作及 bindings；`extension.ts --project-root <root> --action inspect\|init\|materialize\|verify` | 仅完成该动作；verify 使用现有 extensions checker，不安装 MCP/凭据、不改发布件源码 |
+| extension / extensions | 现有清单与声明。由 [extension Skill](../../skills/project/extension/SKILL.md) 将 install、enable、disable、uninstall、inspect 及同义自然语言传到同一 CLI | 按明确的能力或绑定执行。纯检视只读；校验沿 extensions checker。 |
 | conventions-bootstrap | 当前候选约定、来源和策展授权；现有 Skill staging/合并流程 | 本次约定策展；未授权语义规则不提升为组织规则 |
 | component-catalog-bootstrap | 源码索引、部件卡与使用边界；`bootstrap:component-index` 及原有策展检查 | 本次索引/知识增量；不自动批准依赖关系 |
 | component-design | 请求、既有需求源/蓝图与缺口；现有 `check:component-blueprint`、view/draft/continue 路径 | 查看不写 canonical/revision/CU/run；直接设计到请求终点或 CU readiness，完整交付 runtime 调用后按原授权继续 |

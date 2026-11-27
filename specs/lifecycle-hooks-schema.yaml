@@ -12,27 +12,65 @@ defaults:
     profile: BLOCKER
     extension: MAJOR
 
+# The loader resolves both manifest 2.0 timing IDs and compatible shorthand
+# from these definitions. The owner named here still controls actual dispatch.
 hook_events:
   - id: pre_phase
-    description: Before harness begins a phase (after args resolved).
-  - id: post_phase
-    description: After phase script completes (before writing final report for that phase).
+    version: 1
+    description: 普通检查分支开始时，阶段状态写为 running 之后。
   - id: pre_check
-    description: Immediately before invoking the phase check-*.ts script.
+    version: 1
+    description: 普通检查开始时，在 checker 及其扩展产物检查之前。
   - id: post_check
-    description: Immediately after check-*.ts returns.
-  - id: pre_verifier
-    description: Before verifier sub-agent prompt is assembled (when applicable).
-  - id: post_verifier
-    description: After verifier completes (when applicable).
-  - id: on_context_load
-    description: >-
-      Fired at the end of the harness check flow. Fragments are consumed only when the verifier
-      ai-prompt is assembled — that is, when the verifier request eligibility check admits the phase
-      (script PASS, or a diagnosable product failure admitted for a repair-diagnosis round); they never
-      enter the author's pre-write context.
+    version: 1
+    description: 阶段 checker 结束后，违规分类之前。
   - id: on_violation
-    description: When a check returns BLOCKER or MAJOR (after classification).
+    version: 1
+    description: 按普通检查分支已分类的 BLOCKER 或 MAJOR 违规逐项触发。
+  - id: pre_verifier
+    version: 1
+    description: 检查末尾第一个收尾事件，在判断是否签发验证请求之前。
+  - id: on_context_load
+    version: 1
+    description: 检查末尾，位于 pre_verifier 和 post_verifier 之间，在判断是否签发验证请求之前。
+  - id: post_verifier
+    version: 1
+    description: 检查末尾，位于 on_context_load 和 post_phase 之间，尚未判断是否签发验证请求。
+  - id: post_phase
+    version: 1
+    description: 检查末尾最后一个收尾事件，在报告落盘和判断是否签发验证请求之前。
+
+hook_contributions:
+  scope: harness
+  resources: [hook_markdown, hook_script]
+  consumers:
+    hook_markdown: 本轮实际组装的 verifier 提示
+    hook_script: harness checker（脚本结果）；本轮实际组装的 verifier 提示（片段）
+
+contribution_timings:
+  - id: feature.before_phase_work@1
+    legacy_slot: before_phase_work
+    scope: feature
+    description: Feature 作者动笔前准备输入，已声明 MCP 的产物随后由原 harness 检查。
+    consumer: Feature 作者 / harness checker
+    resources: [knowledge_file, skill, mcp]
+  - id: feature.before_phase_verify@1
+    legacy_slot: before_phase_verify
+    scope: feature
+    description: 普通 Feature checker 运行前，由原 harness 检查 MCP 的声明产物。
+    consumer: Feature harness checker
+    resources: [mcp]
+  - id: feature.after_phase_verify_before_close@1
+    legacy_slot: after_phase_verify_before_close
+    scope: feature
+    description: Feature 检查后、收口前，由原 receipt gate 检查 MCP 的声明产物。
+    consumer: check-receipt
+    resources: [mcp]
+  - id: component-design.before_discovery@1
+    scope: project
+    description: 绑定蓝图、需求来源和写入范围后，P1 事实发现与首次设计写作前。
+    consumer: component-design 作者（直接或受管入口）
+    resources: [knowledge_file, skill]
 
 hook_ctx:
   type: object

@@ -284,6 +284,108 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
   },
 }, ];
 
+
+cases.push({
+  name: '5247db24 signed design retains the original extension input through a host toggle',
+  async run() {
+    await withProject(async project => {
+      const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
+      const handoff = require(path.join(project.harnessDir, 'scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
+      const extension = 'doc/extensions';
+      const skill = `${extension}/skills/ux/SKILL.md`;
+      const manifest = `${extension}/manifest.yaml`;
+      writeHostFile(project.root, skill, '# Original UX action\n');
+      writeHostFile(project.root, `${extension}/intake.md`, '主持有的独立设计背景。\n');
+      writeHostFile(project.root, manifest, YAML.stringify({
+        schema_version: '2.0', name: 'host-design', provides: { skills: ['ux'], skill_assets: { 'component-design': { knowledge: 'intake.md' } } },
+        bindings: { ux: { fill: { at: 'component-design.before_discovery@1', kind: 'action', ref: 'ux', enabled_by_default: true } } },
+      }));
+      const prepared = entry.prepareGoalModeRun({ projectRoot: project.root, frameworkRoot: project.frameworkRoot,
+        feature: project.feature, adapter: 'claude', runId: 'initial-extension-window', requirement: project.requirement,
+        requirementSourceFiles: project.requirementSourceFiles, unattended: UNATTENDED, autonomyAuthorized: true });
+      const options = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, adapter: 'claude',
+        runId: prepared.manifest.run_id, runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+      const next = (changes: Partial<typeof options & { requestPath: string; report: import('../../scripts/utils/session-execution-handoff').SessionExecutionReport }> = {}) =>
+        withRuntimeTest({ root: project.root }, () => entry.runGoalModeSessionStep({ ...options, ...changes }));
+      const first = await next();
+      assert.equal(first.type, 'phase_execute_request');
+      const reference = first.request as { path: string };
+      const issued = handoff.readSessionExecution(prepared.runDir, reference.path)!;
+      const { context, invoke_id: invokeId } = issued.request;
+      assert(context.instruction?.includes(`设计前动作 ux:fill [${skill}]`));
+      assert(context.instruction?.includes('主持有的独立设计背景。'));
+      assert(context.instruction?.includes('doc/requirement.md'));
+      assert(issued.request.write_boundary?.immutableInputPaths?.includes(skill));
+      const binding_snapshot = handoff.capturePhaseBinding(prepared.runDir, issued);
+      assert(binding_snapshot);
+      fs.appendFileSync(path.join(prepared.runDir, 'events.jsonl'), JSON.stringify({ type: 'agent_process_bound',
+        phase: context.phase, invoke_id: invokeId, owner_id: context.owner.owner_id, owner_epoch: context.owner.epoch,
+        pid: 42, binding_snapshot, ts: new Date().toISOString() }) + '\n');
+      const cli = (childEnv: Readonly<Record<string, string>>) => spawnSync(process.execPath,
+        [...testCliArgs(path.join(project.harnessDir, 'scripts/extension.ts')), 'disable', 'ux', '--project-root', project.root, '--json'],
+        { cwd: project.harnessDir, encoding: 'utf8', timeout: 15_000,
+          env: { ...process.env, MAISON_GOAL_RUN_ID: '', MAISON_GOAL_ATTEMPT: '', ...childEnv } });
+      const denied = cli(context.childEnv);
+      assert.equal(denied.status, 1, denied.stderr + denied.stdout);
+      assert.match(denied.stderr, /宿主管理入口/);
+      const changed = cli({});
+      assert.equal(changed.status, 0, changed.stderr + changed.stdout);
+      assert.equal(JSON.parse(changed.stdout).mutation.changed, true);
+      assert.deepEqual((await next()).request, first.request, 'ordinary next reuses the original signed inputs');
+      assert.equal(fs.readFileSync(path.join(project.root, skill), 'utf8'), '# Original UX action\n');
+      await next({ requestPath: reference.path, report: { status: 'passed', phase: context.phase, details: '执行结束，初建设计仍未交付。' } });
+      assert.equal(handoff.acceptedSessionReport(prepared.runDir, issued)?.event.status, 'passed');
+      const events = handoff.sessionEvents(prepared.runDir);
+      assert(events.some(event => event.type === 'phase_write_observed' && event.invoke_id === invokeId
+        && 'producer' in event && event.producer === 'extension-management' && 'produced' in event
+        && Array.isArray(event.produced) && event.produced.some(write => write.path === manifest)));
+      assert(!events.some(event => event.type === 'phase_write_violation' && event.invoke_id === invokeId));
+      const retry = handoff.readSessionExecution(prepared.runDir);
+      if (retry && retry.request.invoke_id !== invokeId) {
+        assert(!retry.request.context.instruction?.includes('设计前动作 ux:fill'));
+        assert(retry.request.context.instruction?.includes('主持有的独立设计背景。'));
+      }
+    });
+  },
+}, {
+  name: '5247db24 the signed design author cannot write a configured extension root inside its blueprint workspace',
+  async run() {
+    await withProject(async project => {
+      const entry = require(path.join(project.harnessDir, 'scripts/goal-mode-entry')) as typeof import('../../scripts/goal-mode-entry');
+      const handoff = require(path.join(project.harnessDir, 'scripts/utils/session-execution-handoff')) as typeof import('../../scripts/utils/session-execution-handoff');
+      const extensionDir = `doc/features/${project.feature}/blueprint/local-extensions`;
+      const config = path.join(project.root, 'framework.config.json');
+      const previous = JSON.parse(fs.readFileSync(config, 'utf8'));
+      fs.writeFileSync(config, JSON.stringify({ ...previous, paths: { ...previous.paths, extension_dir: extensionDir } }));
+      clearFrameworkConfigCache();
+      const target = `${extensionDir}/manifest.yaml`;
+      writeHostFile(project.root, target, 'schema_version: "2.0"\nname: local\n');
+      const prepared = entry.prepareGoalModeRun({ projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature,
+        adapter: 'claude', runId: 'initial-extension-write', requirement: project.requirement,
+        requirementSourceFiles: project.requirementSourceFiles, unattended: UNATTENDED, autonomyAuthorized: true });
+      const options = { projectRoot: project.root, frameworkRoot: project.frameworkRoot, feature: project.feature, adapter: 'claude',
+        runId: prepared.manifest.run_id, runMode: 'attended', authorization: { mode: 'goal_mode' as const, autonomyAuthorized: true } };
+      const first = await withRuntimeTest({ root: project.root }, () => entry.runGoalModeSessionStep(options));
+      assert.equal(first.type, 'phase_execute_request');
+      const reference = first.request as { path: string };
+      const issued = handoff.readSessionExecution(prepared.runDir, reference.path)!;
+      assert(issued.request.snapshot_options?.ownedPrefixes?.some(prefix => target.startsWith(prefix + '/')));
+      const absolute = path.join(project.root, target);
+      fs.appendFileSync(absolute, 'description: A managed author tried to update configuration.\n');
+      fs.writeFileSync(path.join(path.dirname(reference.path), 'agent-events.jsonl'), [
+        { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'edit-manifest', name: 'Edit', input: { file_path: absolute } }] } },
+        { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'edit-manifest', content: 'Applied edit.' }] } },
+      ].map(row => JSON.stringify(row)).join('\n') + '\n');
+      await withRuntimeTest({ root: project.root }, () => entry.runGoalModeSessionStep({ ...options, requestPath: reference.path,
+        report: { status: 'passed', phase: issued.request.context.phase } }));
+      assert.equal(handoff.acceptedSessionReport(prepared.runDir, issued)?.event.status, 'failed');
+      assert(handoff.sessionEvents(prepared.runDir).some(event => event.type === 'phase_write_violation'
+        && event.invoke_id === issued.request.invoke_id && 'violations' in event && Array.isArray(event.violations)
+        && event.violations.some(write => write.path === target && write.violation === 'outside_authority' && write.authority_confirmed)));
+    });
+  },
+});
+
 // Reduced legacy process history, matching 960fa0: the old three-author policy halted with total budget left.
 // These are historical input events; today's runtime must not be used to recreate that retired local limit.
 function seedLegacyContentLimitHistory(project: Project, maxTurns = 30) {

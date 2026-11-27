@@ -8,6 +8,7 @@ import * as os from 'os';
 import * as path from 'path';
 import {
   loadInstanceExtensions,
+  loadInstanceExtensionSource,
   applyInstanceExtensions,
 } from '../../extension-loader';
 import type { HarnessResolvedProfile } from '../../scripts/utils/types';
@@ -408,6 +409,8 @@ const cases: Case[] = [
 
       const dir = mkTmp();
       const frameworkRoot = path.join(dir, 'framework');
+      const timingPath = 'specs/lifecycle-hooks-schema.yaml';
+      write(path.join(frameworkRoot, timingPath), fs.readFileSync(path.join(FRAMEWORK_DIR, timingPath), 'utf8'));
       write(path.join(frameworkRoot, 'workflows', 'custom.workflow.yaml'), [
         'schema_version: "1.0"', 'name: custom', 'auto_chain: [custom-work]', 'artifacts:',
         '  - id: custom-global', '    scope: global', '    requires: []',
@@ -465,6 +468,65 @@ const cases: Case[] = [
       write(path.join(dir, 'my', 'extensions', 'manifest.yaml'), 'schema_version: "1.0"\nname: safe\n');
       const safe = loadInstanceExtensions(dir, 'my/extensions');
       assert(safe.errors.length === 0 && Boolean(safe.manifestPath?.includes(path.join('my', 'extensions'))), JSON.stringify(safe.errors));
+    },
+  },
+  {
+    name: 'manifest 2.0：来源默认值、宿主选择及坏条目分别作用于具体绑定',
+    run: () => {
+      const project = mkTmp();
+      const root = path.join(project, 'doc', 'extensions');
+      write(path.join(root, 'skills', 'story', 'SKILL.md'), '# Story');
+      write(path.join(root, 'skills', 'ux', 'SKILL.md'), '# UX');
+      write(path.join(root, 'docs', 'knowledge.md'), '# Context');
+      write(path.join(root, 'manifest.yaml'), [
+        'schema_version: "2.0"', 'name: host', 'provides:', '  skills: [story, ux]',
+        '  skill_assets:', '    component-design: { knowledge: docs/old-missing.md }',
+        'bindings:', '  ux:',
+        '    read: {at: component-design.before_discovery@1, kind: knowledge, ref: docs/knowledge.md, enabled_by_default: true}',
+        '    fill: {at: component-design.before_discovery@1, kind: action, ref: ux}',
+        '    bad: {at: component-design.before_discovery@2, kind: knowledge, ref: docs/knowledge.md, enabled_by_default: true}',
+        '  story:', '    missing: {at: component-design.before_discovery@1, kind: knowledge, ref: docs/missing.md}',
+        'installations:', '  ux:',
+        '    source: optional-extensions', '    enabled: true', '    bindings: {read: false, fill: true, bad: true}', '    files: {}',
+      ].join('\n'));
+      try {
+        const source = loadInstanceExtensionSource(root, project);
+        assert(source.bindings.some(item => item.id === 'read' && item.enabled && item.source === 'host'), 'source defaults');
+        assert(source.bindings.some(item => item.id === 'fill' && !item.enabled && !!item.absPath), 'omitted default is off');
+        const host = loadInstanceExtensions(project);
+        assert(host.manifestUsable && host.skills.includes('story') && host.skills.includes('ux'), 'valid skills live beside errors');
+        assert(host.bindings.some(item => item.id === 'fill' && item.enabled && item.source === 'optional-extensions'), 'host selection/source');
+        const bad = host.bindings.find(item => item.id === 'bad');
+        assert(bad?.enabled === false && !!bad.reason?.includes('未知时点'), JSON.stringify(bad));
+        assert(host.errors.some(error => error.bindingId === 'bad' && error.ability === 'ux' && error.at?.endsWith('@2')), 'attributed error');
+        assert(host.errors.some(error => error.bindingId === 'missing' && error.ability === 'story'), 'bad resource still diagnosed when disabled');
+        assert(host.errors.some(error => error.code === 'skill_assets_missing' && error.source === 'host'
+          && error.ability === 'component-design' && error.bindingId === 'knowledge'), 'unavailable legacy design background retains precedence identity');
+      } finally {
+        fs.rmSync(project, { recursive: true, force: true });
+      }
+    },
+  },
+  {
+    name: 'manifest 根异常：解析、结构和目标不支持的协议均产生整体失败',
+    run: () => {
+      const project = mkTmp();
+      const file = path.join(project, 'doc', 'extensions', 'manifest.yaml');
+      try {
+        for (const content of ['bindings: [', '- name: wrong-root', 'schema_version: "3.0"\nname: future']) {
+          write(file, content);
+          const bundle = loadInstanceExtensions(project);
+          assert(!bundle.manifestUsable && bundle.bindings.length === 0 && bundle.skills.length === 0, content);
+          assert(checkExtensionManifest(bundle).some(check => check.status === 'FAIL' && check.severity === 'BLOCKER'), content);
+        }
+        write(file, 'description: both required fields missing');
+        const bundle = loadInstanceExtensions(project);
+        assert(!bundle.manifestUsable, 'missing root fields');
+        assert(bundle.errors.some(error => error.code === 'manifest_schema_version'), 'missing schema_version diagnosed');
+        assert(bundle.errors.some(error => error.code === 'manifest_name'), 'missing name diagnosed alongside schema_version');
+      } finally {
+        fs.rmSync(project, { recursive: true, force: true });
+      }
     },
   },
   {

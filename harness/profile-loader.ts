@@ -228,7 +228,7 @@ export function loadResolvedProfile(projectRoot: string, cfg: FrameworkConfig, f
     personalPrerequisites,
   };
 
-  return applyInstanceExtensions(base, projectRoot, cfg.paths?.extension_dir);
+  return applyInstanceExtensions(base, projectRoot, cfg.paths?.extension_dir, { frameworkRoot });
 }
 
 export function isPhaseDisabledByProfile(phase: Phase, resolved: HarnessResolvedProfile): boolean {

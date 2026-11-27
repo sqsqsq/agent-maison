@@ -147,7 +147,7 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
         assert(issued,'原作者执行前须真实签发请求');
         assert.equal(issued.request.context.phase,'initial-design-author');
         assert.equal(issued.request.context.instruction,context.instruction);
-        assert(context.instruction?.includes(body));
+        assert.equal(context.instruction?.split(body).length,2,'生效正文在作者提示中恰好交付一次');
         assert(context.instruction?.includes(source));
         const material=context.workInput?.material;
         assert.deepEqual(issued.request.context.workInput?.material,material);

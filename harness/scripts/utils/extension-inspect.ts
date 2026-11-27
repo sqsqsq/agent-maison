@@ -13,6 +13,7 @@ import {
 } from './instance-skill-bridge';
 import { inspectExtensionProduce } from './extension-runtime';
 import { extensionKnowledgeRoutes } from './knowledge-context';
+import type { ExtensionValidationError } from './types';
 
 export type ExtensionStrength = 'available' | 'scheduled' | 'evidenced';
 
@@ -23,12 +24,17 @@ export interface ExtensionInspectRow {
   consumer: string;
   state: ExtensionStrength;
   status: string;
+  ability?: string;
+  bindingId?: string;
+  at?: string;
+  packageSource?: string;
 }
 
 export interface ExtensionReconciliationFinding {
   code: string;
   message: string;
   path?: string;
+  ability?: string;
 }
 
 export interface ExtensionInspection {
@@ -37,11 +43,12 @@ export interface ExtensionInspection {
   manifest: string | null;
   rows: ExtensionInspectRow[];
   findings: ExtensionReconciliationFinding[];
-  manifestErrors: Array<{ code: string; message: string; path?: string }>;
+  manifestErrors: ExtensionValidationError[];
 }
 
 export interface ExtensionInspectOptions {
   toolVisibility?: Record<string, boolean>;
+  ability?: string;
 }
 
 function rel(root: string, target: string): string {
@@ -79,8 +86,8 @@ export function inspectInstanceExtensions(
   const bundle = loadInstanceExtensions(projectRoot, extensionDir, { frameworkRoot: frameworkDir });
   const rows: ExtensionInspectRow[] = [];
   const findings: ExtensionReconciliationFinding[] = [];
-  const scanned = scanExtensionSkills(projectRoot, extensionDir);
-  const declared = new Set(bundle.skills);
+  const scanned = bundle.manifestUsable ? scanExtensionSkills(projectRoot, extensionDir) : [];
+  const declared = new Set(bundle.declaredSkills);
   const scannedIds = new Set(scanned.map(row => row.sourceSlug));
   const selectedIds = extensionSkillIdsForBridge(bundle);
   const selected = selectedIds ? new Set(selectedIds) : null;
@@ -91,17 +98,20 @@ export function inspectInstanceExtensions(
     const listed = declared.has(skill.sourceSlug);
     rows.push({
       type: 'skill', source: skill.skillMdRepoRel, timing: `/${skill.sourceSlug} 或 AGENTS.md 路由`,
-      consumer: '当前 agent adapter', state: 'available', status: listed ? 'declared' : 'directory-only',
+      consumer: '当前 agent adapter', state: 'available', ability: skill.sourceSlug,
+      status: selected && !selected.has(skill.sourceSlug)
+        ? listed ? '未启用：能力已停用' : '未启用：目录未声明'
+        : listed ? 'declared' : 'directory-only',
     });
     if (!listed && bundle.manifestPath) findings.push({
       code: 'extension_skill_unlisted', message: `目录 skill 未在 manifest provides.skills 声明：${skill.sourceSlug}`,
-      path: skill.skillMdRepoRel,
+      path: skill.skillMdRepoRel, ability: skill.sourceSlug,
     });
   }
   for (const id of declared) {
     if (!scannedIds.has(id)) findings.push({
       code: 'extension_skill_declared_missing', message: `manifest skill 缺少 skills/${id}/SKILL.md`,
-      path: bundle.manifestPath ?? undefined,
+      path: bundle.manifestPath ? rel(projectRoot, bundle.manifestPath) : undefined, ability: id,
     });
   }
 
@@ -110,15 +120,10 @@ export function inspectInstanceExtensions(
       type: 'knowledge', source,
       timing: routed
         ? knowledge.audience === 'global' ? 'AGENTS.md / CLAUDE.md 渲染时' : `Feature phases: ${audience.join(', ')}`
-        : '当前零消费（manifest 1.0）',
-      consumer: routed ? knowledge.audience === 'global' ? '全局 agent 指令' : '对应 phase 作者 / prepare / verifier；AGENTS 静态路由' : '无（1.0 兼容）',
+        : '仅保留目录索引',
+      consumer: routed ? knowledge.audience === 'global' ? '全局 agent 指令' : '对应 phase 作者 / prepare / verifier；AGENTS 静态路由' : '无自动消费者',
       state: routed ? 'scheduled' : 'available', status: routed ? 'routed' : 'declared-unconsumed',
-    });
-  }
-  for (const [phase, events] of Object.entries(bundle.hooks)) {
-    for (const [event, files] of Object.entries(events)) for (const file of files) rows.push({
-      type: 'hook', source: rel(projectRoot, file), timing: `${phase}.${event}`,
-      consumer: 'harness lifecycle dispatcher', state: 'scheduled', status: 'declared',
+      ability: bundle.manifestName ?? undefined,
     });
   }
   for (const [id, capability] of Object.entries(bundle.extensionCapabilities)) rows.push({
@@ -138,15 +143,21 @@ export function inspectInstanceExtensions(
     consumer: `harness ${phase} checker`, state: 'scheduled', status: 'declared',
   });
   const scheduledActions = new Set<string>();
-  for (const [phase, slots] of Object.entries(bundle.phaseBindings)) {
-    for (const [slot, bindings] of Object.entries(slots)) for (const binding of bindings ?? []) {
-      if (binding.kind === 'mcp') scheduledActions.add(binding.ref);
-      rows.push({
-        type: 'phase_binding', source: `${binding.kind}:${binding.ref}`, timing: `${phase}.${slot}`,
-        consumer: slot === 'after_phase_verify_before_close' ? 'check-receipt' : `harness ${phase} CheckResult`,
-        state: 'scheduled', status: 'declared',
-      });
-    }
+  for (const binding of bundle.bindings) {
+    const action = binding.resource === 'mcp' ? bundle.mcpActions[binding.ref] : undefined;
+    const missingTool = !!action && options.toolVisibility?.[action.id] === false;
+    const scheduled = binding.enabled && !missingTool;
+    if (action && scheduled) scheduledActions.add(action.id);
+    const identity = `${binding.source} · ${binding.ability}/${binding.id}`;
+    const resource = binding.absPath ? rel(projectRoot, binding.absPath) : binding.ref;
+    const where = [binding.phase, binding.at, binding.timingDescription].filter(Boolean).join(' · ');
+    rows.push({
+      type: binding.legacy === 'hook' ? 'hook' : binding.legacy === 'phase' ? 'phase_binding' : 'binding',
+      source: [identity, resource].filter(Boolean).join(' · '), timing: where || '时点未声明',
+      consumer: binding.consumer ?? '无已识别消费者', state: scheduled ? 'scheduled' : 'available',
+      status: scheduled ? 'declared' : `未启用：${binding.reason ?? `工具 ${action?.tool} 当前不可见（agent 自报）`}`,
+      ability: binding.ability, bindingId: binding.id, at: binding.at, packageSource: binding.source,
+    });
   }
   for (const action of Object.values(bundle.mcpActions)) {
     const existing = action.produceAbsPaths.filter(target => fs.existsSync(target) && fs.statSync(target).isFile());
@@ -163,7 +174,8 @@ export function inspectInstanceExtensions(
           : 'manifest 声明的下游',
       state: existing.length === action.produceAbsPaths.length && validations.every(item => item.issues.length === 0)
         ? 'evidenced' : scheduledActions.has(action.id) ? 'scheduled' : 'available',
-      status: `produces=${existing.length}/${action.produceAbsPaths.length}; invalid=${validations.reduce((sum, item) => sum + item.issues.length, 0)}; tool_visibility=${visibility === undefined ? 'not-reported' : visibility ? 'visible' : 'missing'}; source=agent_self_report`,
+      ability: action.id,
+      status: `produces=${existing.length}/${action.produceAbsPaths.length}; invalid=${validations.reduce((sum, item) => sum + item.issues.length, 0)}; tool_visibility=${visibility === undefined ? 'not-reported' : visibility ? 'visible' : 'missing'}; source=agent_self_report; evidence_scope=filesystem_only`,
     });
   }
 
@@ -171,7 +183,7 @@ export function inspectInstanceExtensions(
     for (const target of materializedTargets) {
       const paths = bridgePaths(projectRoot, frameworkDir, adapter, target.bridgeId);
       if (paths.length === 0) findings.push({
-        code: 'extension_bridge_adapter_unsupported', message: `adapter 未声明 extension bridge：${adapter}`,
+        code: 'extension_bridge_adapter_unsupported', message: `adapter 未声明 extension bridge：${adapter}`, ability: target.sourceSlug,
       });
     }
     for (const artifact of inspectInstanceSkillBridgeArtifacts({
@@ -180,12 +192,12 @@ export function inspectInstanceExtensions(
     })) {
       rows.push({
         type: 'bridge', source: artifact.path, timing: `adapter=${adapter} 物化`, consumer: `/${artifact.bridgeId}`,
-        state: 'available', status: artifact.state,
+        state: 'available', status: artifact.state, ability: path.posix.basename(path.posix.dirname(artifact.sourceRel)),
       });
       if (artifact.state !== 'present') findings.push({
         code: `extension_bridge_${artifact.state}`,
         message: `扩展 Skill 桥接 ${artifact.state}：${artifact.path}`,
-        path: artifact.path,
+        path: artifact.path, ability: path.posix.basename(path.posix.dirname(artifact.sourceRel)),
       });
     }
   }
@@ -193,7 +205,10 @@ export function inspectInstanceExtensions(
   return {
     schemaVersion: '1.0', extensionRoot: bundle.rootDir ? rel(projectRoot, bundle.rootDir) : null,
     manifest: bundle.manifestPath ? rel(projectRoot, bundle.manifestPath) : null,
-    rows, findings, manifestErrors: bundle.errors.map(error => ({ ...error, path: error.path ? rel(projectRoot, error.path) : undefined })),
+    rows: options.ability ? rows.filter(row => row.ability === options.ability) : rows,
+    findings: options.ability ? findings.filter(item => item.ability === options.ability) : findings,
+    manifestErrors: bundle.errors.filter(error => !options.ability || !error.ability || error.ability === options.ability)
+      .map(error => ({ ...error, path: error.path ? rel(projectRoot, error.path) : undefined })),
   };
 }
 

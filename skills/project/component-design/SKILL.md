@@ -49,8 +49,9 @@ description: Create or continue component design using the unified request envel
 
 本节取代 M7“每项正式需求一律完整交接/不设档位”的现行适用范围，M7 历史裁决和已完成产物不改写。只使用同一蓝图协议，不恢复 lite 或新增可手填档位状态。
 
-- **设计写入前准备**。新写或修订蓝图的作者在 P1 事实发现和写作前取得生效知识。受管初设直接消费指令中的材料。直接新写或修订以 `/component-design <blueprint-id>` 的实参或已准备请求正式绑定的 `blueprint_id` 为准；无参沿既有请求准备与绑定取得 ID，文件名、PRD 名和稿件正文均不可代替。在 `framework/harness` 用该 ID 执行只读命令 `npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint "<blueprint-id>" --design-knowledge --json`。
-- **读入与交回**。按 [asset 协议](../../README.md#profile-skill-asset-protocol) 优先用 extension 声明，未声明才回退 profile。读取返回的 `knowledge` 正文及适用引用，超预算按路径读原文。配置异常报告原诊断，无可选资产沿原流程。首次交回本次设计前，将草稿实际写入由该蓝图 ID 定位的 `canonical_path`，上游材料保持只读，人读稿沿 `--write-review` 投影。同一待决项在流程、用例和验收中保持待决，取得有依据的裁定后再写为确定步骤或预期。
+- **设计写入前准备**。新写或修订蓝图时，在 P1 事实发现及首次写作前执行。受管作者使用本次签发的 `extension_preparation`、知识正文与来源。直接作者在 `framework/harness` 运行 `npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint "<blueprint-id>" --prepare-design`。ID 取调用实参，或传入 `--request-file <已准备请求>` 使用正式绑定。传入已知需求原件 `--requirement-source <项目相对文件>` 和显式补充材料 `--material-source <项目相对文件>`，两项均可重复。本次明确排除的动作可用 `--skip-extension-action <能力ID:绑定ID>`。纯查看沿原只读路径，也可用兼容查询 `--design-knowledge`。
+- **读取与取用**。读取返回的知识正文和适用来源。超内联预算时按路径分段读取。打开每条已发放动作的资源，按其适用条件、本次请求和现有写入权限处理，按实际情况交回结果或缺口。
+- **实际交回**。用已绑定 ID 定位 `canonical_path` 并写本次正式草稿。对参加本次处理的绑定，在原作者交回中按准备输出的 `extension-result` 格式逐条记录实际结果。受管会话将结果放入原交回的 `details`。小型请求沿原 checker，完整蓝图人读稿沿 `--write-review`。
 
 ## 支持范围（诚实声明）
 
@@ -142,8 +143,7 @@ npm run check:change-unit -- --project-root <host> --blueprint <blueprint-id> --
 
 中型/复杂完整设计交接完成 = **admitted blueprint + 中型已分解 1 个、复杂已分解多个 canonical CU + 每个 CU 建立 `design_refs` 引用 + 后续施工 readiness + 当前人读文档及链接**。
 
-注意分层：**合法 `component-blueprint@1` 的判据不含 CU 数量**（P1 不反向依赖 P2）——
-`admitted blueprint + 0 CU` 是合法状态、是设计准备子流程的入口；"完整设计交付"才要求 CU。
+**合法 `component-blueprint@1` 的判据不含 CU 数量**。 `admitted blueprint + 0 CU` 可进入设计准备子流程。完整设计交付才要求 CU。
 
 本结果只代表**设计阶段**完成，不代表 Change Unit 已施工或 Component closure 已成立。
 

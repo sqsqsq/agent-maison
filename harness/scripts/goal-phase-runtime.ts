@@ -45,6 +45,7 @@ import { buildGuardianInvocation, resolveAgentCommand } from './utils/agent-cont
 import { resolveTaskAutomationPolicy } from './utils/runtime-policy';
 import { createIdentityNeutralDigestReaders, type IdentityNeutralDigestReaders } from './utils/identity-neutral-digest';
 import { parseVerifierRequest, parseVerifierRequestFromInstruction, canonicalRequestInput } from './utils/verifier-request';
+import { signedExtensionResourcePaths } from './utils/extension-requests';
 import { validateProjectRelativePath, isInsideProjectRoot } from './utils/project-relative-path';
 import { loadVerifierEvidence, verifierDiagnosisRequired, verifierReportItemGaps } from './utils/verifier-evidence';
 import { readVerifierMaterialOrNull } from './utils/verifier-material';
@@ -126,7 +127,7 @@ import {
 import { assessLivenessBeacon, readLivenessBeacon, writeLivenessBeacon } from './utils/liveness-beacon';
 import { loadResolvedProfile } from '../profile-loader';
 // plan a7c3e9d2：作者前置输入 formatter（文件路径 / 函数名 / 签名 / 标题与主干 extension-runtime.ts 对齐）
-import { assembleKnowledge, renderKnowledge } from './utils/knowledge-context';
+import { assembleKnowledge, featureExtensionBindingSegment, renderKnowledge } from './utils/knowledge-context';
 import { readRunBoundContracts, resolveCapabilityInputs, type ResolvedPhaseInputs } from './utils/capability-resolution';
 import { resolveCapabilityResolutionEntryInput, loadCompletedFactsBaseline } from './utils/capability-resolution-entry-input';
 import { SpecLoader } from './utils/spec-loader';
@@ -441,7 +442,7 @@ import {
   itemFingerprintOf,
   type RepairCandidate,
 } from './utils/repair-candidates';
-import { resolveRepairResponsibility, repairResponsibilityContext, readRepairDependencyContext, independentArtifactRepairs, workUnitMayWritePath } from './utils/repair-responsibility';
+import { resolveRepairResponsibility, repairResponsibilityContext, readRepairDependencyContext, independentArtifactRepairs, workUnitExtensionControlRoot, workUnitMayWritePath } from './utils/repair-responsibility';
 import { hylyreRunTimestamp, selectBestNonPlaceholderDerivedPlan } from './utils/derived-hylyre-plan';
 import { loadGoalCapability } from './utils/goal-adapter-capability';
 import { deriveReconcileObservation } from './utils/goal-reconcile-observation';
@@ -2897,16 +2898,17 @@ function beforeAuthorInvocation(events: readonly GoalRunEvent[], invokeId: strin
 
 /**
  * 作者前置知识：原生索引、任务候选与 extension 同源装配，保留旧导出名供调用者兼容。
- * extension 非法仍警示且不注入其条目；原生知识继续可读，不新增 goal 门禁。
+ * extension 诊断与有效输入同时保留；原生知识继续可读，不新增 goal 门禁。
  */
-export function extensionInputsForPhase(projectRoot: string, phase: string,
-  context?: { frameworkRoot: string; feature: string; runId?: string; requirement?: string }): string {
+type FeatureExtensionContext = { frameworkRoot: string; feature: string; runId?: string; requirement?: string };
+
+function prepareExtensionInputsForPhase(projectRoot: string, phase: string, context?: FeatureExtensionContext) {
   const profile = loadResolvedProfile(projectRoot, loadFrameworkConfig(projectRoot), context?.frameworkRoot);
   const bundle = profile.extensionBundle;
   if (bundle && bundle.errors.length > 0) {
     const brief = bundle.errors.slice(0, 3).map(e => `${e.code}: ${e.message}`).join('；');
     console.warn(
-      `[goal-runner] ⚠ extension manifest 非法，作者前置输入未注入：${brief}；运行 harness-runner.ts --phase extensions 修复。`,
+      `[goal-runner] ⚠ extension 作者前置输入诊断：${brief}；运行 harness-runner.ts --phase extensions 修复。`,
     );
   }
   let contracts: import('./utils/types').ContractsSpec | undefined;
@@ -2914,8 +2916,13 @@ export function extensionInputsForPhase(projectRoot: string, phase: string,
     try { contracts = readRunBoundContracts(projectRoot, context.frameworkRoot, context.feature, context.runId); }
     catch { /* 未有施工契约的作者仍从需求和原生索引发现；原输入门禁负责契约缺失。 */ }
   }
-  return renderKnowledge(assembleKnowledge({ projectRoot, frameworkRoot: context?.frameworkRoot ?? path.resolve(profile.profileDir, '../..'), phase,
-    subject: 'feature', role: 'author', requirement: context?.requirement, contracts, extensionBundle: bundle }));
+  const knowledge = assembleKnowledge({ projectRoot, frameworkRoot: context?.frameworkRoot ?? path.resolve(profile.profileDir, '../..'), phase,
+    subject: 'feature', role: 'author', requirement: context?.requirement, contracts, extensionBundle: bundle });
+  return { instruction: renderKnowledge(knowledge), bindings: featureExtensionBindingSegment(bundle, phase, projectRoot, knowledge) };
+}
+
+export function extensionInputsForPhase(projectRoot: string, phase: string, context?: FeatureExtensionContext): string {
+  return prepareExtensionInputsForPhase(projectRoot, phase, context).instruction;
 }
 
 /** Author work material uses machine observations; full execution prose remains in its original report. */
@@ -2954,7 +2961,7 @@ export function renderWorkUnitAuthorFeedback(input: {
 
 /** Assemble the prompt and comparison input from the same already-read business sections and report. */
 export function buildWorkUnitAuthorInput(input: Parameters<typeof renderWorkUnitAuthorFeedback>[0] & {
-  instructions: readonly string[]; evaluation: CompletionEvaluation; repairNotes?: ArtifactSnapshot;
+  instructions: readonly string[]; extensionBindings?: readonly unknown[]; evaluation: CompletionEvaluation; repairNotes?: ArtifactSnapshot;
   designDeclineFeedback?: string; designDeclines?: readonly string[];
 }): { instruction: string; workInput: WorkUnitInput } {
   const feedback = renderWorkUnitAuthorFeedback(input);
@@ -2962,7 +2969,7 @@ export function buildWorkUnitAuthorInput(input: Parameters<typeof renderWorkUnit
   const decline = input.designDeclineFeedback ?? '';
   return { instruction: [[...input.instructions, feedback, completion].join('\n'), decline].filter(Boolean).join('\n\n'),
     workInput: { material: { purpose: 'work-unit-author',
-      segments: [...input.instructions, dispositionFacts(input.disposition), completion, decline],
+      segments: [...input.instructions, ...input.extensionBindings ?? [], dispositionFacts(input.disposition), completion, decline],
       ...(input.repairNotes ? { repairNotes: input.repairNotes } : {}), designDeclines: input.designDeclines ?? [] }, evaluation: input.evaluation } };
 }
 
@@ -5037,7 +5044,9 @@ export class GoalPhaseRuntime {
         const beforeBlueprint = fs.existsSync(observed.blueprintPath) ? fs.readFileSync(observed.blueprintPath, 'utf8') : '';
         const resolution = { projectRoot, executionRole: workUnitExecutionRole({ phase: label }, purpose),
           ...(purpose === 'questioning' ? { verifierResultPath: path.join(invocationDir, 'questioning-output.json') } : {}),
-          immutableInputPaths: workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir), protectedRoots: fs.readdirSync(projectRoot).filter(name => name !== '.git') };
+          extensionControlRoot: workUnitExtensionControlRoot(projectRoot),
+          immutableInputPaths: [...workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir), ...signedExtensionResourcePaths(label, segments)],
+          protectedRoots: fs.readdirSync(projectRoot).filter(name => name !== '.git') };
         const questioningSources = purpose === 'questioning'
           ? [observed.blueprintPath, ...blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(asRecord(YAML.parse(beforeBlueprint)) ?? {}), true)]
             .filter(file => isInsideProjectRoot(projectRoot, file)) : (manifest.requirement_source_files ?? []);
@@ -5155,11 +5164,14 @@ export class GoalPhaseRuntime {
         const hardCli = resolveInvokeHardCliFailure(result, { formalInvoke: true });
         if (hardCli || containmentError) { recordEnd(); return conclude('adapter_cli_hard_failure', hardCli ?? containmentError!); }
         const post = capturePhaseInvocationSnapshot(resolution, snapshotOptions);
-        const windows = phaseWriteWindows(pre, original ? readPhaseBinding(runDir, original, history()) : null, post);
+        const writeEvents = history();
+        const windows = phaseWriteWindows(pre, original ? readPhaseBinding(runDir, original, writeEvents) : null, post,
+          label === 'initial-design-author' && purpose === 'author' ? { projectRoot, events: writeEvents, invokeId, owner: context.owner, phase: label } : undefined);
         if (windows.kind === 'unverifiable') emit({ type: 'phase_write_boundary_degraded', phase: label, invoke_id: invokeId, detail: windows.reason });
         const returnedChanges = windows.kind === 'checked' ? windows.returned : [];
         const violations = invocationWriteConflicts(writeBoundary, windows, snapshotOptions,
-          readInvocationWritePaths(projectRoot, context.adapter, agentEventsLogPath(path.join(invocationDir, 'agent-output.log'))));
+          readInvocationWritePaths(projectRoot, context.adapter, agentEventsLogPath(path.join(invocationDir, 'agent-output.log'))),
+          { phase: label, events: writeEvents, invokeId });
         if (violations.length) {
           if (purpose === 'questioning') recordDesignRepairInvocation(runDir, 'questioning', invokeId, {
             started: true, ok: false, status: result.status, detail: result.details ?? result.status,
@@ -5337,7 +5349,7 @@ export class GoalPhaseRuntime {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(promptFile, text);
     const boundary = guard ? { ...guard.resolution, executionRole: workUnitExecutionRole(context, purpose),
-      immutableInputPaths: [...new Set([...(guard.resolution.immutableInputPaths ?? []), ...workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir)])],
+      extensionControlRoot: workUnitExtensionControlRoot(projectRoot), immutableInputPaths: [...new Set([...(guard.resolution.immutableInputPaths ?? []), ...workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir)])],
       feature: manifest.feature, phaseOrder: [], domains: guard.resolution.domains ?? [], diagnostics: [], unresolvedSourcePhases: [] } : null;
     const issuedAt = new Date().toISOString();
     const original = !this.options.sessionHandoff ? writePhaseExecutionRequestMaterial({ context, invokeId, purpose, issuedAt, timeoutMs,
@@ -7922,6 +7934,10 @@ Goal runner — original request design and construction runtime
       if ('status' in prepared) { wait(label, prepared.details ?? '等待原调用真实交回。'); return null; }
       const context = prepared;
       const instruction = context.instruction ?? text;
+      if (role === 'author') {
+        boundary.immutableInputPaths = [...new Set([...boundary.immutableInputPaths,
+          ...signedExtensionResourcePaths(label, context.workInput?.material.segments ?? [])])];
+      }
       const snapshotOptions = { runtimeExcluded: [manifest.report_dir], ...(testingTargets ? { includeFiles: [...testingTargets] } : {}),
         ...(factsFile ? { includeFiles: [factsFile] } : {}),
         ...(role === 'verifier' && family === 'review' ? { includeFiles: [
@@ -7989,7 +8005,9 @@ Goal runner — original request design and construction runtime
       const post = capturePhaseInvocationSnapshot(boundary, snapshotOptions);
       const records = loadAuthoritativeEvents(eventsPath);
       const bound = original ? readPhaseBinding(runDir, original, records) : null;
-      const windows = phaseWriteWindows(pre, bound, post);
+      const windows = phaseWriteWindows(pre, bound, post,
+        label === 'work-unit-author' && !purpose && role === 'author'
+          ? { projectRoot, events: records, invokeId, owner: context.owner, phase: label } : undefined);
       const writes = windows.kind === 'checked' ? classifyPhaseInvocationChanges(boundary, label, windows.returned, { events: records, invokeId }) : null;
       const violations = invocationWriteConflicts(boundary, windows, snapshotOptions,
         readInvocationWritePaths(projectRoot, context.adapter, agentEventsLogPath(path.join(dir, 'agent-output.log'))),
@@ -8108,8 +8126,9 @@ Goal runner — original request design and construction runtime
             onInvocation: invocation => goalEvents.emit({ ...buildVisualProviderInvokeEvent(invocation) }) });
         } catch (error) { console.warn(`[visual observation] 当前观察工具缺口：${(error as Error).message}；保留其它授权工作。`); }
       }
-      const knowledgeInputs = [...new Set(work.input.chain.map(family => extensionInputsForPhase(projectRoot, family,
-        { frameworkRoot, feature: manifest.feature, runId: manifest.run_id, requirement: manifest.requirement })).filter(Boolean))];
+      const extensionInputs = work.input.chain.map(family => prepareExtensionInputsForPhase(projectRoot, family,
+        { frameworkRoot, feature: manifest.feature, runId: manifest.run_id, requirement: manifest.requirement }));
+      const knowledgeInputs = [...new Set(extensionInputs.map(input => input.instruction).filter(Boolean))];
       const authorChecks = work.input.chain.filter(family => ['coding', 'ut', 'testing'].includes(family));
       const parts = [
       `# 工作单元 ${manifest.feature}`,
@@ -8136,7 +8155,8 @@ Goal runner — original request design and construction runtime
       '当前全部未完项与真实证据：',
       ];
       return buildWorkUnitAuthorInput({ projectRoot, frameworkRoot, feature: manifest.feature, disposition: work.disposition,
-        instructions: parts, evaluation: { ...work.evaluation, disposition: work.disposition },
+        instructions: parts, extensionBindings: extensionInputs.flatMap(input => input.bindings ? [input.bindings] : []),
+        evaluation: { ...work.evaluation, disposition: work.disposition },
         repairNotes: repairNotesInput, designDeclineFeedback, designDeclines });
     };
 

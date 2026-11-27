@@ -2,7 +2,7 @@ import type { GoalRunEvent } from './goal-runner-phase';
 import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
-import { readRepairResponsibilityContracts, normalizeResponsibilityPath, workUnitMayWritePath, workUnitWriteDomains } from './repair-responsibility';
+import { readRepairResponsibilityContracts, normalizeResponsibilityPath, workUnitExtensionControlRoot, workUnitMayWritePath, workUnitWriteDomains } from './repair-responsibility';
 import type { PhaseWriteDomainKind, PhaseWriteBoundaryResolution, ResolvePhaseWriteBoundaryOptions } from './repair-responsibility';
 import type { CurrentDispositionProblem } from './check-disposition';
 import { validateProjectRelativePath } from './project-relative-path';
@@ -22,6 +22,7 @@ export function resolvePhaseWriteBoundary(options: ResolvePhaseWriteBoundaryOpti
     ? (require('../../config') as typeof import('../../config')).componentIndexPath(options.projectRoot) : undefined;
   return { ...raw, phaseOrder: [...options.phaseOrder],
     ...(options.executionRole === 'author' ? { domains: workUnitWriteDomains(raw.domains, scope),
+      extensionControlRoot: workUnitExtensionControlRoot(options.projectRoot),
       protectedRoots: [...new Set([...raw.protectedRoots, ...(inventory ? [normalizeRelative(options.projectRoot, inventory)] : []),
         ...raw.domains.filter(domain => domain.kind === 'source').map(domain => domain.path)])] } : {}),
     diagnostics: [...raw.diagnostics,
@@ -239,16 +240,32 @@ export function diffPhaseInvocationSnapshots(
 
 export type PhaseWriteWindow = 'before_binding' | 'execution_window' | 'unverified';
 
+interface ExtensionManagementWindow {
+  projectRoot: string;
+  phase: 'initial-design-author' | 'work-unit-author';
+  events: readonly GoalRunEvent[];
+  invokeId: string;
+  owner: Pick<import('./goal-run-control').RunFenceToken, 'owner_id' | 'epoch'>;
+}
+
 /** The three snapshots bound a time window. They do not identify a writer. */
-export function phaseWriteWindows(pre: PhaseInvocationSnapshot, binding: PhaseInvocationSnapshot | null, post: PhaseInvocationSnapshot): {
+export function phaseWriteWindows(pre: PhaseInvocationSnapshot, binding: PhaseInvocationSnapshot | null, post: PhaseInvocationSnapshot,
+  extensionManagement?: ExtensionManagementWindow): {
   kind: 'unverifiable'; reason: string;
 } | { kind: 'checked'; beforeBinding: PhaseInvocationChange[]; returned: PhaseInvocationChange[]; window: PhaseWriteWindow } {
   const prior = binding ? diffPhaseInvocationSnapshots(pre, binding) : null;
   if (prior?.kind === 'unverifiable') return prior;
   const returned = diffPhaseInvocationSnapshots(binding ?? pre, post);
   if (returned.kind === 'unverifiable') return returned;
-  return { kind: 'checked', beforeBinding: prior?.kind === 'changed' ? prior.changes : [],
-    returned: returned.kind === 'changed' ? returned.changes : [], window: binding ? 'execution_window' : 'unverified' };
+  const changes = (diff: typeof returned | null, window: PhaseWriteWindow): PhaseInvocationChange[] => {
+    if (diff?.kind !== 'changed') return [];
+    if (!extensionManagement) return diff.changes;
+    return diff.changes.filter(change => change.how === 'type-changed'
+      || !isProducedPhaseChange(extensionManagement.projectRoot, extensionManagement.phase, change,
+        extensionManagement, { window, owner: extensionManagement.owner }));
+  };
+  const window = binding ? 'execution_window' : 'unverified';
+  return { kind: 'checked', beforeBinding: changes(prior, 'before_binding'), returned: changes(returned, window), window };
 }
 
 /** A window can invalidate signed inputs without attributing the edit to the caller. */
@@ -428,18 +445,35 @@ export function classifyPhaseInvocationChanges(
 
 /** Match the actual writer's complete hash chain, including any writes before/after it. */
 export function isProducedPhaseChange(projectRoot: string, phase: string, change: PhaseInvocationChange,
-  invocation: { events: readonly GoalRunEvent[]; invokeId: string }): boolean {
+  invocation: { events: readonly GoalRunEvent[]; invokeId: string },
+  extension?: { window: PhaseWriteWindow; owner: ExtensionManagementWindow['owner'] }): boolean {
   const start = invocation.events.findIndex(event => event.type === 'agent_invoke_start'
     && event.phase === phase && event.invoke_id === invocation.invokeId);
   if (start < 0) return false;
+  const tail = invocation.events.slice(start + 1) as readonly Record<string, any>[];
+  const bound = extension ? tail.findIndex(event => event.type === 'agent_process_bound'
+    && event.invoke_id === invocation.invokeId && event.owner_id === extension.owner.owner_id
+    && event.owner_epoch === extension.owner.epoch && event.binding_snapshot) : -1;
   let hash = change.preSha256, produced = false;
-  for (const event of invocation.events.slice(start + 1) as readonly Record<string, any>[]) {
+  for (const [index, event] of tail.entries()) {
     if (event.type === 'agent_invoke_end' && event.invoke_id === invocation.invokeId) break;
     if (event.type !== 'phase_write_observed' || event.invoke_id !== invocation.invokeId || event.phase !== phase) continue;
+    if (extension) {
+      if (event.producer !== 'extension-management' || event.owner_id !== extension.owner.owner_id || event.owner_epoch !== extension.owner.epoch) continue;
+      if ((extension.window === 'before_binding' && (bound < 0 || index >= bound))
+        || (extension.window === 'execution_window' && (bound < 0 || index <= bound))) continue;
+    } else if (event.producer === 'extension-management') continue;
     if (event.produced !== undefined && !Array.isArray(event.produced)) return false;
     for (const row of event.produced ?? []) {
       if (!row || typeof row !== 'object') return false;
       if (row.path !== change.path) continue;
+      if (extension) {
+        if (row.pre_sha256 !== hash || row.pre_sha256 === row.post_sha256
+          || (row.post_sha256 !== null && (typeof row.post_sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(row.post_sha256)))) return false;
+        hash = row.post_sha256;
+        produced = true;
+        continue;
+      }
       const expected = event.producer === 'component-index'
         ? [(require('../../config') as typeof import('../../config')).componentIndexPath(projectRoot)]
         : event.producer === 'visual-debt' && typeof event.feature === 'string'

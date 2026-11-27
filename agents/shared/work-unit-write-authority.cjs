@@ -12,6 +12,12 @@ function workUnitMayWritePath(resolution, file, options) {
     return !!resolution.verifierResultPath && relative === normalize(resolution.verifierResultPath);
   }
   if (resolution.executionRole !== 'author') return false;
+  const extensionRoot = resolution.extensionControlRoot && normalize(resolution.extensionControlRoot);
+  if (extensionRoot) {
+    const comparable = process.platform === 'win32' ? relative.toLowerCase() : relative;
+    const root = process.platform === 'win32' ? extensionRoot.toLowerCase() : extensionRoot;
+    if (comparable === root || comparable.startsWith(root + '/')) return false;
+  }
   if (resolution.domains.some(domain => (domain.match === 'exact' ? relative === domain.path : within(domain.path))
     && !domain.excludedPrefixes?.some(within))) return true;
   return !resolution.domains.length && !!options?.ownedPrefixes?.some(prefix => within(normalize(prefix)))

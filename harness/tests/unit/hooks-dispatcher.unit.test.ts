@@ -11,6 +11,9 @@ import {
   dispatchLifecycleHooks,
 } from '../../hooks-dispatcher';
 import type { HarnessResolvedProfile } from '../../scripts/utils/types';
+import { loadInstanceExtensions } from '../../extension-loader';
+import { inspectInstanceExtensions } from '../../scripts/utils/extension-inspect';
+import { checkExtensionBindingProduces, checkExtensionManifest } from '../../scripts/utils/extension-runtime';
 
 export interface UnitCaseResult {
   name: string;
@@ -49,6 +52,54 @@ interface Case {
 }
 
 const cases: Case[] = [
+  {
+    name: '旧与原生 hook 经真实 dispatcher 共存；坏时点独立诊断且已启用 required 报缺口',
+    async run() {
+      const project = mkTmp();
+      const framework = path.resolve(__dirname, '../../..');
+      const harness = path.join(project, 'harness');
+      const profile = path.join(project, 'profile');
+      const extension = path.join(project, 'doc/extensions');
+      const event = 'post_verifier';
+      write(path.join(harness, 'hooks', 'spec', `${event}.md`), 'framework fragment');
+      write(path.join(profile, 'hooks', 'spec', `${event}.md`), 'profile fragment');
+      write(path.join(extension, 'hooks/legacy.md'), 'legacy fragment');
+      write(path.join(extension, 'hooks/native.md'), 'native fragment');
+      write(path.join(extension, 'hooks/required.md'), 'unreachable fragment');
+      write(path.join(extension, 'manifest.yaml'), [
+        'schema_version: "2.0"', 'name: hook-source',
+        'provides:', '  hooks:', '    spec:', '      post_verifier: [hooks/legacy.md]',
+        '      on_context_loda: [hooks/required.md]',
+        'bindings:', '  compatibility:',
+        '    native: {at: harness.post_verifier@1, phase: spec, kind: knowledge, ref: hooks/native.md, enabled_by_default: true}',
+        '    broken: {at: harness.on_context_loda@1, phase: spec, kind: knowledge, ref: hooks/required.md, required: true, enabled_by_default: true}',
+        '    optional: {at: harness.on_context_loda@1, phase: spec, kind: knowledge, ref: hooks/required.md, enabled_by_default: true}',
+      ].join('\n'));
+
+      try {
+        const bundle = loadInstanceExtensions(project);
+        const result = await dispatchLifecycleHooks(harness, event, {
+          projectRoot: project, phase: 'spec', feature: 'fixture',
+          resolvedProfileName: 't-profile', hookEvent: event,
+        }, resolved(profile, bundle));
+        const delivered = result.promptFragments.map(value => value.slice(value.lastIndexOf('\n') + 1)).join('|');
+        assert(delivered === 'framework fragment|profile fragment|legacy fragment|native fragment', delivered);
+        const inspect = inspectInstanceExtensions(project, framework);
+        const native = inspect.rows.find(row => row.bindingId === 'native');
+        const broken = inspect.rows.find(row => row.bindingId === 'broken');
+        assert(native?.state === 'scheduled' && native.timing.includes('尚未判断') && native.consumer.includes('verifier'), JSON.stringify(native));
+        assert(broken?.state !== 'scheduled' && !!broken?.status.includes('未知时点'), JSON.stringify(broken));
+        assert(inspect.manifestErrors.some(error => error.source === 'hook-source' && error.bindingId === 'broken'
+          && error.at === 'harness.on_context_loda@1'), JSON.stringify(inspect.manifestErrors));
+        assert(checkExtensionManifest(bundle).length === 0, 'health stays scoped to individual contributions');
+        const checks = checkExtensionBindingProduces({ bundle, projectRoot: project, phase: 'spec', slot: 'before_phase_work' });
+        assert(checks.length === 1 && checks[0].status === 'FAIL' && !!checks[0].details?.includes('harness.on_context_loda@1'),
+          JSON.stringify(checks));
+      } finally {
+        fs.rmSync(project, { recursive: true, force: true });
+      }
+    },
+  },
   {
     name: 'hooks disabled → 空结果',
     async run() {
@@ -133,6 +184,10 @@ const cases: Case[] = [
         rootDir: dir,
         manifestPath: null,
         manifestVersion: null,
+        manifestName: null,
+        manifestUsable: true,
+        bindings: [],
+        declaredSkills: [],
         featurePhases: [],
         skills: [],
         knowledgePaths: [],
@@ -188,6 +243,10 @@ const cases: Case[] = [
         rootDir: dir,
         manifestPath: null,
         manifestVersion: null,
+        manifestName: null,
+        manifestUsable: true,
+        bindings: [],
+        declaredSkills: [],
         featurePhases: [],
         skills: [],
         knowledgePaths: [],
@@ -281,6 +340,10 @@ const cases: Case[] = [
         rootDir: dir,
         manifestPath: null,
         manifestVersion: null,
+        manifestName: null,
+        manifestUsable: true,
+        bindings: [],
+        declaredSkills: [],
         featurePhases: [],
         skills: [],
         knowledgePaths: [],
