@@ -35,7 +35,7 @@ todos:
     status: completed
   - id: developer-acceptance
     content: 用冻结正反例、正式运行时及独立检视验收，跑一次并行根全量并记录实际模型调用。
-    status: in_progress
+    status: completed
   - id: joint-host
     content: 在干净发布件宿主完成开卡原请求，记录正式 CU 接受、施工出生及真实交付时刻，交回 P4 的联合验收。
     status: pending
