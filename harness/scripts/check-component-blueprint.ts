@@ -48,7 +48,7 @@ interface CliArgs {
   'reader-guide-digest'?: boolean;
   'design-knowledge'?: boolean;
   'prepare-design'?: boolean;
-  'ux-source'?: string | string[];
+  'material-source'?: string | string[];
   'skip-extension-action'?: string | string[];
   'session-ref'?: string;
   'request-file'?: string;
@@ -255,7 +255,8 @@ const argumentList = (value?: string | string[]): string[] | undefined => typeof
 
 function main(): void {
   const args = minimist<CliArgs>(process.argv.slice(2), {
-    string: ['project-root', 'blueprint', 'ref', 'materialization', 'projection', 'feedback', 'session-ref', 'request-file', 'report-dir', 'framework-root', 'requirement-source', 'target', 'ux-source', 'skip-extension-action'],
+    alias: { 'material-source': 'ux-source' },
+    string: ['project-root', 'blueprint', 'ref', 'materialization', 'projection', 'feedback', 'session-ref', 'request-file', 'report-dir', 'framework-root', 'requirement-source', 'target', 'material-source', 'skip-extension-action'],
     boolean: ['json', 'write-review', 'reader-guide-digest', 'design-knowledge', 'prepare-design', 'prepare-source'],
     default: { 'project-root': process.cwd(), json: false },
   });
@@ -263,7 +264,7 @@ function main(): void {
     console.error('用法：check-component-blueprint --project-root <root> --blueprint <blueprint-id> [--ref <json>]'
       + ' [--session-ref <native>#<user-id> | --request-file <component-design request>] [--report-dir <host-relative-dir>] [--target <file>] [--requirement-source <file>] [--prepare-source]'
       + ' [--design-knowledge | --reader-guide-digest | --write-review | --materialization <path> | --projection <path> | --feedback <path>] [--json]');
-    console.error('设计前准备：--prepare-design [--blueprint <blueprint-id>] [--request-file <已准备请求>] [--requirement-source <path>] [--ux-source <path>] [--skip-extension-action <能力ID:绑定ID>]');
+    console.error('设计前准备：--prepare-design [--blueprint <blueprint-id>] [--request-file <已准备请求>] [--requirement-source <path>] [--material-source <path>] [--skip-extension-action <能力ID:绑定ID>]');
     process.exit(2);
   }
   let prepared: ReturnType<typeof prepareDesignRequest> | undefined;
@@ -274,7 +275,7 @@ function main(): void {
       const lookupOnly = Boolean(args['design-knowledge']);
       if (args['write-review'] || args['reader-guide-digest'] || args.materialization || args.projection || args.feedback || args.ref
         || args['session-ref'] || args['prepare-source'] || args['report-dir'] || args.target
-        || lookupOnly && (args['prepare-design'] || args['request-file'] || args['requirement-source'] || args['ux-source'] || args['skip-extension-action'])) {
+        || lookupOnly && (args['prepare-design'] || args['request-file'] || args['requirement-source'] || args['material-source'] || args['skip-extension-action'])) {
         throw new Error('--design-knowledge / --prepare-design 是独立只读模式。');
       }
       const projectRoot = path.resolve(args['project-root']!);
@@ -293,14 +294,14 @@ function main(): void {
         return [path.relative(projectRoot, absolute).replace(/\\/g, '/'), ...fragment].join('#');
       });
       const result = prepareDesignExtensions({ projectRoot, frameworkRoot, blueprintId, lookupOnly, requestFile,
-        requirement: original?.intake?.user.text,
+        requirement: original?.intake?.user.text ?? (typeof request?.requested_result === 'string' ? request.requested_result : undefined),
         requirementSources: [...original?.sourceRefs ?? [], ...requirementSources],
-        uxSources: argumentList(args['ux-source']), skipActions: argumentList(args['skip-extension-action']) });
+        materialSources: argumentList(args['material-source']), skipActions: argumentList(args['skip-extension-action']) });
       console.log(args.json ? JSON.stringify(result, null, 2)
         : `蓝图位置：${result.canonical_path}\n\n${renderDesignExtensionPreparation(result)}`);
       return;
     }
-    if (args['ux-source'] || args['skip-extension-action']) throw new Error('--ux-source / --skip-extension-action 只用于 --prepare-design。');
+    if (args['material-source'] || args['skip-extension-action']) throw new Error('--material-source / --skip-extension-action 只用于 --prepare-design。');
     if (!args.blueprint) throw new Error('缺少 --blueprint');
     if (args['reader-guide-digest']) {
       if (args['write-review'] || args.materialization || args.projection || args.feedback || args.ref) throw new Error('--reader-guide-digest 是独立只读模式，不能与其它模式混用。');

@@ -416,18 +416,22 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [{
       for (const file of ['app-component-blueprint.schema.json', 'runtime-data-flow.schema.json', 'change-unit.schema.json']) assert(instruction.includes(file), `the actual signed instruction must deliver the current schema ${file}`);
       assert(instruction.includes('尚无蓝图'));
       assert(instruction.includes('独立宿主背景必须送到本次真实作者。') && instruction.includes('doc/design.jpg'));
-      assert(instruction.includes('设计前动作 ux-behavior-spec:fill-missing') && instruction.includes('生成有效 UX、解析回读'));
-      assert.match(instruction, /屏幕ID\.元素ID 放在用例、验收或验证引用中/);
-      assert.match(instruction, /provenance\.source_ref 直接引用可核对的原始 PRD 条款或已有明确授权的裁决/);
-      assert.match(instruction, /缺少权威依据时记为推断或未知，保留待决项/);
+      const skill = 'doc/extensions/skills/ux-behavior-spec/SKILL.md';
+      assert(instruction.includes(`设计前动作 ux-behavior-spec:fill-missing [${skill}]`));
+      assert(instruction.includes('extension-result: ') && instruction.includes('本次蓝图写入目录：'));
       const designInputs = (request: typeof issued.request) =>
         (request.context.workInput?.material.segments as Array<Record<string, any>>).find(item => item.extension_preparation);
       const originalDesign = designInputs(issued.request)!;
       assert.equal(originalDesign.extension_preparation.blueprint_id, project.feature);
+      assert.deepEqual(originalDesign.extension_preparation.requirement_sources, project.requirementSourceFiles);
+      assert.deepEqual(originalDesign.extension_preparation.reference_images, ['doc/design.jpg']);
+      assert.deepEqual(originalDesign.extension_preparation.material_sources, []);
       assert.deepEqual(originalDesign.extension_preparation.bindings.map((binding: { id: string; delivery: string }) =>
         [binding.id, binding.delivery]), [['read-upstream', 'inline'], ['fill-missing', 'action']]);
-      assert.deepEqual(originalDesign.extension_preparation.ux.candidates, []);
-      assert(originalDesign.knowledge.entries.some((item: { content?: string }) => item.content?.includes('蓝图设计前复用已有稿')));
+      assert.equal(originalDesign.knowledge.extensionInstructions, '');
+      const intake = originalDesign.knowledge.entries.find((item: { path: string }) => item.path.endsWith('/reference/intake.md'));
+      assert(intake.content.includes('蓝图设计前复用已有稿'));
+      assert(intake.content.includes('provenance.source_ref') && instruction.includes(intake.content));
       const invokeExtension = (args: string[], childEnv: Readonly<Record<string, string>> = {}) =>
         spawnSync(process.execPath, ['-r', 'ts-node/register/transpile-only', 'scripts/extension.ts',
           ...args, '--project-root', project.root, '--json'], { cwd: project.harnessDir, encoding: 'utf8', timeout: 30_000,

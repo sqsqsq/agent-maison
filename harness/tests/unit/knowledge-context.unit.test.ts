@@ -5,7 +5,7 @@ import * as path from 'path';
 import * as YAML from 'yaml';
 import { spawnSync, execFileSync } from 'child_process';
 import { assembleKnowledge, knowledgeContextFiles, renderKnowledge } from '../../scripts/utils/knowledge-context';
-import { prepareDesignExtensions } from '../../scripts/utils/design-extension-preparation';
+import { prepareDesignExtensions, renderDesignExtensionPreparation } from '../../scripts/utils/design-extension-preparation';
 import { clearFrameworkConfigCache, featureFilePath, featurePhaseReportsDir } from '../../config';
 import { collectContextFiles } from '../../harness-runner';
 import { resolveCapabilityInputs } from '../../scripts/utils/capability-resolution';
@@ -198,47 +198,80 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert.equal(unreadable.entries.length, 0);
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },
-  { name: '5247db24 direct design prepares old background and new UX inputs without dispatching a disabled or lookup-only action', run() {
+  { name: '5247db24 direct design delivers generic materials and independent bindings through the read-only entry', run() {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-direct-design-'));
     try {
       const config = seed(root); config.project_profile = { name: 'hmos-app' };
       put(root, 'framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
-      const extension = path.join(frameworkRoot, 'extensions');
-      const manifest = YAML.parse(fs.readFileSync(path.join(extension, 'manifest.yaml'), 'utf8'));
-      manifest.provides.skill_assets = { 'component-design': { knowledge: 'knowledge/host-design.md' } };
-      manifest.bindings['ux-behavior-spec']['fill-missing'].enabled_by_default = false;
-      manifest.bindings['ux-behavior-spec'].broken = { at: 'harness.on_context_loda@1', phase: 'spec', kind: 'knowledge',
-        ref: 'knowledge/host-design.md', enabled_by_default: true };
-      put(root, 'custom/extensions/manifest.yaml', YAML.stringify(manifest));
-      put(root, 'custom/extensions/knowledge/host-design.md', '独立宿主背景：卡类型决策来自业务数据。');
-      const skillRel = 'skills/ux-behavior-spec';
-      fs.cpSync(path.join(extension, skillRel), path.join(root, 'custom/extensions', skillRel), { recursive: true });
-      const prd = 'doc/inputs/requirements.md', ux = 'doc/inputs/card-type.ux.yaml';
-      const sample = path.join(extension, skillRel, 'examples/bc-openCard-2');
-      put(root, prd, '只支持信用卡时只显示信用卡一行。');
-      put(root, ux, fs.readFileSync(path.join(sample, 'bc-openCard-2.card-type.ux.yaml'), 'utf8'));
-      fs.copyFileSync(path.join(sample, 'sources/3-点击任意银行拉起添卡选卡半模态.jpg'), path.join(root, 'doc/inputs/card.jpg'));
+      const manifestPath = 'custom/extensions/manifest.yaml';
+      const intake = 'knowledge/intake.md', constraints = 'knowledge/constraints.md', skill = 'skills/contract-examples/SKILL.md';
+      const knowledge = { at: 'component-design.before_discovery@1', kind: 'knowledge', enabled_by_default: true };
+      const manifest = {
+        schema_version: '2.0', name: 'contract-design',
+        provides: { skills: ['contract-examples'], skill_assets: { 'component-design': { knowledge: 'knowledge/host-design.md' } } },
+        bindings: { 'contract-examples': {
+          intake: { ...knowledge, ref: intake },
+          constraints: { ...knowledge, ref: constraints },
+          draft: { at: knowledge.at, kind: 'action', ref: 'contract-examples', enabled_by_default: true },
+          broken: { ...knowledge, at: 'harness.on_context_loda@1', phase: 'spec', ref: intake },
+        } },
+      };
+      put(root, manifestPath, YAML.stringify(manifest));
+      put(root, 'custom/extensions/knowledge/host-design.md', '独立宿主设计背景。');
+      put(root, 'custom/extensions/' + intake, '准备契约的适用条件。');
+      put(root, 'custom/extensions/' + constraints, '核对调用方约束。');
+      put(root, 'custom/extensions/' + skill, '# Contract examples\n');
+      const prd = 'doc/inputs/requirements.md', material = 'doc/inputs/contract.txt', legacyMaterial = 'doc/inputs/older-input.json';
+      put(root, prd, '为既有调用方设计契约。');
+      put(root, material, '补充契约。');
+      put(root, legacyMaterial, '{}');
+      put(root, 'doc/inputs/unmentioned.ux.yaml', 'name: not-a-design-input');
+      put(root, 'doc/inputs/contract.jpg', 'reference image bytes');
+      const requestFile = 'doc/reports/request/contract-design/component-design/request.json';
+      const digest = 'sha256:' + 'a'.repeat(64);
+      const request = JSON.stringify({
+        schema_version: '1.0', phase: 'component-design', requested_result: '为既有调用方设计契约。',
+        targets: { files: [], tests: [] }, baseline: { head: 'WORKTREE' }, inputs: {}, allowed_test_writes: [],
+        origin_gap: '已落盘的局部请求', requirement_sources: [prd],
+        blueprint: { ref: { artifact: 'component-blueprint@1', component_id: 'contract', blueprint_id: 'approved-id',
+          revision: 1, source_fingerprint: digest, artifact_sha256: digest, target: { kind: 'blueprint', id: 'approved-id' } }, acceptance_ids: [] },
+      });
+      put(root, requestFile, request);
       const actual = cli(root, 'scripts/check-component-blueprint.ts', ['--project-root', root, '--framework-root', frameworkRoot,
-        '--blueprint', 'approved-id', '--prepare-design', '--requirement-source', prd, '--json']);
+        '--request-file', requestFile, '--prepare-design', '--material-source', material, '--ux-source', legacyMaterial, '--json']);
       assert.equal(actual.status, 0, actual.stderr + actual.stdout);
       const output = JSON.parse(actual.stdout);
       assert.equal(output.canonical_path, path.join(root, 'doc/features/approved-id/blueprint/component-blueprint.yaml'));
-      assert.deepEqual(output.extension_preparation.bindings.map((binding: { id: string }) => binding.id), ['read-upstream']);
-      assert.deepEqual(output.extension_preparation.reference_images, ['doc/inputs/card.jpg']);
-      assert.match(output.knowledge.extensionInstructions, /已获上游确认的 UX 原稿可沿其原始出处和裁决作为有据材料/);
-      assert.match(output.knowledge.extensionInstructions, /provenance\.source_ref 直接引用可核对的原始 PRD 条款或已有明确授权的裁决/);
-      assert.equal(output.knowledge.entries[0].content, '独立宿主背景：卡类型决策来自业务数据。');
-      assert(output.knowledge.entries.find((entry: { path: string }) => entry.path === ux).content.includes('card_type_sheet'));
+      const preparation = output.extension_preparation;
+      assert.equal(preparation.request_file, requestFile);
+      assert.equal(preparation.write_dir, 'doc/features/approved-id/blueprint');
+      assert.deepEqual(preparation.requirement_sources, [prd]);
+      assert.deepEqual(preparation.material_sources, [material, legacyMaterial]);
+      assert.deepEqual(preparation.reference_images, ['doc/inputs/contract.jpg']);
+      assert.deepEqual(preparation.bindings.map(({ id, path, delivery }: { id: string; path: string; delivery: string }) => [id, path, delivery]), [
+        ['intake', 'custom/extensions/' + intake, 'inline'], ['constraints', 'custom/extensions/' + constraints, 'inline'],
+        ['draft', 'custom/extensions/' + skill, 'action'],
+      ]);
+      assert.deepEqual(output.knowledge.entries.map((entry: { content: string }) => entry.content),
+        ['独立宿主设计背景。', '准备契约的适用条件。', '核对调用方约束。']);
+      assert(!JSON.stringify(output).includes('unmentioned.ux.yaml'));
       assert(output.knowledge.notices.some((entry: string) => entry.includes('on_context_loda')));
-      const pointer = prepareDesignExtensions({ projectRoot: root, frameworkRoot, blueprintId: 'approved-id', requirementSources: [prd], inlineBudgetChars: 0 });
+      const rendered = renderDesignExtensionPreparation(output);
+      assert(rendered.includes('设计前动作 contract-examples:draft [custom/extensions/' + skill + ']'));
+      assert(rendered.includes('extension-result: ') && rendered.includes(material));
+      const options = { projectRoot: root, frameworkRoot, blueprintId: 'approved-id' };
+      const pointer = prepareDesignExtensions({ ...options, inlineBudgetChars: 0 });
       assert.equal(pointer.extension_preparation?.bindings[0].delivery, 'pointer');
-      assert.equal(pointer.knowledge.entries.find(entry => entry.path === ux)?.content, undefined);
-      manifest.bindings['ux-behavior-spec']['fill-missing'].enabled_by_default = true;
-      put(root, 'custom/extensions/manifest.yaml', YAML.stringify(manifest));
-      const lookup = prepareDesignExtensions({ projectRoot: root, frameworkRoot, blueprintId: 'approved-id', lookupOnly: true });
-      assert.equal(lookup.extension_preparation, undefined);
-      const skipped = prepareDesignExtensions({ projectRoot: root, frameworkRoot, blueprintId: 'approved-id', skipActions: ['ux-behavior-spec:fill-missing'] });
-      assert.deepEqual(skipped.extension_preparation?.skipped, ['ux-behavior-spec:fill-missing']);
+      assert.equal(pointer.knowledge.entries[1].content, undefined);
+      assert.equal(prepareDesignExtensions({ ...options, lookupOnly: true }).extension_preparation, undefined);
+      const skipped = prepareDesignExtensions({ ...options, skipActions: ['contract-examples:draft'], materialSources: ['../outside.txt'] });
+      assert.deepEqual(skipped.extension_preparation?.skipped, ['contract-examples:draft']);
+      assert.deepEqual(skipped.extension_preparation?.material_sources, []);
+      assert(skipped.knowledge.notices.some(notice => notice.includes('补充材料 ../outside.txt')));
+      manifest.bindings['contract-examples'].draft.enabled_by_default = false;
+      put(root, manifestPath, YAML.stringify(manifest));
+      assert.deepEqual(prepareDesignExtensions(options).extension_preparation?.bindings.map(item => item.id), ['intake', 'constraints']);
+      assert.equal(fs.readFileSync(path.join(root, requestFile), 'utf8'), request);
       assert(!fs.existsSync(path.join(root, 'doc/features')));
     } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
   } },

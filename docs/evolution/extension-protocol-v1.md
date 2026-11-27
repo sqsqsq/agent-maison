@@ -31,24 +31,24 @@ Breaking / non-breaking 变更须同步写入 [`../../MIGRATION.md`](../../MIGRA
 schema_version: "2.0"
 name: example
 provides:
-  skills: [ux-behavior-spec]
+  skills: [contract-examples]
 bindings:
-  ux-behavior-spec:
-    read-upstream:
+  contract-examples:
+    intake:
       at: component-design.before_discovery@1
       kind: knowledge
-      ref: skills/ux-behavior-spec/reference/intake.md
+      ref: skills/contract-examples/reference/intake.md
       enabled_by_default: true
-    fill-missing:
+    draft-examples:
       at: component-design.before_discovery@1
       kind: action
-      ref: ux-behavior-spec
+      ref: contract-examples
       enabled_by_default: true
 ```
 
 | 时点 | 原消费者与资源 |
 | --- | --- |
-| `component-design.before_discovery@1` | 蓝图 ID、需求来源和写入范围绑定后，在 P1 事实发现和首次写作前。直达和受管作者使用同一准备逻辑。知识引用本地文件，动作引用已声明且可用的 Skill。 |
+| `component-design.before_discovery@1` | 蓝图 ID、需求来源和写入范围绑定后，在 P1 事实发现和首次写作前。直达和受管作者使用同一准备逻辑。准备返回知识正文或回读路径、已发放动作的 Skill 路径、需求原件、显式补充材料和参考图。扩展资源定义何时适用及怎样处理材料。 |
 | `feature.before_phase_work@1` | Feature 作者在动笔前使用知识文件、Skill 或 MCP 动作。MCP 产生物由原 checker 消费。 |
 | `feature.before_phase_verify@1` | 普通 Feature checker 运行前，由原 harness 检查声明的 MCP 产物。 |
 | `feature.after_phase_verify_before_close@1` | Feature 验证后、收口前，由原 receipt gate 检查声明的 MCP 产物。 |
@@ -64,7 +64,7 @@ bindings:
 
 在宿主的 `framework/harness` 运行 `npx ts-node scripts/extension.ts install <本地目录> [能力ID] --project-root <宿主根> --json`。其他动作及自然语言见 [extension Skill](../../skills/project/extension/SKILL.md)。初装采用声明默认选择，更新保留宿主开关和文件归属，新自动绑定待显式启用。持久选择同已安装资源的来源和导入指纹写入宿主清单。卸载等待已签请求交回，之后只清理独占且指纹未变的管理副本。
 
-检视区分当前可用、按时点调度、以及对应请求的实际证据。已签请求的原件保留本次绑定、来源、知识送达方式和写入范围。动作须以原作者交回复用、生成并回读、跳过或失败及具体原因。业务采用以当前用例或验收确实引用相关元素为据。仅查询 `--design-knowledge` 可读取当前知识。历史原件缺失时可报告当前配置和缺失的记录。
+检视区分当前可用、按时点调度、以及对应请求的实际证据。已签请求原件保留本次绑定、来源、知识送达方式和写入范围。直接作者可在 `--prepare-design` 重复传入 `--requirement-source` 和 `--material-source`。作者在原交回中按 `extension-result` 逐条记录真实取用、复用、生成、跳过或失败及具体原因。扩展资源规定产物校验和业务采用的依据。仅查询 `--design-knowledge` 可读取当前知识。历史原件缺失时可报告当前配置和缺失的记录。
 
 ## 相关资产
 

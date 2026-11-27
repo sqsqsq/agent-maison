@@ -19,7 +19,7 @@
 
 安装、启停与卸载通过宿主 `paths.extension_dir/manifest.yaml` 保存选择和文件归属。重复安装保留启停选择。未完成的原签发请求仍可使用其授权副本，卸载会指出该请求 ID；交回后再次卸载，宿主修改过的文件、共享资源及已交付业务产物继续保留。扩展管理刷新项目已配置的入口。使用原位 `verify / materialize / inspect` 的宿主仍可沿原操作。
 
-旧设计背景保持 extension 覆盖 profile 的优先级。给已有宿主加 UX 时，使用 `read-upstream` 和 `fill-missing` 的独立时点绑定。原有手写引用保持原样。保留手动 Skill 与读稿、停用自动补稿可执行 `extension disable ux-behavior-spec fill-missing`。后续直接或受管作者按本次签发内容取用。能够归因的错误清单项从整体退出改为局部诊断，作用范围与原因可经 `inspect` 和现有扩展校验查到。
+旧设计背景保持 extension 覆盖 profile 的优先级。给已有宿主加 UX 时，使用 `read-upstream` 和 `fill-missing` 的独立时点绑定。原有手写引用保持原样。保留手动 Skill 与读稿、停用自动补稿可执行 `extension disable ux-behavior-spec fill-missing`。后续直接或受管作者按本次签发的通用设计输入及扩展自身的取用指引执行。直接准备可用 `--material-source <项目相对文件>` 传显式补充材料，原 `--ux-source` 作为同一参数的兼容写法。能够归因的错误清单项从整体退出改为局部诊断，作用范围与原因可经 `inspect` 和现有扩展校验查到。
 
 安装及证据规则见 [实例扩展协议](docs/evolution/extension-protocol-v1.md)。
 
