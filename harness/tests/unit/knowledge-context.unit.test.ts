@@ -23,6 +23,7 @@ import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-e
 import { checkDiffWithinScope } from '../../scripts/check-coding';
 import { type CheckContext } from '../../scripts/utils/types';
 import { prepareFeatureScopeCandidate } from '../../scripts/utils/feature-track';
+import { prepareDesignRequest } from '../../scripts/utils/automatic-request';
 
 const frameworkRoot = path.resolve(__dirname, '../../..');
 const put = (root: string, file: string, text: string) => { const target = path.join(root, file); fs.mkdirSync(path.dirname(target), { recursive: true }); fs.writeFileSync(target, text, 'utf8'); };
@@ -201,6 +202,7 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
   } },
   { name: '5247db24 direct design delivers generic materials and independent bindings through the read-only entry', run() {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'extension-direct-design-'));
+    const previousHome = process.env.CLAUDE_CONFIG_DIR;
     try {
       const config = seed(root); config.project_profile = { name: 'hmos-app' };
       put(root, 'framework.config.json', JSON.stringify(config)); clearFrameworkConfigCache();
@@ -228,16 +230,17 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       put(root, legacyMaterial, '{}');
       put(root, 'doc/inputs/unmentioned.ux.yaml', 'name: not-a-design-input');
       put(root, 'doc/inputs/contract.jpg', 'reference image bytes');
-      const requestFile = 'doc/reports/request/contract-design/component-design/request.json';
-      const digest = 'sha256:' + 'a'.repeat(64);
-      const request = JSON.stringify({
-        schema_version: '1.0', phase: 'component-design', requested_result: '为既有调用方设计契约。',
-        targets: { files: [], tests: [] }, baseline: { head: 'WORKTREE' }, inputs: {}, allowed_test_writes: [],
-        origin_gap: '已落盘的局部请求', requirement_sources: [prd],
-        blueprint: { ref: { artifact: 'component-blueprint@1', component_id: 'contract', blueprint_id: 'approved-id',
-          revision: 1, source_fingerprint: digest, artifact_sha256: digest, target: { kind: 'blueprint', id: 'approved-id' } }, acceptance_ids: [] },
-      });
-      put(root, requestFile, request);
+      process.env.CLAUDE_CONFIG_DIR = path.join(root, 'native');
+      const session = 'native/projects/fixture/contract-design.jsonl';
+      put(root, session, JSON.stringify({ cwd: fs.realpathSync(root), sessionId: 'contract-design', timestamp: new Date().toISOString(),
+        type: 'user', uuid: 'original', message: { role: 'user', content: `为既有调用方设计契约，原始需求见 ${prd}。` } }) + '\n');
+      const prepared = prepareDesignRequest({ projectRoot: root, frameworkRoot, blueprintId: 'approved-id',
+        sessionRef: path.join(root, session) + '#original', reportDir: 'doc/reports/request/contract-design/component-design', requirementSources: [prd] });
+      assert(prepared.intake && !prepared.originGap, prepared.originGap);
+      const requestFile = path.relative(root, prepared.requestFile).replace(/\\/g, '/');
+      const request = fs.readFileSync(prepared.requestFile, 'utf8');
+      assert.equal(JSON.parse(request).design_target, 'doc/features/approved-id/blueprint/component-blueprint.yaml');
+      assert.equal(JSON.parse(request).blueprint, undefined);
       const actual = cli(root, 'scripts/check-component-blueprint.ts', ['--project-root', root, '--framework-root', frameworkRoot,
         '--request-file', requestFile, '--prepare-design', '--material-source', material, '--ux-source', legacyMaterial, '--json']);
       assert.equal(actual.status, 0, actual.stderr + actual.stdout);
@@ -257,9 +260,14 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
         ['独立宿主设计背景。', '准备契约的适用条件。', '核对调用方约束。']);
       assert(!JSON.stringify(output).includes('unmentioned.ux.yaml'));
       assert(output.knowledge.notices.some((entry: string) => entry.includes('on_context_loda')));
+      const instructions = preparation.author_instructions as string[];
+      assert(instructions.some(line => line.includes('设计前动作 contract-examples:draft [custom/extensions/' + skill + ']')
+        && line.includes('打开绑定资源')));
+      const resultLine = instructions.flatMap(line => line.split('\n')).find(line => line.startsWith('extension-result: '));
+      assert(resultLine);
+      assert.deepEqual(Object.keys(JSON.parse(resultLine.slice('extension-result: '.length))), ['ability', 'binding', 'status', 'artifacts', 'reason']);
       const rendered = renderDesignExtensionPreparation(output);
-      assert(rendered.includes('设计前动作 contract-examples:draft [custom/extensions/' + skill + ']'));
-      assert(rendered.includes('extension-result: ') && rendered.includes(material));
+      assert(instructions.every(line => rendered.includes(line)) && rendered.includes(material));
       const options = { projectRoot: root, frameworkRoot, blueprintId: 'approved-id' };
       const pointer = prepareDesignExtensions({ ...options, inlineBudgetChars: 0 });
       assert.equal(pointer.extension_preparation?.bindings[0].delivery, 'pointer');
@@ -271,10 +279,22 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
       assert(skipped.knowledge.notices.some(notice => notice.includes('补充材料 ../outside.txt')));
       manifest.bindings['contract-examples'].draft.enabled_by_default = false;
       put(root, manifestPath, YAML.stringify(manifest));
-      assert.deepEqual(prepareDesignExtensions(options).extension_preparation?.bindings.map(item => item.id), ['intake', 'constraints']);
+      const knowledgeOnly = prepareDesignExtensions(options).extension_preparation;
+      assert.deepEqual(knowledgeOnly?.bindings.map(item => item.id), ['intake', 'constraints']);
+      const knowledgeInstructions = knowledgeOnly?.author_instructions;
+      assert(knowledgeInstructions);
+      assert(knowledgeInstructions.some(line => line.includes(resultLine)));
+      assert(!knowledgeInstructions.some(line => line.includes('设计前动作')));
+      manifest.bindings['contract-examples'].intake.enabled_by_default = false;
+      manifest.bindings['contract-examples'].constraints.enabled_by_default = false;
+      put(root, manifestPath, YAML.stringify(manifest));
+      assert.equal(prepareDesignExtensions(options).extension_preparation?.author_instructions, undefined);
       assert.equal(fs.readFileSync(path.join(root, requestFile), 'utf8'), request);
       assert(!fs.existsSync(path.join(root, 'doc/features')));
-    } finally { fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+    } finally {
+      if (previousHome === undefined) delete process.env.CLAUDE_CONFIG_DIR; else process.env.CLAUDE_CONFIG_DIR = previousHome;
+      fs.rmSync(root, { recursive: true, force: true }); clearFrameworkConfigCache();
+    }
   } },
   { name: 'typed and legacy verifier collectors share actual knowledge and source fingerprints', run() {
     const { root, frameworkRoot: fw, feature } = setupRunlessProject();

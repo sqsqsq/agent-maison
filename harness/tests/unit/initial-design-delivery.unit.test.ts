@@ -313,6 +313,7 @@ cases.push({
       const issued = handoff.readSessionExecution(prepared.runDir, reference.path)!;
       const { context, invoke_id: invokeId } = issued.request;
       assert(context.instruction?.includes(`设计前动作 ux:fill [${skill}]`));
+      assert(context.instruction?.includes('\nextension-result: {"ability":"能力ID","binding":"绑定ID","status":"reused"'));
       assert(context.instruction?.includes('主持有的独立设计背景。'));
       assert(context.instruction?.includes('doc/requirement.md'));
       assert(issued.request.write_boundary?.immutableInputPaths?.includes(skill));

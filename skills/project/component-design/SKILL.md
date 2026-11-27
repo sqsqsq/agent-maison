@@ -51,7 +51,7 @@ description: Create or continue component design using the unified request envel
 
 - **设计写入前准备**。新写或修订蓝图时，在 P1 事实发现及首次写作前执行。受管作者使用本次签发的 `extension_preparation`、知识正文与来源。直接作者在 `framework/harness` 运行 `npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint "<blueprint-id>" --prepare-design`。ID 取调用实参，或传入 `--request-file <已准备请求>` 使用正式绑定。传入已知需求原件 `--requirement-source <项目相对文件>` 和显式补充材料 `--material-source <项目相对文件>`，两项均可重复。本次明确排除的动作可用 `--skip-extension-action <能力ID:绑定ID>`。纯查看沿原只读路径，也可用兼容查询 `--design-knowledge`。
 - **读取与取用**。读取返回的知识正文和适用来源。超内联预算时按路径分段读取。打开每条已发放动作的资源，按其适用条件、本次请求和现有写入权限处理，按实际情况交回结果或缺口。
-- **实际交回**。用已绑定 ID 定位 `canonical_path` 并写本次正式草稿。对参加本次处理的绑定，在原作者交回中按准备输出的 `extension-result` 格式逐条记录实际结果。受管会话将结果放入原交回的 `details`。小型请求沿原 checker，完整蓝图人读稿沿 `--write-review`。
+- **实际交回**。用已绑定 ID 定位 `canonical_path` 并写本次正式草稿。对参加本次处理的绑定，在原作者交回中按准备输出的 `extension-result` 格式逐条记录实际结果。JSON 输出在 `extension_preparation.author_instructions` 中给出同一格式。受管会话将结果放入原交回的 `details`。小型请求沿原 checker，完整蓝图人读稿沿 `--write-review`。
 
 ## 支持范围（诚实声明）
 

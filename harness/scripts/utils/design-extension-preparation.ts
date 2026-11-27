@@ -31,6 +31,7 @@ interface DesignPreparation {
     reference_images: string[];
     bindings: DesignBindingDelivery[];
     skipped: string[];
+    author_instructions?: string[];
   };
 }
 
@@ -45,6 +46,18 @@ interface DesignPreparationInput {
   lookupOnly?: boolean;
   requestFile?: string;
   inlineBudgetChars?: number;
+}
+
+function authorInstructions(bindings: readonly DesignBindingDelivery[], writeDir: string): string[] {
+  const lines = [`本次蓝图写入目录：${writeDir}。以当前作者的请求范围和已有写权限为准。动笔前按已发放的知识资源和动作指引处理。仅收到知识路径时，打开适用原文。`];
+  for (const binding of bindings) {
+    if (binding.kind !== 'action') continue;
+    lines.push(`设计前动作 ${selector(binding)} [${binding.path}]。打开绑定资源，按其中的条件和本次用户限制执行。跳过或缺少依赖时报告具体原因。`);
+  }
+  lines.push('在本次已有作者交回中，每条参与绑定按下列格式另起一行，行首直接写 extension-result，不加项目符号。'
+    + 'status 按实际结果选 read、reused、generated、skipped 或 failed。\n'
+    + 'extension-result: {"ability":"能力ID","binding":"绑定ID","status":"reused","artifacts":["项目相对路径"],"reason":"本次结果、实际取用或缺口"}');
+  return lines;
 }
 
 function fileInProject(root: string, file: string): string {
@@ -100,11 +113,12 @@ export function prepareDesignExtensions(input: DesignPreparationInput): DesignPr
       try { return [toRelative(root, fileInProject(root, toRelative(root, file)))]; } catch { return []; }
     });
 
+  const writeDir = toRelative(root, path.dirname(canonicalPath));
   return { ...result, extension_preparation: {
     at: DESIGN_PREPARATION_AT, blueprint_id: input.blueprintId, role: 'author' as const,
-    write_dir: toRelative(root, path.dirname(canonicalPath)), ...(input.requestFile ? { request_file: input.requestFile } : {}),
+    write_dir: writeDir, ...(input.requestFile ? { request_file: input.requestFile } : {}),
     requirement_sources: sources, material_sources: [...new Set(materials)], reference_images: [...new Set(referenceImages)],
-    bindings, skipped,
+    bindings, skipped, ...(bindings.length ? { author_instructions: authorInstructions(bindings, writeDir) } : {}),
   } };
 }
 
@@ -117,13 +131,6 @@ export function renderDesignExtensionPreparation(result: DesignPreparation): str
   if (prepared.reference_images.length) lines.push('本次参考图原件（用实际支持图片的工具打开，工具失败或不支持时如实记为未观察）：\n'
     + prepared.reference_images.map(file => '- ' + file).join('\n'));
   if (prepared.skipped.length) lines.push('本次明确跳过动作：' + prepared.skipped.join('、'));
-  if (prepared.bindings.length) {
-    lines.push(`本次蓝图写入目录：${prepared.write_dir}。以当前作者的请求范围和已有写权限为准。动笔前按已发放的知识资源和动作指引处理；仅收到知识路径时，打开适用原文。`);
-    for (const binding of prepared.bindings) {
-      if (binding.kind !== 'action') continue;
-      lines.push(`设计前动作 ${selector(binding)} [${binding.path}]。打开绑定资源，按其中的条件和本次用户限制执行。跳过或缺少依赖时报告具体原因。`);
-    }
-    lines.push('在本次已有作者交回中，每条参与绑定单列一行 extension-result: {"ability":"能力ID","binding":"绑定ID","status":"read|reused|generated|skipped|failed","artifacts":["项目相对路径"],"reason":"本次结果、实际取用或缺口"}。仅报告实际处理结果。');
-  }
+  lines.push(...(prepared.author_instructions ?? []));
   return lines.join('\n\n');
 }

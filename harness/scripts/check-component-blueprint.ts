@@ -245,6 +245,19 @@ export function prepareCanonicalBlueprintSource(projectRoot: string, blueprintId
 
 const argumentList = (value?: string | string[]): string[] | undefined => typeof value === 'string' ? [value] : value;
 
+/** A prepared target locates the first draft before an accepted blueprint ref exists. */
+function preparedDesignBlueprintId(projectRoot: string, request?: BlueprintRecord): string | undefined {
+  const ref = asRecord(request?.blueprint)?.ref;
+  if (ref !== undefined) return validateComponentBlueprintRefShape(ref).blueprint_id;
+  if (typeof request?.design_target !== 'string') return undefined;
+  const target = request.design_target.replace(/\\/g, '/');
+  const blueprintId = target.split('/').at(-3);
+  if (!blueprintId || target !== path.relative(projectRoot, componentBlueprintPath(projectRoot, blueprintId)).replace(/\\/g, '/')) {
+    throw new Error('原 request 的 design_target 必须指向本项目的 canonical 蓝图。');
+  }
+  return blueprintId;
+}
+
 function main(): void {
   const args = minimist<CliArgs>(process.argv.slice(2), {
     alias: { 'material-source': 'ux-source' },
@@ -274,9 +287,9 @@ function main(): void {
       const frameworkRoot = args['framework-root'] ?? resolveProbeFrameworkRoot(projectRoot, __dirname);
       const requestFile = args['request-file'];
       const request = requestFile ? asRecord(JSON.parse(fs.readFileSync(realProjectPath(projectRoot, requestFile, 'component-design request'), 'utf8'))) : undefined;
-      const boundId = asRecord(asRecord(request?.blueprint)?.ref)?.blueprint_id;
+      const boundId = preparedDesignBlueprintId(projectRoot, request);
       if (args.blueprint && boundId !== undefined && boundId !== args.blueprint) throw new Error('准备的蓝图 ID 必须与原 request 正式绑定一致。');
-      const blueprintId = args.blueprint ?? (typeof boundId === 'string' && boundId);
+      const blueprintId = args.blueprint ?? boundId;
       if (!blueprintId) throw new Error('缺少 --blueprint 或原 request 正式绑定的蓝图 ID。');
       const original = requestFile ? prepareDesignRequest({ projectRoot, frameworkRoot, blueprintId, requestFile, readonly: true }) : undefined;
       const requirementSources = (argumentList(args['requirement-source']) ?? []).map(source => {
