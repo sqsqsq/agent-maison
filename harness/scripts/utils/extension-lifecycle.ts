@@ -10,7 +10,7 @@ import {
 } from '../../extension-loader';
 import { harnessRootFromLayout, inferRepoLayout } from '../../repo-layout';
 import { scanExtensionSkills } from './instance-skill-bridge';
-import { activeExtensionRequests, activeExtensionResourceRequests } from './extension-requests';
+import { extensionRequestsUsingAbility, extensionRequestsUsingResources, type InactiveExtensionRequest } from './extension-requests';
 import { releaseLock, tryAcquireLock } from './goal-run-lock';
 import { isInsideProjectRoot, realProjectPath, validateProjectRelativePath } from './project-relative-path';
 import { ordinaryFile, ordinaryPath, relativeExtensionPath, removeExtensionFile, writeExtensionFileAtomic, type ObserveExtensionWrite } from './extension-files';
@@ -141,8 +141,16 @@ function declaredAbilities(bundle: Bundle, projectRoot: string, extensionDir: st
   ]);
 }
 
-function migrateHost(doc: Document, bundle: Bundle, projectRoot: string, relative: string): void {
-  if (bundle.manifestVersion === '2.0') return;
+function legacyIgnoredFields(doc: Document): string[] {
+  return [
+    ...(doc.has('phase_bindings') ? ['phase_bindings'] : []),
+    ...(doc.hasIn(['provides', 'mcp_actions']) ? ['provides.mcp_actions'] : []),
+  ];
+}
+
+function migrateHost(doc: Document, bundle: Bundle, projectRoot: string, relative: string): string[] {
+  if (bundle.manifestVersion === '2.0') return [];
+  const removed = bundle.manifestVersion === '1.0' ? legacyIgnoredFields(doc) : [];
   if (!bundle.manifestPath) {
     doc.set('name', 'project-extensions');
     doc.set('provides', doc.createNode({}));
@@ -167,6 +175,7 @@ function migrateHost(doc: Document, bundle: Bundle, projectRoot: string, relativ
   if (errors.length) {
     throw new Error(`无法迁移宿主扩展清单：${errors.map(item => item.message).join('；')}。已保留原清单及资源。`);
   }
+  return removed;
 }
 
 function sourcesForInstall(input: {
@@ -178,6 +187,7 @@ function sourcesForInstall(input: {
 }): {
   name: string;
   inPlace: boolean;
+  ignoredFields: string[];
   abilities: Array<{ id: string; skill: boolean; bindings: unknown; mcpActions: Data; files: Map<string, InstallFile> }>;
 } {
   const resolvedSource = path.resolve(input.source);
@@ -267,7 +277,8 @@ function sourcesForInstall(input: {
     }
     return { id, skill, bindings: value, mcpActions, files };
   });
-  return { name: source.manifestName, inPlace, abilities };
+  const ignoredFields = !inPlace && source.manifestVersion === '1.0' ? legacyIgnoredFields(doc) : [];
+  return { name: source.manifestName, inPlace, ignoredFields, abilities };
 }
 
 export interface ExtensionLifecycleResult {
@@ -277,6 +288,8 @@ export interface ExtensionLifecycleResult {
   filesRemoved: string[];
   retained: Array<{ path: string; reason: string }>;
   requestIds?: string[];
+  inactiveRequests?: InactiveExtensionRequest[];
+  migration?: { hostRemoved?: string[]; sourceIgnored?: string[] };
 }
 
 interface ChangeOptions {
@@ -318,7 +331,7 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
     const input = sourcesForInstall({ ...options, projectRoot, frameworkRoot, root, source: options.source });
     const plannedFiles = new Map<string, InstallFile & { target: string; prior?: string }>();
     const changedOwnedResources = new Set<string>();
-    migrateHost(doc, bundle, projectRoot, relative);
+    const hostRemoved = migrateHost(doc, bundle, projectRoot, relative);
     for (const ability of input.abilities) {
       const { id } = ability;
       const previous = readInstallation(doc, id);
@@ -379,10 +392,11 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
       else if (previous && !input.inPlace) deleteNativeBindings(doc, id);
       result.abilities.push(id);
     }
-    const blockers = activeExtensionResourceRequests(projectRoot, [...changedOwnedResources]);
-    if (blockers.requestIds.length) return {
-      ...result, requestIds: blockers.requestIds,
-      retained: blockers.paths.map(file => ({ path: file, reason: '在途请求仍使用已安装资源' })),
+    const usage = extensionRequestsUsingResources(projectRoot, [...changedOwnedResources]);
+    if (usage.inactiveRequests.length) result.inactiveRequests = usage.inactiveRequests;
+    if (usage.requestIds.length) return {
+      ...result, requestIds: usage.requestIds,
+      retained: usage.paths.map(file => ({ path: file, reason: '在途请求仍使用已安装资源' })),
     };
     // Existing files retain their old receipt until replacement. New targets get a receipt before creation.
     for (const [hostRel, item] of plannedFiles) {
@@ -397,6 +411,10 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
       writeExtensionFileAtomic(item.target, item.bytes, true, options.observeWrite);
       result.filesWritten.push(hostRel);
     }
+    if (hostRemoved.length || input.ignoredFields.length) result.migration = {
+      ...(hostRemoved.length ? { hostRemoved } : {}),
+      ...(input.ignoredFields.length ? { sourceIgnored: input.ignoredFields } : {}),
+    };
     return result;
   }
 
@@ -412,7 +430,8 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
   const selection: Installation = previous ?? { source: bundle.manifestName ?? 'project-extensions', enabled: true, bindings: {}, files: {}, in_place: true };
 
   if (action === 'uninstall') {
-    const requestIds = activeExtensionRequests(projectRoot, ability, selection.source);
+    const { requestIds, inactiveRequests } = extensionRequestsUsingAbility(projectRoot, ability, selection.source);
+    if (inactiveRequests.length) result.inactiveRequests = inactiveRequests;
     if (requestIds.length > 0) return { ...result, requestIds };
     migrateHost(doc, bundle, projectRoot, relative);
     // Leave compatibility declarations intact; their original meaning is preserved by the host selection.

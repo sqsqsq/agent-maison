@@ -6,8 +6,9 @@ import { loadFrameworkConfig } from '../../config';
 import { readInvokeFinalText } from './agent-invoke';
 import { classifyGoalRunsDir } from './fidelity-shared';
 import { assertFencedOwner, readRunControl } from './goal-run-control';
+import { FEATURE_LOCK_NAME, isLockStale, readLockRecord, RUN_LOCK_NAME, type LockRecord } from './goal-run-lock';
 import { ordinaryFile, relativeExtensionPath, type ExtensionFileChange, type ObserveExtensionWrite } from './extension-files';
-import { invocationOutputLogPath, loadAuthoritativeEvents, type GoalRunEvent } from './goal-runner-phase';
+import { invocationOutputLogPath, loadAuthoritativeEvents, resolveEffectiveRunEnd, type GoalRunEvent } from './goal-runner-phase';
 import { realProjectPath } from './project-relative-path';
 import { readPhaseRecoveryFile } from './phase-write-boundary';
 import { acceptedSessionReport, readExecutionRequestOriginal, readSessionWriteWindows, type IssuedSessionExecution } from './session-execution-handoff';
@@ -27,7 +28,27 @@ function directories(root: string): string[] {
 
 const AUTHOR_PHASES = new Set(['initial-design-author', 'work-unit-author']);
 
-function* authorRequests(projectRoot: string, requested?: string, activeOnly = false) {
+interface ExtensionRequestReference {
+  requestId: string;
+  runId: string;
+  requestFile: string;
+}
+
+interface AuthorRequest extends ExtensionRequestReference {
+  runDir: string;
+  events: GoalRunEvent[];
+  issued: IssuedSessionExecution;
+  bindings: Data[];
+  settled: boolean;
+}
+
+type InactiveReason = '运行已结束（run_end）' | '运行锁已失效或已释放' | '原签发 owner 已失活或被接替';
+
+export interface InactiveExtensionRequest extends ExtensionRequestReference {
+  reason: InactiveReason;
+}
+
+function* authorRequests(projectRoot: string, requested?: string, unsettledOnly = false): Generator<AuthorRequest> {
   const features = realProjectPath(projectRoot, loadFrameworkConfig(projectRoot).paths.features_dir, 'paths.features_dir');
   const ownerDirectories = directories(features).flatMap(workspace => [
     workspace,
@@ -46,7 +67,7 @@ function* authorRequests(projectRoot: string, requested?: string, activeOnly = f
         && event.phase && AUTHOR_PHASES.has(event.phase));
       for (const start of starts) {
         const requestId = start.invoke_id!;
-        if (activeOnly && finished.has(requestId)) continue;
+        if (unsettledOnly && finished.has(requestId)) continue;
         if (requested && !requested.includes('/') && requested !== requestId && requested !== `${runId}:${requestId}`) continue;
         const issued = readExecutionRequestOriginal(runDir, requestId, events);
         if (!issued || issued.request.invoke_id !== requestId || issued.request.context.runId !== runId
@@ -67,46 +88,89 @@ function* authorRequests(projectRoot: string, requested?: string, activeOnly = f
   }
 }
 
-function activeRequestIds(matches: Array<{ runId: string; requestId: string }>): string[] {
-  return [...new Set(matches.map(request => matches.some(other => request.requestId === other.requestId && request.runId !== other.runId)
-    ? `${request.runId}:${request.requestId}` : request.requestId))].sort();
+function inactiveReason(request: AuthorRequest): InactiveReason | undefined {
+  if (resolveEffectiveRunEnd(request.events)) return '运行已结束（run_end）';
+  const { runDir, runId } = request;
+  const { owner, reportDir } = request.issued.request.context;
+  const control = readRunControl(runDir, runId);
+  if (control && (control.owner?.owner_id !== owner.owner_id || control.current_epoch !== owner.epoch
+    || (control.owner.state !== 'active' && control.owner.state !== 'quiescing'))) return '原签发 owner 已失活或被接替';
+
+  const runnerLock = readLockRecord(path.join(runDir, RUN_LOCK_NAME));
+  const featureLock = readLockRecord(path.join(path.dirname(runDir), FEATURE_LOCK_NAME));
+  const locks = [runnerLock, featureLock].filter((lock): lock is LockRecord => lock !== null
+    && (lock.run_id === runId || (lock === runnerLock && !lock.run_id)) && lock.run_mode !== 'dry'
+    && (!lock.report_dir || lock.report_dir === reportDir) && (lock.epoch === undefined || lock.epoch === owner.epoch));
+  if (locks.some(lock => !isLockStale(lock))) return;
+  if (locks.length) return '运行锁已失效或已释放';
+
+  // A controller can release its process locks after signing a session execution window.
+  if (control?.owner?.kind === 'session' && control.owner.state === 'active'
+    && Date.parse(control.owner.lease_expires_at ?? '') > Date.now()) return;
+  return '运行锁已失效或已释放';
 }
 
-export function activeExtensionRequests(projectRoot: string, ability: string, source: string): string[] {
-  return activeRequestIds([...authorRequests(projectRoot, undefined, true)]
-    .filter(request => request.bindings.some(binding => binding.ability === ability && binding.source === source)));
+interface ExtensionRequestUsage {
+  requestIds: string[];
+  inactiveRequests: InactiveExtensionRequest[];
 }
 
-export function activeExtensionResourceRequests(projectRoot: string, paths: readonly string[]): { paths: string[]; requestIds: string[] } {
+function extensionRequestUsage(active: AuthorRequest[], inactiveRequests: InactiveExtensionRequest[]): ExtensionRequestUsage {
+  const requestIds = active.map(request => active.some(other => request.requestId === other.requestId && request.runId !== other.runId)
+    ? request.runId + ':' + request.requestId : request.requestId);
+  return { requestIds: [...new Set(requestIds)].sort(), inactiveRequests };
+}
+
+export function extensionRequestsUsingAbility(projectRoot: string, ability: string, source: string): ExtensionRequestUsage {
+  const active: AuthorRequest[] = [];
+  const inactive: InactiveExtensionRequest[] = [];
+  for (const request of authorRequests(projectRoot, undefined, true)) {
+    if (!request.bindings.some(binding => binding.ability === ability && binding.source === source)) continue;
+    const reason = inactiveReason(request);
+    if (reason) inactive.push({ requestId: request.requestId, runId: request.runId, requestFile: request.requestFile, reason });
+    else active.push(request);
+  }
+  return extensionRequestUsage(active, inactive);
+}
+
+export function extensionRequestsUsingResources(projectRoot: string, paths: readonly string[]): ExtensionRequestUsage & { paths: string[] } {
+  if (!paths.length) return { paths: [], requestIds: [], inactiveRequests: [] };
   const retained = new Set<string>();
-  if (!paths.length) return { paths: [], requestIds: [] };
   const comparable = (value: string) => process.platform === 'win32' ? value.toLowerCase() : value;
   const files = paths.map(file => ({ file, normalized: comparable(file) }));
-  const active = [...authorRequests(projectRoot, undefined, true)].filter(request => {
+  const active: AuthorRequest[] = [];
+  const inactive: InactiveExtensionRequest[] = [];
+  for (const request of authorRequests(projectRoot, undefined, true)) {
     const root = request.issued.request.context.projectRoot;
-    let matched = false;
+    const matched = new Set<string>();
     for (const binding of request.bindings) {
       if (typeof binding.path !== 'string' || (binding.delivery !== 'action' && binding.delivery !== 'pointer')) continue;
       const resource = comparable(relativeExtensionPath(root, path.resolve(root, binding.path)));
       const skill = binding.delivery === 'action' && path.posix.basename(resource) === comparable('SKILL.md')
         ? path.posix.dirname(resource) + '/' : undefined;
       for (const { file, normalized } of files) {
-        if (normalized !== resource && (!skill || !normalized.startsWith(skill))) continue;
-        retained.add(file);
-        matched = true;
+        if (normalized === resource || (skill && normalized.startsWith(skill))) matched.add(file);
       }
     }
-    return matched;
-  });
-  return { paths: [...retained].sort(), requestIds: activeRequestIds(active) };
+    if (!matched.size) continue;
+    const reason = inactiveReason(request);
+    if (reason) inactive.push({ requestId: request.requestId, runId: request.runId, requestFile: request.requestFile, reason });
+    else {
+      active.push(request);
+      for (const file of matched) retained.add(file);
+    }
+  }
+  return { paths: [...retained].sort(), ...extensionRequestUsage(active, inactive) };
 }
 
 export function recordExtensionManagementWrites<T>(
   projectRoot: string, work: (observe?: ObserveExtensionWrite) => T,
 ): T {
-  const active = [...authorRequests(projectRoot, undefined, true)].filter(({ issued: { request } }) =>
-    request.context.phase === 'initial-design-author' || (request.context.phase === 'work-unit-author'
-      && !request.purpose && request.write_boundary?.executionRole === 'author'));
+  const active = [...authorRequests(projectRoot, undefined, true)].filter(actor => {
+    const { request } = actor.issued;
+    return (request.context.phase === 'initial-design-author' || (request.context.phase === 'work-unit-author'
+      && !request.purpose && request.write_boundary?.executionRole === 'author')) && !inactiveReason(actor);
+  });
   if (!active.length) return work();
   const produced: ExtensionFileChange[] = [];
   try {
@@ -115,7 +179,9 @@ export function recordExtensionManagementWrites<T>(
     if (produced.length) for (const actor of active) {
       const { owner, feature, phase } = actor.issued.request.context;
       const eventsPath = ordinaryFile(actor.runDir, 'events.jsonl');
-      if (loadAuthoritativeEvents(eventsPath).some(event => event.type === 'agent_invoke_end' && event.invoke_id === actor.requestId)) continue;
+      const events = loadAuthoritativeEvents(eventsPath);
+      if (events.some(event => event.type === 'agent_invoke_end' && event.invoke_id === actor.requestId)
+        || inactiveReason({ ...actor, events })) continue;
       const current = readRunControl(actor.runDir, owner.run_id);
       if (current?.owner?.owner_id !== owner.owner_id || current.current_epoch !== owner.epoch || current.owner.state !== 'active') continue;
       assertFencedOwner(actor.runDir, owner, 'extension_management_observed');

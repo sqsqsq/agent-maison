@@ -1,9 +1,11 @@
 import assert from 'assert';
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { createHash } from 'crypto';
+import { once } from 'events';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { mock } from 'node:test';
 import * as YAML from 'yaml';
 
 import { clearFrameworkConfigCache } from '../../config';
@@ -14,6 +16,8 @@ import { changeExtension, withExtensionWrite, type ExtensionMutation } from '../
 import { inspectExtensionRequest } from '../../scripts/utils/extension-requests';
 import { acceptSessionExecution, capturePhaseBinding, writePhaseExecutionRequestMaterial } from '../../scripts/utils/session-execution-handoff';
 import { casAcquireRunOwner, ensureRunControl } from '../../scripts/utils/goal-run-control';
+import { isLockStale, readLockRecord, releaseLock, RUN_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
+import { writeExtensionFileAtomic, type ExtensionFileChange } from '../../scripts/utils/extension-files';
 import { capturePhaseInvocationSnapshot, type PhaseWriteBoundaryResolution } from '../../scripts/utils/phase-write-boundary';
 
 const frameworkRoot = detectRepoLayout(__dirname).frameworkRoot;
@@ -24,7 +28,7 @@ function write(file: string, bytes: string): void {
   fs.writeFileSync(file, bytes);
 }
 
-function inProject(body: (projectRoot: string, source: string, extensionDir: string) => void): void {
+async function inProject(body: (projectRoot: string, source: string, extensionDir: string) => void | Promise<void>): Promise<void> {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'maison-extension-lifecycle-'));
   const project = path.join(temporary, 'host');
   const source = path.join(temporary, 'source');
@@ -54,7 +58,7 @@ function inProject(body: (projectRoot: string, source: string, extensionDir: str
   write(path.join(source, 'skills/ux/reference/stable.md'), '# initial\n');
   try {
     clearFrameworkConfigCache();
-    body(project, source, extensionDir);
+    await body(project, source, extensionDir);
   } finally {
     clearFrameworkConfigCache();
     fs.rmSync(temporary, { recursive: true, force: true });
@@ -85,22 +89,24 @@ function publishedBindings(projectRoot: string) {
   return loadInstanceExtensions(projectRoot, 'doc/extensions', { frameworkRoot }).bindings;
 }
 
+const testRunId = '20261125T000000Z-abc123';
+
 function issueDesign(projectRoot: string, requestId: string, source: string, cu = false,
-  boundary: PhaseWriteBoundaryResolution | null = null) {
+  boundary: PhaseWriteBoundaryResolution | null = null, ownerKind: 'session' | 'process' = 'session') {
   const feature = 'opening';
-  const runId = '20261125T000000Z-abc123';
+  const runId = testRunId;
   const workspace = cu ? `${feature}/unit-1` : feature;
   if (cu) write(path.join(projectRoot, 'doc/features', workspace, 'change-unit.yaml'), 'id: unit-1\n');
   const reportDir = `doc/features/${workspace}/goal-runs/${runId}`;
   const runDir = path.join(projectRoot, reportDir);
   fs.mkdirSync(runDir, { recursive: true });
   const phase = cu ? 'work-unit-author' : 'initial-design-author';
-  const issuedAt = '2026-11-25T00:01:00Z';
-  const owner = { run_id: runId, owner_id: 'writer', epoch: 1, kind: 'session' as const };
+  const issuedAt = new Date().toISOString();
+  const owner = { run_id: runId, owner_id: 'writer', epoch: 1, kind: ownerKind };
   const binding = { source, ability: 'ux', id: 'fill', at, kind: 'action', ref: 'ux', delivery: 'action',
     path: 'doc/extensions/skills/ux/SKILL.md' };
-  if (boundary) {
-    ensureRunControl(runDir, runId);
+  const control = ensureRunControl(runDir, runId);
+  if (!control.current_epoch) {
     assert(casAcquireRunOwner(runDir, runId, 0, { kind: owner.kind, owner_id: owner.owner_id }).ok);
   }
   const material = writePhaseExecutionRequestMaterial({
@@ -122,10 +128,11 @@ function issueDesign(projectRoot: string, requestId: string, source: string, cu 
   const eventsFile = path.join(runDir, 'events.jsonl');
   const append = (event: object): void => fs.appendFileSync(eventsFile, JSON.stringify({ ts: issuedAt, ...event }) + '\n');
   append({ type: 'run_start' });
-  append({ type: 'agent_invoke_start', invoke_id: requestId, phase });
+  append({ type: 'agent_invoke_start', invoke_id: requestId, phase,
+    ...(ownerKind === 'process' ? { handoff_request: material.reference, owner_id: owner.owner_id, owner_epoch: owner.epoch } : {}) });
   const event = { type: 'phase_start', invoke_id: requestId, phase, handoff_request: material.reference, driver: 'session',
     owner_id: owner.owner_id, owner_epoch: owner.epoch, attempt_id: requestId };
-  append(event);
+  if (ownerKind === 'session') append(event);
   const issued = { ...material, event };
   if (boundary) append({ type: 'agent_process_bound', invoke_id: requestId, phase, owner_id: owner.owner_id,
     owner_epoch: owner.epoch, binding_snapshot: capturePhaseBinding(runDir, issued) });
@@ -138,18 +145,21 @@ const cases = [
     run: () => inProject((project, source, extensionDir) => {
       write(path.join(extensionDir, 'manifest.yaml'), [
         '# 宿主注释', 'schema_version: "1.0"', 'name: Existing name', 'description: 宿主说明', 'provides:',
-        '  knowledge: [knowledge/host.md]', '  mcp_actions: {}', '',
+        '  knowledge: [knowledge/host.md]', '  mcp_actions: {}', 'phase_bindings: {}', '',
       ].join('\n'));
       const handWritten = '# facts\n\n手写原样。\n';
       write(path.join(extensionDir, 'knowledge/host.md'), handWritten);
       write(path.join(extensionDir, 'skills/8_Story/SKILL.md'), '# existing\n');
-      const one = state(project, 'install', { source });
+      const one = cli(project, 'install', source, 'ux').mutation;
       assert(one.changed && one.filesWritten.length === 3);
+      assert.deepEqual(one.migration, { hostRemoved: ['phase_bindings', 'provides.mcp_actions'] });
       const yaml = path.join(extensionDir, 'manifest.yaml');
       const manifest = () => YAML.parse(fs.readFileSync(yaml, 'utf8'));
       assert.equal(manifest().schema_version, '2.0');
       assert(loadInstanceExtensions(project, undefined, { frameworkRoot }).manifestUsable);
       assert.equal(manifest().name, 'Existing name');
+      assert.equal(manifest().phase_bindings, undefined);
+      assert.equal(manifest().provides.mcp_actions, undefined);
       assert.deepEqual(manifest().provides.skills, ['8_Story', 'ux']);
       assert.deepEqual(manifest().provides.knowledge, [{ path: 'knowledge/host.md', audience: 'none' }]);
       assert.equal(fs.readFileSync(path.join(extensionDir, 'knowledge/host.md'), 'utf8'), handWritten);
@@ -159,6 +169,7 @@ const cases = [
       const ownedFile = path.join(extensionDir, 'skills/ux/reference/stable.md');
       fs.unlinkSync(ownedFile);
       const repaired = state(project, 'install', { source });
+      assert.equal(repaired.migration, undefined);
       assert.deepEqual(repaired.filesWritten, ['doc/extensions/skills/ux/reference/stable.md']);
       assert.deepEqual(fs.readFileSync(yaml), oldManifest);
       const sourceFile = path.join(source, 'manifest.yaml');
@@ -170,6 +181,21 @@ const cases = [
       assert.deepEqual(publishedBindings(project).map(b => [b.id, b.enabled]), [
         ['read', true], ['fill', false], ['new', false],
       ]);
+    }),
+  },
+  {
+    name: '安装回执只报告 1.0 来源实际忽略的声明，保留来源清单原件',
+    run: () => inProject((project, source, extensionDir) => {
+      const sourceManifest = path.join(source, 'manifest.yaml');
+      const original = 'schema_version: "1.0"\nname: local-ux\nprovides:\n  mcp_actions: {}\n';
+      write(sourceManifest, original);
+      const { mutation } = cli(project, 'install', source, 'ux');
+      assert.deepEqual(mutation.migration, { sourceIgnored: ['provides.mcp_actions'] });
+      assert.equal(fs.readFileSync(sourceManifest, 'utf8'), original);
+      const installed = YAML.parse(fs.readFileSync(path.join(extensionDir, 'manifest.yaml'), 'utf8'));
+      assert.equal(installed.provides.mcp_actions, undefined);
+      assert.equal(installed.phase_bindings, undefined);
+      assert.deepEqual(publishedBindings(project), []);
     }),
   },
   {
@@ -304,7 +330,7 @@ const cases = [
     }),
   },
   {
-    name: '卸载通过原始签发绑定保留资源到当前请求交回，停用只影响新请求',
+    name: '卸载保护已签发且未启动的会话，run_end 后只提示原定位，停用只影响新请求',
     run: () => inProject((project, source, extensionDir) => {
       state(project, 'install', { source });
       const unrelated = issueDesign(project, 'other-package-author', 'different-source');
@@ -316,13 +342,21 @@ const cases = [
       assert.equal(before.settled, false);
       state(project, 'disable');
       assert(publishedBindings(project).every(b => !b.enabled));
-      signed.append({ type: 'run_end', status: 'waiting' });
       assert.deepEqual(state(project, 'uninstall').requestIds, ['active-author']);
+      assert(!fs.existsSync(path.join(signed.runDir, RUN_LOCK_NAME)));
       assert(fs.existsSync(path.join(extensionDir, 'skills/ux/SKILL.md')));
-      signed.append({ type: 'agent_invoke_end', invoke_id: 'active-author', phase: signed.phase, exit_code: 0 });
-      assert.equal(inspectExtensionRequest(project, signed.path, 'ux').settled, true);
-      assert(state(project, 'uninstall').filesRemoved.includes('doc/extensions/skills/ux/SKILL.md'));
+      signed.append({ type: 'run_end', status: 'INTERRUPTED' });
+      const { mutation, request } = cli(project, 'uninstall', 'ux');
+      assert.equal(request, undefined);
+      assert.equal(mutation.requestIds, undefined);
+      assert.deepEqual(mutation.inactiveRequests, [{
+        requestId: 'active-author', runId: testRunId, requestFile: signed.path, reason: '运行已结束（run_end）',
+      }]);
+      assert(mutation.filesRemoved.includes('doc/extensions/skills/ux/SKILL.md'));
       assert(!fs.existsSync(path.join(extensionDir, 'skills/ux/SKILL.md')));
+      const history = inspectExtensionRequest(project, signed.path, 'ux');
+      assert.equal(history.settled, false);
+      assert.deepEqual(history.results, []);
     }),
   },
   {
@@ -369,6 +403,105 @@ const cases = [
       assert.deepEqual(state(project, 'install', { source }).filesWritten.sort(),
         ['doc/extensions/' + skill, 'doc/extensions/' + reference]);
       assert.equal(fs.readFileSync(asset, 'utf8'), '# updated skill asset\n');
+    }),
+  },
+  {
+    name: '作者的真锁进程中途被杀后，升级和卸载仅提示，原签发与运行历史保持可查',
+    run: () => inProject(async (project, source, extensionDir) => {
+      const asset = 'doc/extensions/skills/ux/reference/stable.md';
+      state(project, 'install', { source });
+      write(path.join(source, 'skills/ux/reference/stable.md'), '# upgrade after orphan\n');
+      const reportDir = `doc/features/opening/goal-runs/${testRunId}`;
+      const runDir = path.join(project, reportDir);
+      const lockPath = path.join(runDir, RUN_LOCK_NAME);
+      const child = spawn(process.execPath, [
+        '-r', require.resolve('ts-node/register/transpile-only'), '-e', `
+          const path = require('path');
+          const [runDir, runId, reportDir] = process.argv.slice(1);
+          const { tryAcquireLock, RUN_LOCK_NAME } = require('./scripts/utils/goal-run-lock');
+          const { casAcquireRunOwner, ensureRunControl } = require('./scripts/utils/goal-run-control');
+          const lock = tryAcquireLock(path.join(runDir, RUN_LOCK_NAME), {
+            run_id: runId, report_dir: reportDir, run_mode: 'authoritative', ownerId: 'writer',
+          });
+          if (!lock) throw new Error('fixture runner lock busy');
+          const control = ensureRunControl(runDir, runId);
+          if (!casAcquireRunOwner(runDir, runId, control.current_epoch, { kind: 'process', owner_id: lock.ownerId }).ok) {
+            throw new Error('fixture owner busy');
+          }
+          process.send('locked');
+          setInterval(() => {}, 1000);
+        `, runDir, testRunId, reportDir,
+      ], { cwd: path.join(frameworkRoot, 'harness'), stdio: ['ignore', 'ignore', 'ignore', 'ipc'], windowsHide: true });
+      const closed = new Promise<void>(resolve => child.once('close', () => resolve()));
+      try {
+        const [ready] = await once(child, 'message', { signal: AbortSignal.timeout(8000) });
+        assert.equal(ready, 'locked');
+        const lock = readLockRecord(lockPath)!;
+        assert.equal(lock.pid, child.pid);
+        assert.equal(isLockStale(lock), false);
+        const signed = issueDesign(project, 'killed-author', 'local-ux', false, null, 'process');
+        signed.append({ type: 'agent_process_bound', invoke_id: 'killed-author', phase: signed.phase, pid: child.pid });
+        assert.deepEqual(state(project, 'uninstall').requestIds, ['killed-author']);
+        assert.deepEqual(state(project, 'install', { source }).requestIds, ['killed-author']);
+        assert.equal(fs.readFileSync(path.join(project, asset), 'utf8'), '# initial\n');
+        const original = fs.readFileSync(path.join(project, signed.path));
+        const eventsPath = path.join(runDir, 'events.jsonl');
+        const events = fs.readFileSync(eventsPath);
+        assert(child.kill('SIGKILL'));
+        await closed;
+        assert.equal(isLockStale(readLockRecord(lockPath)!), true);
+
+        const expected = [{ requestId: 'killed-author', runId: testRunId, requestFile: signed.path, reason: '运行锁已失效或已释放' }];
+        const upgrade = cli(project, 'install', source, 'ux').mutation;
+        assert.deepEqual(upgrade.inactiveRequests, expected);
+        assert.deepEqual(upgrade.filesWritten, [asset]);
+        assert.equal(fs.readFileSync(path.join(project, asset), 'utf8'), '# upgrade after orphan\n');
+
+        releaseLock(lockPath, lock.ownerId);
+        assert(!fs.existsSync(lockPath));
+        const removed = state(project, 'uninstall');
+        assert.deepEqual(removed.inactiveRequests, expected);
+        assert(removed.filesRemoved.includes(asset));
+        assert(!fs.existsSync(path.join(extensionDir, 'skills/ux/SKILL.md')));
+        assert.deepEqual(fs.readFileSync(path.join(project, signed.path)), original);
+        assert.deepEqual(fs.readFileSync(eventsPath), events);
+        const history = inspectExtensionRequest(project, signed.path, 'ux');
+        assert.equal(history.requestId, 'killed-author');
+        assert.equal(history.settled, false);
+        assert.deepEqual(history.results, []);
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+        await closed;
+      }
+    }),
+  },
+  {
+    name: '独占新增资源保护已有文件，清理部分写入且只观察成功后实际落盘的内容',
+    run: () => inProject((project) => {
+      const target = path.join(project, 'resource.md');
+      const observed: ExtensionFileChange[] = [];
+      const observe = (change: ExtensionFileChange) => observed.push(change);
+      write(target, 'host-owned');
+      assert.throws(() => writeExtensionFileAtomic(target, 'candidate', true, observe), { code: 'EEXIST' });
+      assert.equal(fs.readFileSync(target, 'utf8'), 'host-owned');
+      assert.deepEqual(observed, []);
+      fs.unlinkSync(target);
+
+      const originalWrite = fs.writeFileSync;
+      const fault = mock.method(require('fs') as typeof fs, 'writeFileSync', (file: Parameters<typeof fs.writeFileSync>[0]) => {
+        originalWrite(file, 'partial');
+        throw new Error('injected file write failure');
+      });
+      try {
+        assert.throws(() => writeExtensionFileAtomic(target, 'candidate', true, observe), /injected file write failure/);
+      } finally {
+        fault.mock.restore();
+      }
+      assert(!fs.existsSync(target));
+      assert.deepEqual(observed, []);
+      writeExtensionFileAtomic(target, 'candidate', true, observe);
+      assert.equal(fs.readFileSync(target, 'utf8'), 'candidate');
+      assert.deepEqual(observed, [{ path: target, pre_sha256: null, post_sha256: createHash('sha256').update('candidate').digest('hex') }]);
     }),
   },
   {
@@ -480,9 +613,11 @@ const cases = [
   },
 ];
 
-export function runAll() {
-  return cases.map(item => {
-    try { item.run(); return { name: item.name, ok: true }; }
-    catch (error) { return { name: item.name, ok: false, error: (error as Error).stack }; }
-  });
+export async function runAll() {
+  const results = [];
+  for (const item of cases) {
+    try { await item.run(); results.push({ name: item.name, ok: true }); }
+    catch (error) { results.push({ name: item.name, ok: false, error: (error as Error).stack }); }
+  }
+  return results;
 }
