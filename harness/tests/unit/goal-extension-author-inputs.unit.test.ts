@@ -30,6 +30,7 @@ import { withRuntimeTest } from '../utils/runtime-test-control';
 import { loadAuthoritativeEvents } from '../../scripts/utils/goal-runner-phase';
 import { readExecutionRequestOriginal } from '../../scripts/utils/session-execution-handoff';
 import { changeExtension, withExtensionWrite } from '../../scripts/utils/extension-lifecycle';
+import { releaseLock, tryAcquireLock } from '../../scripts/utils/goal-run-lock';
 
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const READ_INSTRUCTION =
@@ -156,11 +157,13 @@ async function driveSpecRun(
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [
   {
-    name: 'closing the extension after CU author preparation rebuilds the request before the first signed start',
+    name: 'CU waits for extension management, rebuilds stale material, and signs automatically in the same run',
     run: async () => {
       const feature = 'author-extension-race';
       const body = '竞态夹具的旧知识正文';
       let oldPrompts = 0;
+      let managementCompletedAt: number | undefined;
+      let managementError: unknown;
       const r = await driveSpecRun(feature, {
         'doc/extensions/manifest.yaml': [
           'schema_version: "2.0"', 'name: test-race', 'provides: {}', 'bindings:', '  guide:',
@@ -172,13 +175,24 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       }, (root, prompt) => {
         if (!prompt.includes(body)) return;
         oldPrompts++;
-        const closed = withExtensionWrite(root, REPO_ROOT, () => changeExtension('disable', {
-          projectRoot: root, frameworkRoot: REPO_ROOT, ability: 'guide',
-        }));
-        assert.equal(closed.outcomes[0]?.state, 'disabled');
-        assert.equal(closed.requestIds?.length ?? 0, 0);
+        const file = path.join(root, 'doc/extensions/.manifest.lock');
+        const lock = tryAcquireLock(file, {});
+        assert(lock);
+        setTimeout(() => {
+          releaseLock(file, lock.ownerId);
+          try {
+            const closed = withExtensionWrite(root, REPO_ROOT, () => changeExtension('disable', {
+              projectRoot: root, frameworkRoot: REPO_ROOT, ability: 'guide',
+            }));
+            assert.equal(closed.outcomes[0]?.state, 'disabled');
+            assert.equal(closed.requestIds?.length ?? 0, 0);
+            managementCompletedAt = Date.now();
+          } catch (error) { managementError = error; }
+        }, 400);
       });
       try {
+        if (managementError) throw managementError;
+        assert(managementCompletedAt);
         assert.equal(oldPrompts, 1, 'old material was assembled before management closed selection');
         assert(r.prompts.length > 0 && r.prompts.every(prompt => !prompt.includes(body)));
         const runs = path.join(r.root, 'doc/features', feature, 'goal-runs');
@@ -186,6 +200,8 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         const events = loadAuthoritativeEvents(path.join(runDir, 'events.jsonl'));
         const start = events.find(event => event.type === 'agent_invoke_start' && event.phase === 'work-unit-author');
         assert(start?.handoff_request, 'direct transport must append the first original reference');
+        assert(Date.parse(start.ts!) >= managementCompletedAt, 'the start must timestamp actual issuance after the lock releases');
+        assert(!events.slice(0, events.indexOf(start)).some(event => event.type === 'phase_halt' || event.type === 'run_end'));
         const issued = readExecutionRequestOriginal(runDir, start.invoke_id, events);
         assert(issued && !issued.request.context.instruction?.includes(body));
         assert(!issued.request.context.workInput?.material.segments.some(segment => JSON.stringify(segment).includes('extension_feature_bindings')));

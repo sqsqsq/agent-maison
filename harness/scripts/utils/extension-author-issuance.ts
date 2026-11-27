@@ -1,6 +1,7 @@
 import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
+import { setTimeout as delay } from 'node:timers/promises';
 
 import { ExtensionWriteBusyError, extensionLocation, withExtensionWrite } from './extension-lifecycle';
 import { realProjectPath } from './project-relative-path';
@@ -37,28 +38,58 @@ export function captureExtensionAuthorSelection(projectRoot: string, frameworkRo
   }
 }
 
-export type ExtensionAuthorPublication<T> = { kind: 'issued'; value: T } | { kind: 'changed' | 'busy' };
+interface ExtensionAuthorControls {
+  signal?: AbortSignal;
+  deadline?: string;
+  assertOwner: () => void;
+  selectionChanges: number;
+}
+
+type StoppedPublication = { kind: 'stopped'; detail: string };
+type ExtensionAuthorPublication<T> = { kind: 'issued'; value: T } | { kind: 'changed' } | StoppedPublication;
 
 /** Only freshness and the original request + event append belong inside the management mutex. */
 export async function publishExtensionAuthorRequest<T>(
-  selection: ExtensionAuthorSelection | undefined, publish: () => T,
+  selection: ExtensionAuthorSelection, publish: () => T, controls: ExtensionAuthorControls,
 ): Promise<ExtensionAuthorPublication<T>> {
-  if (!selection || selection.revision === null && !fs.existsSync(selection.manifest)) {
+  if (selection.revision === null && !fs.existsSync(selection.manifest)) {
     return { kind: 'issued', value: publish() };
   }
-  for (let attempt = 0; ; attempt++) {
+
+  const deadline = controls.deadline ? Date.parse(controls.deadline) : Infinity;
+  const stopped = (): StoppedPublication | undefined => {
+    controls.assertOwner();
+    if (Date.now() >= deadline) return { kind: 'stopped', detail: '用户明示时限已到；成果与未完项保留，时限未重置。' };
+    if (controls.signal?.aborted) return { kind: 'stopped', detail: '当前请求已取消；成果与未完项保留。' };
+  };
+  const pause = async (interval: number): Promise<void> => {
+    try { await delay(Math.min(interval, Math.max(0, deadline - Date.now())), undefined, { signal: controls.signal }); }
+    catch (error) { if (!controls.signal?.aborted) throw error; }
+  };
+  const backoffLimit = 500; // Polling interval only. The run's own authority and deadline govern the total wait.
+  let interval = 50;
+  for (;;) {
+    const boundary = stopped();
+    if (boundary) return boundary;
+    let entered = false;
     try {
-      return withExtensionWrite(selection.projectRoot, selection.frameworkRoot, () => {
-        if (manifestRevision(selection.manifest) !== selection.revision) return { kind: 'changed' };
+      const publication = withExtensionWrite(selection.projectRoot, selection.frameworkRoot, (): ExtensionAuthorPublication<T> => {
+        entered = true;
+        const revision = manifestRevision(selection.manifest);
+        const boundary = stopped();
+        if (boundary) return boundary;
+        if (revision !== selection.revision) return { kind: 'changed' };
         return { kind: 'issued', value: publish() };
       });
+      if (publication.kind === 'changed' && controls.selectionChanges > 0) {
+        await pause(Math.min(50 * 2 ** controls.selectionChanges, backoffLimit));
+        return stopped() ?? publication;
+      }
+      return publication;
     } catch (error) {
-      if (!(error instanceof ExtensionWriteBusyError)) throw error;
-      if (attempt >= 2) return { kind: 'busy' };
-      await new Promise(resolve => setTimeout(resolve, 50));
+      if (entered || !(error instanceof ExtensionWriteBusyError)) throw error;
+      await pause(interval);
+      interval = Math.min(interval * 2, backoffLimit);
     }
   }
 }
-
-export const EXTENSION_AUTHOR_ISSUANCE_WAIT =
-  '宿主扩展选择正在更新，尚未签发新的作者请求。扩展管理操作稳定后可沿原请求继续。';

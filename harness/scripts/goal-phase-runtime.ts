@@ -46,7 +46,7 @@ import { resolveTaskAutomationPolicy } from './utils/runtime-policy';
 import { createIdentityNeutralDigestReaders, type IdentityNeutralDigestReaders } from './utils/identity-neutral-digest';
 import { parseVerifierRequest, parseVerifierRequestFromInstruction, canonicalRequestInput } from './utils/verifier-request';
 import { signedExtensionResourcePaths } from './utils/extension-requests';
-import { captureExtensionAuthorSelection, EXTENSION_AUTHOR_ISSUANCE_WAIT, publishExtensionAuthorRequest } from './utils/extension-author-issuance';
+import { captureExtensionAuthorSelection, publishExtensionAuthorRequest } from './utils/extension-author-issuance';
 import { validateProjectRelativePath, isInsideProjectRoot } from './utils/project-relative-path';
 import { loadVerifierEvidence, verifierDiagnosisRequired, verifierReportItemGaps } from './utils/verifier-evidence';
 import { readVerifierMaterialOrNull } from './utils/verifier-material';
@@ -4933,6 +4933,8 @@ export class GoalPhaseRuntime {
         }
         const spent = readOriginalDeliveryActivity(projectRoot, manifest)!;
         const purpose = observed.kind === 'questioning' ? 'questioning' : 'author';
+        const previousEvaluation: CompletionEvaluation | null = previousDesignEvaluation;
+        const evaluationCount = designEvaluations.length;
         if (observed.kind === 'author' && !observed.request && !restoration.size) prepareInitialDesignDraft({ projectRoot, blueprintId: manifest.feature,
           sourceRefs: manifest.requirement_source_files?.length ? manifest.requirement_source_files
             : [path.relative(projectRoot, path.join(runDir, 'manifest.json')).replace(/\\/g, '/') + '#requirement'],
@@ -5125,11 +5127,11 @@ export class GoalPhaseRuntime {
               { PROMPT: instruction, PROMPT_FILE: promptFile, PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature, PHASE: label, SKILL_PATH: path.join(frameworkRoot, 'skills/project/component-design/SKILL.md') }, adapterModelBinding(manifest.adapter_model_pin));
           } catch (error) { return conclude('adapter_cli_hard_failure', (error as Error).message); }
         }
-        const issuedAt = new Date().toISOString();
-        const materialInput = { context, invokeId, purpose, issuedAt, timeoutMs, gateTimeoutMs: 0, cleanupReserveMs: 0,
-          preSnapshot: pre, writeBoundary, snapshotOptions };
         const invocationOwner = token;
         const publish = () => {
+          const issuedAt = new Date().toISOString();
+          const materialInput = { context, invokeId, purpose, issuedAt, timeoutMs, gateTimeoutMs: 0, cleanupReserveMs: 0,
+            preSnapshot: pre, writeBoundary, snapshotOptions };
           const original = !this.options.sessionHandoff ? writePhaseExecutionRequestMaterial(materialInput) : undefined;
           const emitInvocation = extensionSelection ? appendDesignEvent : emit;
           emitInvocation({ type: 'agent_invoke_start', ts: issuedAt, phase: label, purpose, invoke_id: invokeId,
@@ -5139,15 +5141,19 @@ export class GoalPhaseRuntime {
           const issued = this.options.sessionHandoff ? issueSessionExecution({ ...materialInput, emit: emitInvocation }) : undefined;
           return { original, issued };
         };
-        const publication = extensionSelection ? await publishExtensionAuthorRequest(extensionSelection, publish)
+        const publication = extensionSelection ? await publishExtensionAuthorRequest(extensionSelection, publish, {
+          signal: this.options.executionControls?.signal, deadline: context.user_deadline_at, selectionChanges: extensionSelectionRetries,
+          assertOwner: () => assertFencedOwner(context.runDir, context.owner, 'extension_author_issue'),
+        })
           : { kind: 'issued' as const, value: publish() };
-        if (publication.kind !== 'issued') {
-          if (publication.kind === 'changed' && extensionSelectionRetries++ < 2) {
-            resumeDesignWork = explicitlyContinued;
-            continue currentDesignWork;
-          }
-          return conclude('executor_waiting', EXTENSION_AUTHOR_ISSUANCE_WAIT, { run_disposition: 'WAITING', run_wait_kind: 'external' });
+        if (publication.kind === 'changed') {
+          extensionSelectionRetries = Math.min(extensionSelectionRetries + 1, 4);
+          previousDesignEvaluation = previousEvaluation;
+          designEvaluations.length = evaluationCount;
+          resumeDesignWork = explicitlyContinued;
+          continue currentDesignWork;
         }
+        if (publication.kind === 'stopped') return conclude('executor_waiting', publication.detail);
         extensionSelectionRetries = 0;
         if (extensionSelection) refreshDesignProgress();
         const { original, issued } = publication.value;
@@ -5239,6 +5245,14 @@ export class GoalPhaseRuntime {
         }
       }
     } catch (error) {
+      if (token) {
+        try { assertFencedOwner(runDir, token, 'initial_design_failure'); }
+        catch {
+          token = undefined;
+          runConcluded = true;
+          throw error;
+        }
+      }
       emit({ type: 'run_end', status: 'INTERRUPTED', error: (error as Error).message });
       throw error;
     } finally {
@@ -7981,10 +7995,11 @@ Goal runner — original request design and construction runtime
         : resolveHeadlessInvokePlan(manifest.adapter!, cap.capability!, manifest.unattended, instruction,
           { PROMPT: instruction, PROMPT_FILE: promptFile, PROJECT_ROOT: projectRoot, FRAMEWORK_ROOT: frameworkRoot, FEATURE: manifest.feature,
             PHASE: label, SKILL_PATH: phaseSkillPath(frameworkRoot, testingTargets ? 'testing' : family as FeaturePhase) }, adapterModelBinding(manifest.adapter_model_pin), sessionBinary?.binary ?? null);
-      const issuedAt = new Date().toISOString();
-      const materialInput = { context, invokeId, issuedAt, ...(purpose ? { purpose } : {}),
-        gateTimeoutMs: 0, cleanupReserveMs: 0, preSnapshot: pre, writeBoundary: boundary, snapshotOptions };
+      let issuedAt: string | undefined;
       const publish = () => {
+        issuedAt = new Date().toISOString();
+        const materialInput = { context, invokeId, issuedAt, ...(purpose ? { purpose } : {}),
+          gateTimeoutMs: 0, cleanupReserveMs: 0, preSnapshot: pre, writeBoundary: boundary, snapshotOptions };
         const original = !options.sessionHandoff ? writePhaseExecutionRequestMaterial(materialInput) : undefined;
         goalEvents.emit({ type: 'agent_invoke_start', ts: issuedAt, phase: label, invoke_id: invokeId, command: plan.label, purpose,
           ...(original ? { handoff_request: original.reference, attempt_id: context.attemptId } : {}),
@@ -7995,11 +8010,14 @@ Goal runner — original request design and construction runtime
       };
       let original: ReturnType<typeof writePhaseExecutionRequestMaterial> | undefined;
       try {
-        const publication = extensionSelection ? await publishExtensionAuthorRequest(extensionSelection, publish)
+        const publication = extensionSelection ? await publishExtensionAuthorRequest(extensionSelection, publish, {
+          signal: options.executionControls?.signal, deadline: context.user_deadline_at, selectionChanges: extensionSelectionRetries,
+          assertOwner: () => assertFencedOwner(context.runDir, context.owner, 'extension_author_issue'),
+        })
           : { kind: 'issued' as const, value: publish() };
         if (publication.kind !== 'issued') {
-          if (publication.kind === 'changed' && extensionSelectionRetries++ < 2) return null;
-          wait(label, EXTENSION_AUTHOR_ISSUANCE_WAIT);
+          if (publication.kind === 'changed') extensionSelectionRetries = Math.min(extensionSelectionRetries + 1, 4);
+          else wait(label, publication.detail);
           return null;
         }
         extensionSelectionRetries = 0;
@@ -8017,7 +8035,7 @@ Goal runner — original request design and construction runtime
           const pending = undeliveredSessionInvocation(records);
           const saved = executionRequestForInvoke(runDir, invokeId);
           const current = capturePhaseInvocationSnapshot(boundary, snapshotOptions);
-          if (pending?.invoke_id === invokeId && saved?.request.issued_at === issuedAt
+          if (issuedAt && pending?.invoke_id === invokeId && saved?.request.issued_at === issuedAt
             && saved.request.context.runId === manifest.run_id && saved.request.context.feature === manifest.feature
             && saved.request.context.owner.owner_id === context.owner.owner_id && saved.request.context.owner.epoch === context.owner.epoch
             && pending.owner_id === context.owner.owner_id && pending.owner_epoch === context.owner.epoch
@@ -8530,7 +8548,8 @@ Goal runner — original request design and construction runtime
         && (verificationPending || !author || !checkedRepairSource(author, repairs, currentEvents, currentChecks));
       if (progress.halt) { wait(repairs.length ? 'work-unit-author' : before.independent[0]?.owner ?? 'work-unit-author',
         `已向当前责任方交付反馈且真实检查仍无验收改善，保全后可续暂停。\n${renderCurrentDisposition(before.disposition)}`, 'no_progress_guard'); break; }
-      if (before.evaluation.completed && !progress.reused && progress.evaluation === before.evaluation) completedEvaluations.push(before.evaluation);
+      const recordEvaluation = before.evaluation.completed && !progress.reused && progress.evaluation === before.evaluation;
+      if (recordEvaluation) completedEvaluations.push(before.evaluation);
       if (!author || !pendingDefinition && (newDriverHypothesis || designDeclineFeedback || repairs.length && !feedbackAwaitingEvaluation && !verificationPending)) {
         const authorWork = preparation ? { ...before, disposition: { ...before.disposition,
           problems: before.disposition.problems.filter(problem => !preparation.problems.includes(problem)),
@@ -8539,7 +8558,10 @@ Goal runner — original request design and construction runtime
         const invoked = await invokeWork('work-unit-author', prepared.instruction, undefined, undefined, explicitlyContinued,
           prepared.workInput, undefined, undefined, prepared.extensionSelection);
         if (invoked === 3) return 3;
-        if (!invoked && !halted) continue;
+        if (!invoked && !halted) {
+          if (recordEvaluation) completedEvaluations.pop();
+          continue;
+        }
         if (!invoked || halted) break;
         if (invoked.rebuild) continue;
         if (writeConflicts().size) continue;
