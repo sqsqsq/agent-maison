@@ -204,15 +204,16 @@ interface IncomingAbility {
   issues?: string[];
 }
 
-function sourceTreeFiles(sourceRoot: string, directory: string, excludes: readonly string[], addFile: (relative: string) => void): void {
+function sourceTreeFiles(sourceRoot: string, directory: string, excluded: (relative: string) => boolean,
+  addFile: (relative: string) => void): void {
   const sourceDirectory = directory ? ordinaryPath(sourceRoot, directory, 'extension skill') : sourceRoot;
   const entry = fs.lstatSync(sourceDirectory, { throwIfNoEntry: false });
   if (!entry) return;
   if (!entry.isDirectory()) throw new Error(`skill 资源必须是目录：${directory}`);
   for (const child of fs.readdirSync(sourceDirectory, { withFileTypes: true })) {
     const resource = path.posix.join(directory, child.name);
-    if (excludes.includes(resource)) continue;
-    if (child.isDirectory()) sourceTreeFiles(sourceRoot, resource, excludes, addFile);
+    if (excluded(resource)) continue;
+    if (child.isDirectory()) sourceTreeFiles(sourceRoot, resource, excluded, addFile);
     else addFile(resource);
   }
 }
@@ -253,7 +254,7 @@ function sourcesForInstall(input: {
     }
     if (input.ability && input.ability !== id) throw new Error(`来源没有能力：${input.ability}`);
     const files = new Map<string, InstallFile>();
-    sourceTreeFiles(sourceRoot, '', [], relative => {
+    sourceTreeFiles(sourceRoot, '', relative => path.posix.basename(relative).toLowerCase() === '.git', relative => {
       const bytes = fs.readFileSync(ordinaryFile(sourceRoot, relative));
       files.set(path.posix.join('skills', id, relative), { bytes, sha256: digest(bytes) });
     });
@@ -316,7 +317,7 @@ function sourcesForInstall(input: {
       files.set(key, { bytes, sha256: digest(bytes) });
     };
     const addSkill = (slug: string): void => {
-      sourceTreeFiles(sourceRoot, `skills/${slug}`, outputs, addFile);
+      sourceTreeFiles(sourceRoot, `skills/${slug}`, generated, addFile);
     };
     if (skill || steps.length) addSkill(id);
     for (const [bindingId, rawBinding] of Object.entries(mapping(value))) {
@@ -582,9 +583,17 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
       selectAndSave(ability, selection);
       return true;
     }
-    if (selection.enabled && selection.activation_result?.status === 'enabled'
-      && selection.activation_result.input_sha256 === extensionActivationInputDigest(context(ability, selection), steps)
-      && !extensionActivationDrift(root, selection.activation_result).length) return true;
+    const previousActivation = selection.activation_result;
+    if (selection.enabled && previousActivation?.status === 'enabled') {
+      const drift = extensionActivationDrift(root, previousActivation);
+      const conflicts = drift.filter(item => item.kind !== 'missing');
+      if (conflicts.length) {
+        const reason = `启用输出已改写或无法核实，保留现有启用结果：${conflicts.map(item => item.path).join('、')}`;
+        result.outcomes.push({ ability, state: 'failed', reason, activation: previousActivation });
+        return false;
+      }
+      if (!drift.length && previousActivation.input_sha256 === extensionActivationInputDigest(context(ability, selection), steps)) return true;
+    }
     const wasEnabled = selection.enabled;
     if (wasEnabled) {
       selection.enabled = false;
@@ -656,11 +665,15 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
     const steps = input.bare && previous ? oldSteps : incoming.steps;
     const incomingFiles = [...incoming.files].filter(([resource]) => !isExtensionActivationOutput(steps, resource));
     const incomingHashes = Object.fromEntries(incomingFiles.map(([file, item]) => [relativeExtensionPath(projectRoot, path.join(root, file)), item.sha256]));
+    const bindingsChanged = !isDeepStrictEqual(nativeBindings(doc, id), mapping(nextBindings));
+    const filesChanged = !input.inPlace && !isDeepStrictEqual(previous?.files, incomingHashes);
     const newlyStaged = previous?.pending_cleanup?.operation === 'install' && !Object.keys(previous.files).length
-      && !oldSteps.length && !bundle.skills.includes(id) && !Object.keys(nativeBindings(doc, id)).length;
-    const upgrade = !!previous && !newlyStaged && (previous.version !== version || (oldSteps.length > 0 || steps.length > 0) && !input.bare
-      && (!isDeepStrictEqual(previous.files, incomingHashes) && !input.inPlace || !isDeepStrictEqual(oldSteps, steps)
-        || !isDeepStrictEqual(nativeBindings(doc, id), mapping(nextBindings))));
+      && !oldSteps.length && !bundle.declaredSkills.includes(id) && !Object.keys(nativeBindings(doc, id)).length;
+    const learningStaticVersion = previous?.version === undefined && version !== undefined && !oldSteps.length && !steps.length
+      && !bindingsChanged && !filesChanged && incoming.skill === bundle.declaredSkills.includes(id);
+    const upgrade = !!previous && !newlyStaged && (previous.version !== version && !learningStaticVersion
+      || (oldSteps.length > 0 || steps.length > 0) && !input.bare
+        && (filesChanged || !isDeepStrictEqual(oldSteps, steps) || bindingsChanged));
     const files = upgrade ? {} as Record<string, string> : { ...previous?.files };
     const priorOwners = owners().filter(([owner]) => owner !== id);
     const oldActivation = previous?.activation_result;
@@ -942,7 +955,7 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
     if (!result.retained.some(item => item.path === ref)) result.retained.push({ path: ref, reason: '保留可能由其他宿主声明使用的 MCP 配置' });
   }
   try {
-    sourceTreeFiles(root, `skills/${ability}`, [], resource => {
+    sourceTreeFiles(root, `skills/${ability}`, () => false, resource => {
       const file = relativeExtensionPath(projectRoot, path.join(root, resource));
       if (!own(selection.files, file)) result.retained.push({ path: file, reason: '原地来源或不属于本次安装' });
     });
