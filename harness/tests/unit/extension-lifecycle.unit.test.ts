@@ -751,6 +751,14 @@ const cases = [
         else assert(fs.lstatSync(guide).isSymbolicLink());
       }
       fs.unlinkSync(guide);
+      const installedScript = path.join(extensionDir, 'skills/ux/make.cjs');
+      const script = fs.readFileSync(installedScript, 'utf8');
+      write(installedScript, '# host modified the input script');
+      const invalidInput = runCli(project, 'enable', 'ux');
+      assert.equal(invalidInput.status, 1);
+      assert.match(invalidInput.stderr, /已安装源文件被改写/);
+      assert.deepEqual(fs.readFileSync(file), before);
+      write(installedScript, script);
       assert.equal(cli(project, 'enable', 'ux').mutation.outcomes[0].state, 'enabled');
       assert.equal(fs.readFileSync(guide, 'utf8'), '1.0.0');
       assert.notEqual(YAML.parse(fs.readFileSync(file, 'utf8')).installations.ux.activation_result.instance_id, previous);

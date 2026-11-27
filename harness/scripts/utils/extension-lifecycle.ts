@@ -592,7 +592,8 @@ export function changeExtension(action: ExtensionMutation, options: ChangeOption
         result.outcomes.push({ ability, state: 'failed', reason, activation: previousActivation });
         return false;
       }
-      if (!drift.length && previousActivation.input_sha256 === extensionActivationInputDigest(context(ability, selection), steps)) return true;
+      const inputDigest = extensionActivationInputDigest(context(ability, selection), steps);
+      if (!drift.length && previousActivation.input_sha256 === inputDigest) return true;
     }
     const wasEnabled = selection.enabled;
     if (wasEnabled) {
