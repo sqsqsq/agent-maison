@@ -34,10 +34,9 @@ function normalize(text: string): string {
     .replace(/\s+/g, '');
 }
 
-/** 返回文本中含有的旧绝对句（归一化后匹配） */
-function absoluteOldPhraseMatches(text: string): string[] {
-  const t = normalize(text);
-  return ABSOLUTE_OLD_PHRASES.filter((o) => t.includes(normalize(o)));
+/** 返回归一化文本含有的旧绝对句 */
+function absoluteOldPhraseMatches(normalized: string): string[] {
+  return ABSOLUTE_OLD_PHRASES.filter((o) => normalized.includes(normalize(o)));
 }
 
 /** 8 处生产出口：文件 + 新语义锚点（旧绝对句"框架不会尝试任何口令/框架不会替你解锁设备"须不在） */
@@ -69,10 +68,9 @@ const ABSOLUTE_OLD_PHRASES = ['框架不会尝试任何口令', '框架不会替
  */
 const ABSOLUTE_BURN_RE = /任何一次(解锁)?失败即(机器级)?(烧毁|disabled|锁死)/;
 
-/** 返回文本中含有的无条件 burn 断言（归一化后正则匹配） */
-function unconditionalBurnMatches(text: string): string[] {
-  const t = normalize(text);
-  const m = ABSOLUTE_BURN_RE.exec(t);
+/** 返回归一化文本含有的无条件 burn 断言 */
+function unconditionalBurnMatches(normalized: string): string[] {
+  const m = ABSOLUTE_BURN_RE.exec(normalized);
   return m ? [m[0]] : [];
 }
 
@@ -81,6 +79,8 @@ const SCAN_DIRS = ['harness', 'profiles', 'skills', 'docs'];
 
 function scanDirs(): string[] {
   const out: string[] = [];
+  // 发布规则只保留生成报告目录的 .gitkeep，该文件也不在受检扩展名内。
+  const generatedReports = path.join(REPO, 'harness', 'reports');
   for (const dir of SCAN_DIRS) {
     const root = path.join(REPO, dir);
     if (!fs.existsSync(root)) continue;
@@ -90,6 +90,7 @@ function scanDirs(): string[] {
       for (const ent of fs.readdirSync(cur, { withFileTypes: true })) {
         const full = path.join(cur, ent.name);
         if (ent.isDirectory()) {
+          if (full === generatedReports) continue;
           if (ent.name === 'node_modules' || ent.name === 'dist' || ent.name === 'fixtures' || ent.name === 'tests') continue;
           stack.push(full);
           continue;
@@ -127,7 +128,7 @@ export function runAll(): UnitCaseResult[] {
           );
         }
       }
-      const old = absoluteOldPhraseMatches(text);
+      const old = absoluteOldPhraseMatches(normalize(text));
       if (old.length > 0) throw new Error(`${e.rel} 仍含旧绝对句：${old.join('、')}`);
     }
     // ④ 条件式出口：既不能断言 burn、也不能断言「框架不会尝试任何口令」
@@ -145,9 +146,9 @@ export function runAll(): UnitCaseResult[] {
     const offenders: string[] = [];
     for (const full of scanDirs()) {
       const rel = path.relative(REPO, full).replace(/\\/g, '/');
-      const text = fs.readFileSync(full, 'utf-8');
-      for (const old of absoluteOldPhraseMatches(text)) offenders.push(`${rel} 含「${old}」`);
-      for (const burn of unconditionalBurnMatches(text)) offenders.push(`${rel} 含无条件 burn 断言「${burn}」`);
+      const normalized = normalize(fs.readFileSync(full, 'utf-8'));
+      for (const old of absoluteOldPhraseMatches(normalized)) offenders.push(`${rel} 含「${old}」`);
+      for (const burn of unconditionalBurnMatches(normalized)) offenders.push(`${rel} 含无条件 burn 断言「${burn}」`);
     }
     if (offenders.length > 0) {
       throw new Error(`发布/运行时路径残留绝对话术：\n  - ${offenders.join('\n  - ')}`);
@@ -165,9 +166,9 @@ export function runAll(): UnitCaseResult[] {
     const oldHelper =
       '//   - 只用登记凭据，且任何一次失败即\n' +
       '//     烧毁该凭据版本';
-    const gotStore = unconditionalBurnMatches(oldStore);
-    const gotOps = unconditionalBurnMatches(oldOps);
-    const gotHelper = unconditionalBurnMatches(oldHelper);
+    const gotStore = unconditionalBurnMatches(normalize(oldStore));
+    const gotOps = unconditionalBurnMatches(normalize(oldOps));
+    const gotHelper = unconditionalBurnMatches(normalize(oldHelper));
     if (!gotStore.includes('任何一次失败即机器级锁死')) {
       throw new Error(`跨行旧述应命中「任何一次失败即机器级锁死」，实得：[${gotStore.join(', ')}]`);
     }
