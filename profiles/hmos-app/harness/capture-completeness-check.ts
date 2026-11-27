@@ -7,6 +7,7 @@ import * as path from 'path';
 import { createRequire } from 'module';
 import type { CheckContext, CheckResult } from '../../../harness/scripts/utils/types';
 import { relFeatureArtifact, featureArtifactPath } from '../../../harness/config';
+import { stableStringify } from '../../../harness/scripts/utils/phase-evidence-manifest';
 import {
   fidelityRatchetFailOrWarn,
   isHardPixelContract,
@@ -17,7 +18,7 @@ import {
 } from '../../../harness/scripts/utils/fidelity-shared';
 
 const requireHarness = createRequire(path.resolve(__dirname, '../../../harness/harness-runner.ts'));
-const YAML = requireHarness('yaml') as { stringify: (v: unknown) => string };
+const YAML = requireHarness('yaml') as { stringify: (v: unknown) => string; parse: (v: string) => unknown };
 import {
   collectAllComponentNodes,
   loadUiSpecFile,
@@ -392,18 +393,21 @@ export function writeBlindReviewPending(
   entries: BlindReviewPendingEntry[],
 ): string {
   const abs = blindReviewPendingAbsPath(projectRoot, feature);
-  fs.mkdirSync(path.dirname(abs), { recursive: true });
-  const doc: BlindReviewPendingDoc = {
+  const content: Omit<BlindReviewPendingDoc, 'generated_at'> = {
     schema_version: '1.0',
     feature,
-    generated_at: new Date().toISOString(),
     note:
       '盲档（无视觉能力）下自动登记的原图 OCR 未覆盖文本清单——agent 无法辨认其中哪些是' +
       '噪声（如 logo 被 OCR 误识别的乱码前缀）哪些是需要建模的真文案；required 项保持' +
       'UNVERIFIED/capability defer，optional 项仅作 advisory，待有能力的 provider 用当前机器证据重评。',
     entries,
   };
-  fs.writeFileSync(abs, YAML.stringify(doc), 'utf-8');
+  try {
+    const { generated_at, ...previous } = YAML.parse(fs.readFileSync(abs, 'utf-8')) as BlindReviewPendingDoc;
+    if (typeof generated_at === 'string' && stableStringify(previous) === stableStringify(content)) return abs;
+  } catch { /* Rebuild a missing or unreadable derived list. */ }
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, YAML.stringify({ ...content, generated_at: new Date().toISOString() }), 'utf-8');
   return abs;
 }
 
@@ -414,6 +418,9 @@ export function writeBlindReviewPending(
  */
 export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: string): CheckResult[] {
   const uiChange = parseUiChangeFromSpecMarkdown(specMarkdown);
+  if (uiChange && !UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange)) {
+    fs.rmSync(blindReviewPendingAbsPath(ctx.projectRoot, ctx.feature), { force: true });
+  }
   if (!uiChange || !UI_CHANGE_REQUIRES_UI_SPEC.has(uiChange)) return [];
   const uiDoc = loadUiSpecFile(uiSpecAbsPath(ctx.projectRoot, ctx.feature));
   if (!uiDoc) return [];
@@ -453,6 +460,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
   let totalLines = 0;
   let coveredLines = 0;
   const ocrErrors: string[] = [];
+  const sourceImages = new Set<string>();
   let screensAudited = 0;
 
   const p0Unaudited: string[] = [];
@@ -464,6 +472,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
       if (s.priority === 'P0') p0Unaudited.push(s.id);
       continue;
     }
+    sourceImages.add(srcPick.path);
     const ocr = ocrImageWords(srcPick.path);
     if (!ocr.ok || !ocr.words) {
       ocrErrors.push(`${s.id}: OCR 失败（${ocr.error ?? 'unknown'}）`);
@@ -524,6 +533,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
     }
   }
 
+  const structured = { source_attempt_dependencies: [...sourceImages].map(file => ({ path: file })) };
   if (screensAudited === 0) {
     return [{
       id: 'capture_completeness_external_ocr_unavailable',
@@ -534,6 +544,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
       details: `【P0-D 外部分母无法建立】全部屏 OCR/原图解析失败：${ocrErrors.join('；') || '无可达参考原图'}`,
       suggestion: '核对 visual_handoff.authoritative_refs 可达性与 OCR 环境后重跑（toolchain 归因）。',
       affected_files: [uiSpecRel],
+      structured,
     }];
   }
 
@@ -551,10 +562,14 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
         `其余 ${screensAudited} 屏审计通过不豁免：未审计屏上的漏抽完全不可见。明细：${ocrErrors.join('；')}`,
       suggestion: '核对该屏 authoritative_ref 原图可达性/图像可读性后重跑；P0 屏缺参考原图本身即 spec 输入缺陷。',
       affected_files: [uiSpecRel],
+      structured,
     }];
   }
 
   const coveragePct = totalLines > 0 ? ((coveredLines / totalLines) * 100).toFixed(0) : '100';
+  if (ctx.adapterImageInput !== 'none' || !uncovered.length && !ocrErrors.length) {
+    fs.rmSync(blindReviewPendingAbsPath(ctx.projectRoot, ctx.feature), { force: true });
+  }
   const boundaryNote =
     '【诚实边界】本门禁只保证"原图文本都进了 spec 分母"（真分母=OCR 全文），不保证建模位置/分组正确' +
     '（归 structure lint / review 视觉维度 / device 回环）；单字符角标/纯符号行已剔除（误报面>收益，known-miss）。';
@@ -586,6 +601,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
           '收口阶段真人一次终审：确需实现→补 ref-elements + ui-spec 建模；确不实现→ref-elements defer + 签字。' +
           '盲档下不要求 agent 逐条判断（那是无解题），不得靠删分母放行——分母是原图 OCR，删不掉。',
         affected_files: [pendingRel, refRel, uiSpecRel],
+        structured,
       }];
     }
     const { severity, status } = fidelityRatchetFailOrWarn(ctx, true);
@@ -606,6 +622,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
         'best_effort 下确不实现→ref-elements 记 disposition: defer + fidelity_deferrals 债务；strict pixel 必须实现并验证。' +
         '不得靠删分母放行——分母是原图 OCR，删不掉。',
       affected_files: [refRel, uiSpecRel],
+      structured,
     }];
   }
 
@@ -630,6 +647,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
         '确属 overlay 内元素 → 在该 overlay 屏组件树补建模（text/subtitle）；确属背景透出 → ' +
         'ref-elements 以 screen_ref_id 归属基屏；必需证据不足时保持 FAIL，真实能力缺失才走 capability defer。',
       affected_files: [refRel, uiSpecRel],
+      structured,
     }];
   }
   if (overlayLocalAdvisory.length > 0) {
@@ -646,6 +664,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
         '给 overlay root 声明 bbox 后本检查可升为确定性拦截。',
       ].join('\n'),
       affected_files: [refRel, uiSpecRel],
+      structured,
     }];
   }
 
@@ -661,6 +680,7 @@ export function checkCaptureExternalAudit(ctx: CheckContext, specMarkdown: strin
       (ocrErrors.length ? `；部分屏未审计：${ocrErrors.join('；')}` : '') +
       `\n${boundaryNote}`,
     affected_files: [refRel, uiSpecRel],
+    structured,
   }];
 }
 

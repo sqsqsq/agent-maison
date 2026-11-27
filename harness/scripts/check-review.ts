@@ -17,7 +17,7 @@ import { implementationFiles, implementationReviewReferences, coveredReviewPaths
 
 import { loadFidelityIntentSsot, isHardPixelContract } from './utils/fidelity-shared';
 import { loadUiSpecFile, uiSpecAbsPath } from './utils/ui-spec-shared';
-import { parseReviewIssueRows, reviewIssueRequiresRepair } from './utils/repair-candidates';
+import { getReviewIssueTable as getIssueTable, parseReviewIssueRows, reviewIssueRequiresRepair } from './utils/repair-candidates';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -169,8 +169,8 @@ function checkIssueTableFormat(ctx: CheckContext<'feature' | 'request'>, report:
     }];
   }
 
-  const tables = extractTables(section);
-  if (tables.length === 0) {
+  const table = getIssueTable(report);
+  if (!table) {
     const hasNoIssueIndicator = /无问题|暂无|无\s*$|问题数.*0|^$/i.test(section.trim());
     if (hasNoIssueIndicator || section.trim().length < 20) {
       return [{
@@ -188,34 +188,13 @@ function checkIssueTableFormat(ctx: CheckContext<'feature' | 'request'>, report:
     }];
   }
 
-  const requiredCols = [
-    '编号',
-    '"严重程度" or "严重等级"',
-    '分类',
-    '问题描述',
-    '涉及文件',
-    '修复建议',
-  ];
-
-  const colAlternatives = requiredCols.map(c => {
-    const parts = c.split(' or ').map(s => s.replace(/"/g, '').trim());
-    return parts;
-  });
-
-  const missingCols: string[] = [];
-  for (const alternatives of colAlternatives) {
-    const found = tables[0].headers.some(h =>
-      alternatives.some(alt => h.includes(alt)),
-    );
-    if (!found) missingCols.push(alternatives.join('/'));
-  }
-
-  if (missingCols.length > 0) {
+  if (table.missing.length || table.conflicts.length) {
     return [{
       id: 'issue_table_format', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'issue_table_format'),
       severity: 'BLOCKER', status: 'FAIL',
-      details: `问题清单表格缺少列：${missingCols.join('、')}。实际表头：${tables[0].headers.join('、')}`,
+      details: [table.missing.length ? `问题清单表格缺少列：${table.missing.join('、')}。实际表头：${table.headers.join('、')}` : '',
+        table.conflicts.length ? `问题清单行无法唯一解析（编号重复或同义列冲突）：${table.conflicts.join('、')}` : ''].filter(Boolean).join('；'),
     }];
   }
 
@@ -223,15 +202,8 @@ function checkIssueTableFormat(ctx: CheckContext<'feature' | 'request'>, report:
     id: 'issue_table_format', category: 'structure',
     description: ruleDesc(ctx, 'structure_checks', 'issue_table_format'),
     severity: 'BLOCKER', status: 'PASS',
-    details: `问题清单表格包含 ${tables[0].rows.length} 行，表头列齐全。`,
+    details: `问题清单表格包含 ${table.rows.length} 行，表头列齐全。`,
   }];
-}
-
-function getIssueTable(report: string): ReturnType<typeof extractTables>[0] | null {
-  const section = getSectionContent(report, '问题清单');
-  if (!section) return null;
-  const tables = extractTables(section);
-  return tables.length > 0 ? tables[0] : null;
 }
 
 function checkSeverityValues(ctx: CheckContext<'feature' | 'request'>, report: string): CheckResult[] {
@@ -245,10 +217,7 @@ function checkSeverityValues(ctx: CheckContext<'feature' | 'request'>, report: s
     }];
   }
 
-  const severityCol = table.headers.findIndex(h =>
-    h.includes('严重程度') || h.includes('严重等级'),
-  );
-  if (severityCol === -1) {
+  if (!table.columns.severity.length) {
     return [{
       id: 'severity_values', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'severity_values'),
@@ -258,7 +227,7 @@ function checkSeverityValues(ctx: CheckContext<'feature' | 'request'>, report: s
   }
 
   const allowed = new Set(['BLOCKER', 'MAJOR', 'MINOR', 'INFO']);
-  const values = table.rows.map(r => (r[severityCol] || '').trim());
+  const values = table.rows.map(row => table.cells(row, 'severity')[0] ?? '');
   const invalid = values.filter(v => !allowed.has(v));
 
   if (invalid.length === 0) {
@@ -288,8 +257,7 @@ function checkIssueCategoryValues(ctx: CheckContext<'feature' | 'request'>, repo
     }];
   }
 
-  const catCol = table.headers.findIndex(h => h.includes('分类'));
-  if (catCol === -1) {
+  if (!table.columns.classification.length) {
     return [{
       id: 'issue_category_values', category: 'structure',
       description: ruleDesc(ctx, 'structure_checks', 'issue_category_values'),
@@ -303,7 +271,7 @@ function checkIssueCategoryValues(ctx: CheckContext<'feature' | 'request'>, repo
     '硬编码', '逻辑错误', '异常处理', '性能', '安全', '视觉保真', '其他',
   ]);
 
-  const values = table.rows.map(r => (r[catCol] || '').trim());
+  const values = table.rows.map(row => table.cells(row, 'classification')[0] ?? '');
   const invalid = values.filter(v => !allowed.has(v));
 
   if (invalid.length === 0) {
@@ -347,13 +315,10 @@ function checkStatisticsSummary(ctx: CheckContext<'feature' | 'request'>, report
 
   const table = getIssueTable(report);
   if (table) {
-    const severityCol = table.headers.findIndex(h =>
-      h.includes('严重程度') || h.includes('严重等级'),
-    );
-    if (severityCol !== -1) {
+    if (table.columns.severity.length) {
       const counts: Record<string, number> = { BLOCKER: 0, MAJOR: 0, MINOR: 0, INFO: 0 };
       for (const row of table.rows) {
-        const sev = (row[severityCol] || '').trim();
+        const [sev] = table.cells(row, 'severity');
         if (sev in counts) counts[sev]++;
       }
 
@@ -580,13 +545,8 @@ export function checkConclusionWithVerdict(ctx: CheckContext<'feature' | 'reques
   }
   const table = getIssueTable(report);
   if (table) {
-    const severityCol = table.headers.findIndex(h =>
-      h.includes('严重程度') || h.includes('严重等级'),
-    );
-    if (severityCol !== -1) {
-      const blockerCount = table.rows.filter(r =>
-        (r[severityCol] || '').trim() === 'BLOCKER',
-      ).length;
+    if (table.columns.severity.length) {
+      const blockerCount = table.rows.filter(row => table.cells(row, 'severity').includes('BLOCKER')).length;
 
       if (blockerCount > 0 && foundVerdict !== '不通过') {
         return [{
@@ -654,8 +614,7 @@ function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: stri
     }];
   }
 
-  const fileCol = table.headers.findIndex(h => h.includes('涉及文件'));
-  if (fileCol === -1) {
+  if (!table.columns.files.length) {
     return [{
       id: 'issue_to_file', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'issue_to_file'),
@@ -666,8 +625,7 @@ function checkIssueToFile(ctx: CheckContext<'feature' | 'request'>, report: stri
 
   const allFiles = new Set<string>();
   for (const row of table.rows) {
-    const cell = (row[fileCol] || '').trim();
-    cell.split(/[,，、\n]/)
+    table.cells(row, 'files').join(',').split(/[,，、\n]/)
       .map(file => file.replace(/`/g, '').trim().replace(/:\d+(?:-\d+)?$/, ''))
       .filter(file => file && file !== '-')
       .forEach(file => allFiles.add(file));
@@ -727,8 +685,7 @@ function checkIssueToCodingRule(ctx: CheckContext<'feature' | 'request'>, report
     }];
   }
 
-  const catCol = table.headers.findIndex(h => h.includes('分类'));
-  if (catCol === -1) {
+  if (!table.columns.classification.length) {
     return [{
       id: 'issue_to_coding_rule', category: 'traceability',
       description: ruleDesc(ctx, 'traceability_checks', 'issue_to_coding_rule'),
@@ -748,7 +705,7 @@ function checkIssueToCodingRule(ctx: CheckContext<'feature' | 'request'>, report
     '异常处理': 'error_handling_completeness',
   };
 
-  const categories = table.rows.map(r => (r[catCol] || '').trim()).filter(Boolean);
+  const categories = table.rows.flatMap(row => table.cells(row, 'classification'));
   const traceable = categories.filter(c => c in categoryToRule);
   const total = categories.filter(c => c !== '视觉保真').length;
 

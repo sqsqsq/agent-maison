@@ -404,9 +404,10 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     if (authorityRefs.has(ref)) noteAnswerConsumer(ref, scope);
     if ([ref, `acceptance:${ref}`, `method:${ref}`].some(id => changedLinkedFacts.has(id))) affected.add(scope);
     const fragment = ref.indexOf('#/');
-    const pointer = fragment !== -1 && blueprintFile && questioningEvidencePath(ref, projectRoot) === blueprintFile
+    const pointer = fragment === 0 || fragment > 0 && blueprintFile && questioningEvidencePath(ref, projectRoot) === blueprintFile
       ? ref.slice(fragment + 1) : ref;
-    if (!pointer.startsWith('/') || pointer.includes('#') || /:|^\/\//.test(pointer) || pointer.startsWith('/generated_graphs/')) continue;
+    if (!pointer.startsWith('/') || pointer.includes('#') || /:|^\/\//.test(pointer)
+      || /^\/(?:generated_graphs|derived_results|review_summary\/questioning)(?:\/|$)/.test(pointer)) continue;
     const oldSource = resolveBlueprintReaderSource(before, pointer);
     const newSource = resolveBlueprintReaderSource(current, pointer);
     if (!!oldSource !== !!newSource) {
@@ -430,7 +431,7 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
   }
   for (const dependency of changedDependencies) {
     const file = questioningEvidencePath(dependency, projectRoot);
-    const related = items.filter(item => originalRefs(item).some(ref => {
+    const related = items.filter(item => [...originalRefs(item), String(asRecord(item.review_original)?.path ?? '')].some(ref => {
         if (resolveBlueprintReaderSource(before, ref) && resolveBlueprintReaderSource(current, ref)) return false;
         const source = questioningEvidencePath(ref, projectRoot);
         return file && source && (source === file || file.startsWith(source + '/'));
@@ -601,8 +602,8 @@ export function renderQuestioningResultInstructions(blueprint: BlueprintRecord, 
     '只交回本轮实际复核的上述条目。对未列入范围的条目，由机器复用原件；同引一份未变的需求文档不能证明受影响。复核时用具体决定、稳定地址或精确字段指针标出实际依赖。有具体新证据可重开其它scope，同时在answer及verification_refs给出新证据。用紧凑JSON返回，不写临时结果或复述完整材料。',
     '用原需求逐项核对预期结果、独立验收 ID 和适用观察通道。以反例判断设计是否允许违反当前已授权行为，例如生产者交出的对象与消费者需要的本次对象不一致。失败返回落点依据原文及既有路由解释；参考图按既有来源核验并保留到施工/视觉验收。',
     '同一通道可以承担不同义务。按原需求分别核对输入映射和默认值、生产写入与读回、外部界面与导航、可见时间变化和真实调用次数。逐项核对 P0 的动作和断言，多个 UI 义务可以共用同一动作，各自的预期结果须有可观察的断言。结果页出现可以证明导航；持久状态和调用次数须由能读取实际值的应用内测试承担，应用内测试即使在真机执行也归 unit。不同 CU 的局部同号及多个目标共用同一完整定义可按实际消费范围保留。',
-    '当前义务遗漏或混写、证据通道无法观察所承诺的结果、产品设计存在实质矛盾或违反本次授权时，在对应 scope 给 blocker，写清原文或相冲突的设计出处、条目位置与实际后果。当前产品必须的生产者、接收者、触发、交接或清理尚不成立，也属于设计缺陷。当前必须裁决的需求或授权沿既有未决决定与权限处理。',
-    '设计已明确义务、可观察通道及生产行为时，以设计原文完成 answered_with_evidence。具体测试 API/入口、注入与定位方式、样本数据/隔离/复位前置、用例步骤和断言强度交既有 CU 计划及施工后的独立核验；需要时在答复留一句交接说明。只有这些执行细节未定时不报 blocker 或 open_decision，也不声称测试已执行或义务已验证。远期决定沿原 owner、needed-by 和解除条件记录；其依赖未变时复用原结论。',
+    '当前义务遗漏或混写、证据通道无法观察所承诺的结果、产品设计存在实质矛盾或违反本次授权时，在对应 scope 给 blocker，写清原文或相冲突的设计出处、条目位置与实际后果。核对动作发生时必需的生产者、接收者、触发、交接或清理是否成立。例如选卡页首次进入时若拿不到用户刚选的银行和卡型，就无法列出本行卡片，选卡、同意协议及进入验证码的承诺也无法兑现。该缺口须判 blocker 并交设计作者。当前必须裁决的需求或授权沿既有未决决定与权限处理。',
+    '设计已明确义务、可观察通道及生产行为时，以设计原文完成 answered_with_evidence。例如已明确选卡页首次进入时从路由参数或已签发的只读流程接口取得本次银行和卡型，具体参数名可以交施工。具体测试 API/入口、注入与定位方式、样本数据/隔离/复位前置、用例步骤和断言强度交既有 CU 计划及施工后的独立核验；需要时在答复留一句交接说明。只有这些执行细节未定时不报 blocker 或 open_decision，也不声称测试已执行或义务已验证。远期决定沿原 owner、needed-by 和解除条件记录；其依赖未变时复用原结论。',
     ...(unchanged.length ? ['', '## verified_unchanged 视图', ...unchanged] : []),
   ];
 }

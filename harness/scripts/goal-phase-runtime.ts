@@ -545,7 +545,7 @@ import {
   extractIntegritySubtypes,
   stripRetiredFrameworkIntegrityForCurrentRun,
   isOperatorInterruptSignal,
-  evaluateCompletionProgress, hasFindingIdentities, nativeCompileDiagnosticRefs, dispositionFacts, type CompletionEvaluation,
+  evaluateCompletionProgress, hasFindingIdentities, nativeCompileDiagnosticRefs, dispositionFacts, problemIdentity, type CompletionEvaluation,
   snapshotArtifacts,
   type ArtifactSnapshot,
   type FailureKind,
@@ -2926,11 +2926,34 @@ export function extensionInputsForPhase(projectRoot: string, phase: string, cont
   return prepareExtensionInputsForPhase(projectRoot, phase, context).instruction;
 }
 
+function confirmedProductAuthorRepair(problem: CurrentDisposition['problems'][number]): boolean {
+  const source = problem.source_phase ?? problem.phase;
+  return problem.action === 'repair' && problem.owner === 'coding' && !!problem.item_fingerprint && !!problem.files?.length
+    && (source === 'review' || source === 'testing');
+}
+
+function workUnitAuthorReceivedFeedback(input: Parameters<typeof renderWorkUnitAuthorFeedback>[0],
+  author?: WorkUnitExecutionContext): boolean {
+  return !!author && (workUnitFeedbackDelivered(author, input.disposition) ?? input.disposition.problems.every(problem =>
+    author.instruction?.includes(renderWorkUnitAuthorFeedback({ ...input, disposition: { ...input.disposition, problems: [problem] } }))));
+}
+
+/** An independent product finding can advance the real author while other checks are still pending. */
+export function workUnitHasUndeliveredConfirmedProductRepair(input: Parameters<typeof renderWorkUnitAuthorFeedback>[0],
+  author?: WorkUnitExecutionContext): boolean {
+  const prior = new Set(author?.workInput?.evaluation?.disposition.problems.filter(confirmedProductAuthorRepair).map(problem => problemIdentity(problem)) ?? []);
+  return input.disposition.problems.some(problem => confirmedProductAuthorRepair(problem)
+    && !prior.has(problemIdentity(problem))
+    && !workUnitAuthorReceivedFeedback({ ...input, disposition: { ...input.disposition, problems: [problem] } }, author));
+}
+
 /** Author work material uses machine observations; full execution prose remains in its original report. */
 export function renderWorkUnitAuthorFeedback(input: {
   projectRoot: string; frameworkRoot: string; feature: string; disposition: CurrentDisposition;
 }): string {
-  return renderCurrentDisposition({ ...input.disposition, problems: input.disposition.problems.map(problem => {
+  const ordered = [...input.disposition.problems].sort((a, b) =>
+    Number(confirmedProductAuthorRepair(b)) - Number(confirmedProductAuthorRepair(a)));
+  return renderCurrentDisposition({ ...input.disposition, problems: ordered.map(problem => {
     if (problem.action !== 'repair') return problem;
     const family = problem.source_phase ?? problem.phase;
     const check = readPhaseChecks(input.projectRoot, input.feature, family,
@@ -4671,9 +4694,8 @@ export class GoalPhaseRuntime {
               if (!unchanged) return { questioningCurrent: false, questioningResult: null };
             }
             if (result && !denied) {
-              const sources = new Set(original.preSnapshot?.entries.filter(entry => entry.kind === 'file').map(entry => entry.path));
               if (questioningDependencyChanges(projectRoot, blueprint, original.preSnapshot, blueprintPath, undefined, result).some(change =>
-                change.exists || sources.has(path.relative(projectRoot, change.path).replace(/\\/g, '/')))) {
+                change.exists || change.recorded)) {
                 return { questioningCurrent: false, questioningResult: null };
               }
             }
@@ -5047,10 +5069,11 @@ export class GoalPhaseRuntime {
         const invocationDir = path.join(runDir, 'phases', label, invokeId);
         const checkerResultPath = path.join(invocationDir, 'checker-result.json');
         const segments: unknown[] = [];
+        const questioningInputs: string[] = [];
         const extensionSelection = label === 'initial-design-author' && purpose === 'author'
           ? captureExtensionAuthorSelection(projectRoot, frameworkRoot) : undefined;
         const prompt = initialDesignAuthorInstruction({ projectRoot, frameworkRoot, manifest, observation: observed, autonomyAuthorized: automaticDesignRepair,
-          deliveryRuns: 'runs' in spent ? spent.runs : undefined, material: segments, checkerResultPath })
+          deliveryRuns: 'runs' in spent ? spent.runs : undefined, material: segments, checkerResultPath, questioningInputs })
           + (purpose !== 'questioning' && observed.disposition ? `\n当前全部未完项（方法不是写权限；原授权及未恢复写入仍有效）：\n${renderCurrentDisposition(observed.disposition)}` : '');
         if (restoration.size) segments.push({ restoration: Object.fromEntries(restoration) });
         const promptFile = path.join(invocationDir, 'prompt.md');
@@ -5061,7 +5084,7 @@ export class GoalPhaseRuntime {
           immutableInputPaths: [...workUnitProtectedRecordPaths(projectRoot, manifest.feature, runDir), ...signedExtensionResourcePaths(label, segments)],
           protectedRoots: fs.readdirSync(projectRoot).filter(name => name !== '.git') };
         const questioningSources = purpose === 'questioning'
-          ? [observed.blueprintPath, ...blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(asRecord(YAML.parse(beforeBlueprint)) ?? {}), true)]
+          ? [observed.blueprintPath, ...questioningInputs, ...blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(asRecord(YAML.parse(beforeBlueprint)) ?? {}), true)]
             .filter(file => isInsideProjectRoot(projectRoot, file)) : (manifest.requirement_source_files ?? []);
         const snapshotOptions = { ownedPrefixes: [path.relative(projectRoot,
           observed.scope?.candidatePath ?? (observed.kind === 'decompose' ? observed.candidatesPath : observed.kind === 'questioning' ? observed.blueprintPath : path.dirname(observed.blueprintPath))).replace(/\\/g, '/'),
@@ -7827,9 +7850,8 @@ Goal runner — original request design and construction runtime
           return relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
         }));
       const scope = scopeNow();
-      const invalidatedAt = scope ? readScopeProofHistory({ projectRoot, frameworkRoot, feature: manifest.feature,
-        workflow, previous: scope, currentRunId: manifest.run_id }).history.invalidatedAt.get(family) : undefined;
-      const scopeChanged = invalidatedAt !== undefined && Date.parse(invalidatedAt) > Date.parse(observation.end?.ts ?? '');
+      const scopeChanged = !!scope && !!observation.end?.ts && readScopeProofHistory({ projectRoot, frameworkRoot, feature: manifest.feature,
+        workflow, previous: scope, currentRunId: manifest.run_id, returnedCheck: { phase: family, returnedAt: observation.end.ts } }).history.checkInvalidated;
       return { observation, productChanged, scopeChanged, producerReturned };
     };
     const missingCheckOrigin = (family: string, work: ReturnType<typeof readWork>, observation?: ReturnType<typeof readCurrentCheckObservation>): boolean => {
@@ -8516,11 +8538,11 @@ Goal runner — original request design and construction runtime
       const currentEvents = loadAuthoritativeEvents(eventsPath);
       const explicitlyContinued = continuationAvailable();
       const newDriverHypothesis = !!repairNotes && !driverNotesDelivered(author?.original?.request.context);
+      const originalAuthor = author?.original?.request.context;
+      const repairFeedbackInput = { projectRoot, frameworkRoot, feature: manifest.feature, disposition: { ...before.disposition, problems: repairs } };
+      const newConfirmedProductRepair = workUnitHasUndeliveredConfirmedProductRepair(repairFeedbackInput, originalAuthor);
       const authorFeedbackDelivered = !designDeclineFeedback && !!author?.original && repairs.length > 0
-        && !explicitlyContinued && !newDriverHypothesis && (workUnitFeedbackDelivered(author.original!.request.context,
-          { ...before.disposition, problems: repairs }) ?? repairs.every(problem => author.original!.request.context.instruction?.includes(
-          renderWorkUnitAuthorFeedback({ projectRoot, frameworkRoot, feature: manifest.feature,
-            disposition: { ...before.disposition, problems: [problem] } }))));
+        && !explicitlyContinued && !newDriverHypothesis && workUnitAuthorReceivedFeedback(repairFeedbackInput, originalAuthor);
       const currentChecks = new Map<string, ReturnType<typeof readCurrentCheckObservation>>();
       const repairingSources = new Set(repairs.map(problem => problem.source_phase ?? problem.phase));
       const verificationPending = !!author && before.facts.phases.some(result => {
@@ -8550,7 +8572,8 @@ Goal runner — original request design and construction runtime
         `已向当前责任方交付反馈且真实检查仍无验收改善，保全后可续暂停。\n${renderCurrentDisposition(before.disposition)}`, 'no_progress_guard'); break; }
       const recordEvaluation = before.evaluation.completed && !progress.reused && progress.evaluation === before.evaluation;
       if (recordEvaluation) completedEvaluations.push(before.evaluation);
-      if (!author || !pendingDefinition && (newDriverHypothesis || designDeclineFeedback || repairs.length && !feedbackAwaitingEvaluation && !verificationPending)) {
+      if (!author || !pendingDefinition && (newDriverHypothesis || designDeclineFeedback || newConfirmedProductRepair
+        || repairs.length && !feedbackAwaitingEvaluation && !verificationPending)) {
         const authorWork = preparation ? { ...before, disposition: { ...before.disposition,
           problems: before.disposition.problems.filter(problem => !preparation.problems.includes(problem)),
           completionBlocking: before.disposition.completionBlocking.filter(problem => !preparation.problems.includes(problem)) } } : before;
@@ -8701,6 +8724,8 @@ Goal runner — original request design and construction runtime
           const evidence = questions.length && !formatRepair ? independentVerificationContext({ actualDiff: null, currentEvidence: [
             ...collectTestStrengthContext(reviewInputs), ...collectNativeAcceptanceEvidence({ ...reviewInputs, testSources: strengthTests }),
           ] }) : [];
+          const findingRechecks = family === 'review' ? independent.problems.filter(problem =>
+            problem.action === 'verify' && problem.id.startsWith('open_finding:') && problem.item_fingerprint) : [];
           const instruction = formatRepair ? [
             `仅补原独立审查的 YAML 表示，保留 ${reportRel} 的审查正文。本次沿用原签发材料和原结论，不重新审查或执行测试。`,
             `原请求及交回：${formatRepair.originals.map(file => path.relative(projectRoot, file).replace(/\\/g, '/')).join('；')}。`,
@@ -8727,7 +8752,7 @@ Goal runner — original request design and construction runtime
               '同一次审查逐项回答下表。所有 issue 必须在同一个 issue-verification fenced YAML 数组各出现一次，给 verdict=confirmed/refuted/unclear 与 evidence。遗漏的 ID 仍阻止完成。',
               '输出示例（仅示意语法，替换 issue 及 evidence 后再交回）：',
               '```issue-verification', '- issue: <下表具体 issue>', '  verdict: unclear', '  evidence: <逐项真实依据>', '  production_paths: []', '```',
-              '代码围栏语言标记逐字使用 issue-verification，字段逐字使用 issue；不要在块里添加下表之外的项目。',
+              `代码围栏语言标记逐字使用 issue-verification，字段逐字使用 issue。范围限下表${findingRechecks.length ? '及本请求列出的原发现复核' : ''}。`,
               '| issue | 当前验收、测试与可用复验原件 |', '| --- | --- |',
               ...Object.keys(questionDigests).map(issue => '| ' + issue + ' | ' + JSON.stringify(questions.filter(question => question.issue === issue).map(question => question.detail)).replace(/\|/g, '&#124;') + ' |'),
               ...conflictInstructions,
@@ -8738,6 +8763,11 @@ Goal runner — original request design and construction runtime
                 : []),
               'testing_failure_routing_ 只有在当前 HAP 原生复验真实覆盖原承诺、旧失败明确可推翻时给 refuted。逐条引用具体原失败和适用复验的两份 trace、两份计划及原/新 case ID，说明原失败是否为测试错误和行为为何等效。新增返回等操作若改了原承诺要保留缺口。',
               ...evidence.map(entry => entry.label + '\n' + entry.content),
+            ] : []),
+            ...(findingRechecks.length ? [
+              '定向复核下列原发现。沿原触发读取实际产品与本次证据，在同一个 issue-verification 块交回 verdict 和 evidence。issue 使用下列发现 ID，evidence 写入该行完整 item_fingerprint、当前观察和原件路径。同号的不同指纹分别裁决。',
+              '原失败仍可证实时给 confirmed。原发现已被证据推翻，或已观察到同一触发条件下修复生效时给 refuted。证据不足时给 unclear。',
+              ...findingRechecks.map(problem => `- ${problem.id} item_fingerprint: ${problem.item_fingerprint}；${problem.detail}`),
             ] : []),
             '本次只写指定审查报告；facts只读，不追加phase_delta: review，新事实写入本报告。不修改产品、测试、设计或正式机器结果，不替作者自签完成。',
             renderCurrentDisposition(current.disposition),
@@ -8775,6 +8805,9 @@ Goal runner — original request design and construction runtime
             if (!semanticRecheck || reviewed.rebuild) continue currentWork;
           }
           current = readWork();
+          if (!awaitingCheck && family === 'review' && workUnitHasUndeliveredConfirmedProductRepair({
+            projectRoot, frameworkRoot, feature: manifest.feature, disposition: current.disposition,
+          }, lastAuthor()?.original?.request.context)) continue currentWork;
         }
         let summary = readPhaseSummary(projectRoot, manifest.feature, family as FeaturePhase).summary;
         if (current.results.some(result => result.phase === family) && await awaitDeviceCondition(family, summary)) current = readWork();

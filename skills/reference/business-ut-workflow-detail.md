@@ -65,7 +65,7 @@
 
 写入前自检：`it()` 名以 `[AC-]`或`[BRANCH-]` 开头，BD 用 `[AC-x][BD-y]` 组合（禁止单独 `[BD-1]`）；audit/mock-plan 已过 `validate:ut-artifact`。mock-plan 优先：Spy 类与 preset 行为须与其一致。
 
-**路径 A（有 use-cases.yaml）骨架**：按动作及有序 calls 定位实际业务入口，不 new `@Component struct`。Page 命名方法只能证明 UI 事件可定位；unit/both 的倒计时、重发门禁等仍须经无需 UI runtime 的真实业务入口驱动，不能只测辅助函数。若原设计缺接缝，在既有 testability-audit 提出具体证据并交原 owner 核实，不自行降低验收：
+**路径 A（有 use-cases.yaml）骨架**：按动作及有序 calls 定位实际业务入口，不 new `@Component struct`。Page 命名方法只能证明 UI 事件可定位；unit/both 的倒计时、重发门禁等仍须经无需 UI runtime 的真实业务入口驱动，不能只测辅助函数。跨入口交接时，让真实生产者的输出进入真实消费者并断言其业务结果。例如从银行和卡型的选择入口取本次交接对象，由选卡页的业务入口读取并列出相应卡片，再经选卡与同意协议的入口核对进入验证码的条件。直接写死上一步应提供的银行和卡型不能证明交接。纯 UI 导航和控件可见性留给设备验收。若原设计缺接缝，在既有 testability-audit 提出具体证据并交原 owner 核实，不自行降低验收：
 
 ```typescript
 import { describe, it, expect, beforeEach } from '@ohos/hypium'

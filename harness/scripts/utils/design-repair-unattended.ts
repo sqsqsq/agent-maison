@@ -248,14 +248,15 @@ export function reusableDesignQuestioning(input: {
         && (stableStringify(withoutQuestioning(before)) !== stableStringify(withoutQuestioning(after))
           || stableStringify(parseIndependentQuestioningOutput(input.output)) !== stableStringify(asRecord(after.review_summary)?.questioning))) return null;
     }
+    if (input.source && path.basename(input.source) === 'questioning-output.json'
+      && readPhaseRecoveryFile(input.projectRoot, input.source).bytes?.toString('utf8') !== input.output) return null;
     const parsed = parseIndependentQuestioningOutput(input.output);
     const review = asRecord(before.review_summary) ?? {};
-    const changedDependencies = input.previousBlueprint ? questioningDependencyChanges(input.projectRoot, before, input.previousSnapshot,
-      input.blueprintPath || componentBlueprintPath(input.projectRoot, String(before.blueprint_id)), input.preSnapshot, input.previous)
-      .map(item => isInsideProjectRoot(input.projectRoot, item.path) ? path.relative(input.projectRoot, item.path).replace(/\\/g, '/') : item.path) : [];
     // Replay the work requested in this original. Today's selector governs the next request.
     const selected = input.signedScopes && input.previous && input.previousBlueprint && input.previousSnapshot ? [...input.signedScopes.keys()]
-      : selectQuestioningScopes(input.previousBlueprint, before, input.previous, changedDependencies, input.projectRoot);
+      : selectQuestioningScopes(input.previousBlueprint, before, input.previous, input.previousBlueprint
+        ? questioningDependencyChanges(input.projectRoot, before, input.previousSnapshot, input.blueprintPath, input.preSnapshot, input.previous)
+          .map(item => item.path) : [], input.projectRoot);
     const result = mergeIndependentQuestioningResult(before, parsed, input.providerId, input.previous, selected,
       input.source ? { path: path.relative(input.projectRoot, input.source).replace(/\\/g, '/'),
         sha256: sha256Hex(fs.existsSync(input.source) ? fs.readFileSync(input.source) : Buffer.from(input.output)) } : undefined, input.signedScopes);
@@ -293,25 +294,28 @@ function questioningKnowledgeFiles(projectRoot: string, blueprint: BlueprintReco
 }
 
 /** Existing Q input hashes identify affected files; missing originals are explicit, never guessed as unchanged. */
-export type QuestioningDependency = Omit<ResolutionDependency, 'exists'> & { exists?: boolean; state?: 'unknown'; detail?: string };
-export function questioningDependencyChanges(projectRoot: string, blueprint: BlueprintRecord, pre?: ReturnType<typeof capturePhaseInvocationSnapshot>, ownPath?: string,
-  observed?: ReturnType<typeof capturePhaseInvocationSnapshot>, previous?: BlueprintRecord): QuestioningDependency[] {
-  const observedFiles = [...(pre?.entries ?? []), ...(observed?.entries ?? [])].filter(entry => entry.kind === 'file');
-  const filePaths = new Set(observedFiles.map(entry => entry.path));
-  const isInternal = (ref: string): boolean => {
-    if (ref.includes('#') || ref.includes('\\') || /:|^\/\//.test(ref)) return false;
-    const pointer = ref.startsWith('/') ? ref : '/' + ref;
-    if (!resolveBlueprintReaderSource(blueprint, pointer)) return false;
-    const absolute = path.resolve(projectRoot, ref);
-    if (path.isAbsolute(ref) && !isInsideProjectRoot(projectRoot, absolute)) return true;
-    if (!isInsideProjectRoot(projectRoot, absolute)) return false;
-    const relative = path.relative(projectRoot, absolute).replace(/\\/g, '/');
-    if (filePaths.has(relative)) return false;
-    try { return !fs.statSync(absolute).isFile(); } catch { return true; }
-  };
-  const itemFiles = asRecords(previous?.items).flatMap(item => [...asStrings(item.verification_refs), ...asStrings(item.evidence_refs),
+export type QuestioningDependency = Omit<ResolutionDependency, 'exists'> & { exists?: boolean; recorded?: true; state?: 'unknown'; detail?: string };
+function questioningProcessArtifact(relative: string): string | undefined {
+  return /(?:^|\/)goal-runs\/[^/]+\/phases\/(?:initial-design-questioning|design-repair-questioning)\/[^/]+\/(questioning-output\.json|checker-result\.json|blueprint-before\.yaml)$/.exec(relative)?.[1]
+    ?? (/(?:^|\/)goal-runs\/[^/]+\/design-repair\/checker-result\.json$/.test(relative) ? 'checker-result.json' : undefined);
+}
+
+function isQuestioningPointer(projectRoot: string, blueprint: BlueprintRecord, filePaths: ReadonlySet<string>, ref: string): boolean {
+  if (ref.includes('#') || ref.includes('\\') || /:|^\/\//.test(ref)) return false;
+  const pointer = ref.startsWith('/') ? ref : '/' + ref;
+  if (!resolveBlueprintReaderSource(blueprint, pointer)) return false;
+  const absolute = path.resolve(projectRoot, ref);
+  if (path.isAbsolute(ref) && !isInsideProjectRoot(projectRoot, absolute)) return true;
+  if (!isInsideProjectRoot(projectRoot, absolute)) return false;
+  const relative = path.relative(projectRoot, absolute).replace(/\\/g, '/');
+  if (filePaths.has(relative)) return false;
+  try { return !fs.statSync(absolute).isFile(); } catch { return true; }
+}
+
+function questioningItemFiles(projectRoot: string, blueprint: BlueprintRecord, previous: BlueprintRecord | undefined, filePaths: ReadonlySet<string>): string[] {
+  return asRecords(previous?.items).flatMap(item => [...asStrings(item.verification_refs), ...asStrings(item.evidence_refs),
     String(asRecord(item.provenance)?.source_ref ?? '')]).flatMap(ref => {
-    if (isInternal(ref)) return [];
+    if (isQuestioningPointer(projectRoot, blueprint, filePaths, ref)) return [];
     const relative = questioningEvidencePath(ref);
     if (!relative) return [];
     try {
@@ -326,8 +330,49 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
         : /\.[A-Za-z0-9]+$/.test(relative) || /#|:(?=\d)/.test(ref) ? [file] : [];
     } catch { return []; }
   });
-  const files = [...blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(blueprint), true, ref => !isInternal(ref)),
-    ...questioningKnowledgeFiles(projectRoot, blueprint), ...itemFiles];
+}
+
+/** Bind explicit, previously declared run evidence without scanning unrelated run artifacts. */
+export function questioningRunInputs(projectRoot: string, blueprint: BlueprintRecord, previous?: BlueprintRecord): string[] {
+  return [...new Set(questioningItemFiles(projectRoot, blueprint, previous, new Set()).filter(file => {
+    const relative = path.relative(projectRoot, file).replace(/\\/g, '/');
+    return isInsideProjectRoot(projectRoot, file) && /(?:^|\/)goal-runs\//.test(relative) && !questioningProcessArtifact(relative);
+  }))];
+}
+
+function verifiedQuestioningProjection(projectRoot: string, file: string, artifact: string, blueprint: BlueprintRecord): boolean {
+  try {
+    const text = readPhaseRecoveryFile(projectRoot, file).bytes?.toString('utf8');
+    if (!text) return false;
+    if (artifact === 'questioning-output.json') {
+      const items = asRecords(parseIndependentQuestioningOutput(text).items);
+      return items.length > 0 && items.every(item => typeof item.scope_ref === 'string' && typeof item.question === 'string'
+        && ['answered_with_evidence', 'decided_with_authority', 'not_applicable'].includes(String(item.disposition)));
+    }
+    if (artifact === 'blueprint-before.yaml') {
+      const before = asRecord(YAML.parse(text));
+      return !!before && stableStringify(blueprintAuthorContent(before)) === stableStringify(blueprintAuthorContent(blueprint));
+    }
+    const report = asRecord(JSON.parse(text));
+    const before = ['blueprint-before.yaml', 'component-blueprint.yaml'].find(name => fs.existsSync(path.join(path.dirname(file), name)));
+    const beforeBytes = before && readPhaseRecoveryFile(projectRoot, path.join(path.dirname(file), before)).bytes;
+    return !!beforeBytes && Array.isArray(report?.issues) && report.blueprint_sha256 === sha256Hex(beforeBytes);
+  } catch { return false; }
+}
+
+export function questioningDependencyChanges(projectRoot: string, blueprint: BlueprintRecord, pre?: ReturnType<typeof capturePhaseInvocationSnapshot>, ownPath?: string,
+  observed?: ReturnType<typeof capturePhaseInvocationSnapshot>, previous?: BlueprintRecord): QuestioningDependency[] {
+  const beforeFiles = new Map((pre?.failureReason ? [] : pre?.entries ?? []).filter(entry => entry.kind === 'file').map(entry => [entry.path, entry.sha256]));
+  const afterFiles = observed && new Map(observed.entries.filter(entry => entry.kind === 'file').map(entry => [entry.path, entry.sha256]));
+  const filePaths = new Set([...beforeFiles.keys(), ...(afterFiles?.keys() ?? [])]);
+  const originals = new Map(asRecords(previous?.items).flatMap(item => {
+    const ref = asRecord(item.review_original);
+    return typeof ref?.path === 'string' && typeof ref.sha256 === 'string'
+      ? [[path.resolve(projectRoot, ref.path), ref.sha256] as const] : [];
+  }));
+  const files = [...blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(blueprint), true, ref => !isQuestioningPointer(projectRoot, blueprint, filePaths, ref)),
+    ...questioningKnowledgeFiles(projectRoot, blueprint), ...questioningItemFiles(projectRoot, blueprint, previous, filePaths),
+    ...(!observed ? originals.keys() : [])];
   return [...new Map(files.map(file => [questioningEvidencePath(file), file])).values()].flatMap<QuestioningDependency>(file => {
     // Both candidate and canonical references identify the blueprint facts already compared by stable scope.
     if (questioningEvidencePath(file) === questioningEvidencePath(componentBlueprintPath(projectRoot, String(blueprint.blueprint_id)))
@@ -346,16 +391,23 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
       } catch { /* Preserve the actual dependency when its projection identity cannot be read. */ }
       // A malformed or unrelated document remains an actual changed input.
     }
-    const expected = pre?.failureReason ? undefined : pre?.entries.find(entry => entry.path === relative && entry.kind === 'file');
+    const original = originals.get(file);
+    const expected = !observed && original ? original : beforeFiles.get(relative);
     let exists = false, sha256: string | null = null;
-    if (observed) {
-      const entry = observed.entries.find(item => item.path === relative && item.kind === 'file');
-      exists = !!entry; sha256 = entry?.sha256 ?? null;
-    } else if (inside) {
+    if (afterFiles) {
+      sha256 = afterFiles.get(relative) ?? null; exists = sha256 !== null;
+    } else {
       exists = fs.existsSync(file);
-      try { if (exists) sha256 = sha256Hex(fs.readFileSync(file)); } catch { /* Unreadable input remains a gap in the public Q context. */ }
+      try {
+        const bytes = original ? readPhaseRecoveryFile(projectRoot, file).bytes : exists ? fs.readFileSync(file) : null;
+        if (bytes) sha256 = sha256Hex(bytes);
+      } catch { /* Unreadable input remains a gap in the public Q context. */ }
     }
-    return expected && sha256 === expected.sha256 ? [] : [{ path: file, exists, sha256, role: 'artifact' as const }];
+    if (expected && sha256 === expected) return [];
+    // A legacy request did not snapshot its own derived Q files. Other run evidence keeps ordinary content comparison.
+    const artifact = questioningProcessArtifact(relative);
+    if (!expected && artifact && verifiedQuestioningProjection(projectRoot, file, artifact, blueprint)) return [];
+    return [{ path: file, exists, sha256, role: 'artifact' as const, ...(expected ? { recorded: true as const } : {}) }];
   });
 }
 
@@ -904,12 +956,13 @@ function authorPrompt(input: UnattendedDesignRepairInput, draftFile: string, can
   ].join('\n');
 }
 
-function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string, draft: BlueprintRecord, auxiliaryDrafts: readonly string[], transactionTiming: readonly string[], material?: unknown[], knowledgeOriginals: Readonly<Record<string, string>> = {}): string {
+function questioningPrompt(input: UnattendedDesignRepairInput, draftFile: string, draft: BlueprintRecord, auxiliaryDrafts: readonly string[], transactionTiming: readonly string[], material: unknown[], knowledgeOriginals: Readonly<Record<string, string>>, runInputs: string[]): string {
   const runDir = path.resolve(input.projectRoot, input.reportDir);
   const knowledgeAttempt = [...sessionEvents(runDir)].reverse().find(event => event.type === 'design_authority_repair'
     && 'stage' in event && event.stage === 'attempted' && 'signature' in event && event.signature === input.signature);
   const knowledgeBaseline = asRecord(asRecord(knowledgeAttempt)?.handoff_context);
   const usable = latestUsableDesignQuestioning(runDir, [designRepairInvokeLabel('questioning'), 'initial-design-questioning'], input.projectRoot);
+  runInputs.push(...questioningRunInputs(input.projectRoot, draft, usable.result ?? undefined));
   const previous = usable.original;
   const checkerResultPath = path.join(runDir, 'design-repair', 'checker-result.json');
   fs.writeFileSync(checkerResultPath, JSON.stringify({ blueprint_sha256: sha256Hex(fs.readFileSync(draftFile)),
@@ -1256,7 +1309,10 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
             && invocationCompleted({ ...event, exitCode: event.exit_code }));
         const locallyComplete = blueprint && reused && !validateBlueprintQuestioning({ ...blueprint,
           review_summary: { ...reviewOf(blueprint), questioning: reused } }).some(issue => issue.id !== 'blueprint_admission_false_pass');
-        if (saved && blueprint && reused && locallyComplete && !denialHandedBack && (!saved.afterBlueprint || stableStringify(asRecord(reviewOf(blueprint).questioning)) === stableStringify(reused))) {
+        const inputsCurrent = saved && blueprint && reused && !questioningDependencyChanges(projectRoot, blueprint,
+          saved.preSnapshot, draftFile, undefined, reused).some(change => change.exists || change.recorded);
+        if (saved && blueprint && reused && locallyComplete && inputsCurrent && !denialHandedBack
+          && (!saved.afterBlueprint || stableStringify(asRecord(reviewOf(blueprint).questioning)) === stableStringify(reused))) {
           if (!saved.afterBlueprint) applyIndependentQuestioningOutput(draftFile, path.join(runDir, 'phases', String(prior!.phase), prior!.invoke_id!, 'questioning-output.json'), saved.output, saved.providerId, projectRoot);
           usedQuestioningInvokeId = prior!.invoke_id;
           usedInvocation = prior;
@@ -1716,11 +1772,12 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       if (declined.length) {
         const before = structuredClone(authored); delete asRecord(before.review_summary)?.questioning;
         const declineMaterial: unknown[] = [];
-        const declinePrompt = questioningPrompt(input, draftFile, authored, auxiliaryDrafts, transactionTiming, declineMaterial, original.knowledgeOriginals);
+        const runInputs: string[] = [];
+        const declinePrompt = questioningPrompt(input, draftFile, authored, auxiliaryDrafts, transactionTiming, declineMaterial, original.knowledgeOriginals ?? {}, runInputs);
         const declineReason = '\n本次作者拒修理由：\n'
           + declined.map(decision => `${decision.decision_id}：${decision.rationale}`).join('\n')
           + '\n逐条读取所引当前产物；依据成立才在既有 questioning.items 中用 answered_with_evidence、answer 原样包含完整 declined: 依据。不要为了发布而改设计。';
-        const declinedQuestioning = await guarded('questioning', declinePrompt + declineReason, blueprintSourceRefFiles(projectRoot, authored).map(relOf), questioningAfter, [...declineMaterial, declineReason]);
+        const declinedQuestioning = await guarded('questioning', declinePrompt + declineReason, [...blueprintSourceRefFiles(projectRoot, authored), ...runInputs].map(relOf), questioningAfter, [...declineMaterial, declineReason]);
         if ('handoff' in declinedQuestioning) { release(); return { outcome: 'handoff', reason: 'session execution request committed' }; }
         const questioned = readDraft('questioning');
         const after = structuredClone(questioned); delete asRecord(after.review_summary)?.questioning;
@@ -1814,8 +1871,9 @@ export async function runUnattendedDesignRepair(input: UnattendedDesignRepairInp
       for (;;) {
         try {
           const material: unknown[] = [];
-          const prompt = questioningPrompt(input, draftFile, readDraft('questioning'), auxiliaryDrafts, [...transactionTiming, ...questioningPreparation], material, original.knowledgeOriginals);
-          questioningStep = await guarded('questioning', prompt, [...new Set([...baselineRefs, ...draftRefs])], questioningAfter, material);
+          const runInputs: string[] = [];
+          const prompt = questioningPrompt(input, draftFile, readDraft('questioning'), auxiliaryDrafts, [...transactionTiming, ...questioningPreparation], material, original.knowledgeOriginals ?? {}, runInputs);
+          questioningStep = await guarded('questioning', prompt, [...new Set([...baselineRefs, ...draftRefs, ...runInputs.map(relOf)])], questioningAfter, material);
           break;
         } catch (error) {
           if (!(error instanceof QuestioningFormatFailure)) throw error;

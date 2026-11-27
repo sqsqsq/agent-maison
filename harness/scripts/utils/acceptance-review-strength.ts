@@ -30,6 +30,8 @@ interface AcceptanceReviewInput {
   runId?: string;
   executionScope?: ExecutionScope;
   authorityReaders?: IdentityNeutralDigestReaders;
+  readGoalBaseline?: () => import('./goal-run-baseline').GoalRunBaseline;
+  readReviewHistory?: () => import('./repair-candidates').ReviewRunHistory;
 }
 
 type StrengthReview = {
@@ -109,7 +111,7 @@ export function readTaggedAcceptanceStrength(input: AcceptanceReviewInput) {
       featureSpec: { feature, acceptance: scoped.value, contracts } };
     source = 'ut';
     sourceFiles = [relFeatureFile(projectRoot, feature, 'ut/reports/coverage-evidence.json')];
-    const { allUtFiles, targetResolution } = ut.loadUtCoverageTargets(ctx, host, runId);
+    const { allUtFiles, targetResolution } = ut.loadUtCoverageTargets(ctx, host, runId, input.readGoalBaseline);
     if (targetResolution.mode !== 'cover_feature_change') return [];
     const coverage = ut.inspectCoverageEvidence(ctx);
     if (coverage.status === 'invalid') return [gap('ut_coverage_evidence_present', [coverage.relPath], 'ut', 'repair',
@@ -140,7 +142,7 @@ export function readTaggedAcceptanceStrength(input: AcceptanceReviewInput) {
       return [file, createHash('sha256').update(bytes).digest('hex')] as const;
     }));
     sourceFiles = [coverage.relPath];
-    const answers = readIndependentReviewOutputs(projectRoot, feature, runId);
+    const answers = readIndependentReviewOutputs(projectRoot, feature, runId, input.readReviewHistory?.());
     let executed: Map<string, Set<string>> | undefined;
     let signedExecution: ReturnType<typeof readCurrentUtCaseReport> | undefined;
     const currentExecution = () => {

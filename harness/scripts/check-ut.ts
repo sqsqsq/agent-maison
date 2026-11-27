@@ -2312,7 +2312,8 @@ function collectItBlocks(
   return blocks;
 }
 
-export function loadUtCoverageTargets(ctx: CheckContext, host: UtHostImpl, goalRunId?: string) {
+export function loadUtCoverageTargets(ctx: CheckContext, host: UtHostImpl, goalRunId?: string,
+  readGoalBaseline?: () => import('./utils/goal-run-baseline').GoalRunBaseline) {
   const allUtFiles = host.loadUtFiles(ctx);
   const partition = host.partitionUtFiles?.(ctx, allUtFiles) ?? {
     all: allUtFiles,
@@ -2320,7 +2321,7 @@ export function loadUtCoverageTargets(ctx: CheckContext, host: UtHostImpl, goalR
     scopeSources: ['fallback:all'],
     scopeDiagnostics: ['profile-partitioner-unavailable'],
   };
-  const targetResolution = resolveUtTargets(ctx, allUtFiles, partition.scoped, { goalRunId });
+  const targetResolution = resolveUtTargets(ctx, allUtFiles, partition.scoped, { goalRunId, readGoalBaseline });
   return { allUtFiles, partition, targetResolution };
 }
 

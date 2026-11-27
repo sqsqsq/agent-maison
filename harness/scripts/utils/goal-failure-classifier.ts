@@ -809,17 +809,23 @@ function comparisonScope(evaluation: CompletionEvaluation): string {
   return evaluation.checkFamilies === undefined ? 'full' : JSON.stringify(sortedRefs(evaluation.checkFamilies));
 }
 
+function stableProblemEvidence(problem: CurrentDisposition['problems'][number]): string[] {
+  const review = (problem.source_phase ?? problem.phase) === 'review' && problem.id.startsWith('open_finding:');
+  return sortedRefs(review ? problem.evidence?.filter(ref => !/(?:^|\/)(?:(?:independent-)?review-report\.md|execution-report-e\d+\.json)$/.test(ref)) : problem.evidence);
+}
+
 export function problemIdentity(problem: CurrentDisposition['completionBlocking'][number], includeRouting = false): string {
   const finding = problem.id.startsWith('open_finding:');
   return JSON.stringify({
     id: finding ? 'open_finding' : problem.id,
     // A verified finding follows its real object, not the label or reviewer that reported it.
     ...(!finding || includeRouting ? { phase: problem.source_phase ?? problem.phase } : {}),
-    ...(includeRouting ? { owner: problem.owner, propagated_from: problem.propagated_from } : {}),
+    ...(includeRouting ? { owner: problem.owner, propagated_from: problem.propagated_from, item_fingerprint: problem.item_fingerprint } : {}),
     action: problem.action, affects: problem.affects,
     // The subject-bound verifier report remains mandatory evidence, but its
     // regenerated filename is not a new product defect or acceptance condition.
-    files: sortedRefs(problem.id === 'attestation_present' && problem.action === 'repair' ? [] : problem.files), evidence: sortedRefs(problem.evidence),
+    files: sortedRefs(problem.id === 'attestation_present' && problem.action === 'repair' ? [] : problem.files),
+    evidence: includeRouting ? sortedRefs(problem.evidence) : stableProblemEvidence(problem),
   });
 }
 
@@ -891,7 +897,7 @@ function otherVerifiedClosure(previous: CompletionEvaluation, current: Completio
   const allCurrent = [...current.disposition.problems, ...current.disposition.completionBlocking, ...current.disposition.releaseBlocking, ...current.disposition.disclosed];
   const source = (problem: CurrentDisposition['problems'][number]): string => problem.source_phase ?? problem.phase;
   const refs = (problem: CurrentDisposition['problems'][number]): string[] => {
-    const evidence = sortedRefs(problem.evidence);
+    const evidence = stableProblemEvidence(problem);
     if (!evidence.length && problem.id.startsWith('open_finding:')) return [];
     return (evidence.length ? evidence : [problem.id]).map(ref => JSON.stringify({ source: source(problem), files: sortedRefs(problem.files), ref }));
   };

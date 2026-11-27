@@ -477,6 +477,8 @@ export interface RepairResponsibilityContext {
   skillContracts?: ReturnType<typeof phaseContractIndex>;
   profile?: HarnessResolvedProfile;
   executionRole?: 'author' | 'verifier';
+  /** Synchronous disposition readers share the run's frozen baseline during one assessment. */
+  readGoalBaseline?: () => import('./goal-run-baseline').GoalRunBaseline;
 }
 
 export interface RepairResponsibility {
@@ -693,8 +695,10 @@ export function resolveRepairResponsibility(input: RepairResponsibilityContext &
   let category = owner ? ownerCategory(owner, context) ?? target.category ?? null : target.category ?? null;
   const workUnitRole = context.executionRole ?? context.contracts?.executionRole ?? (context.contracts ? 'author' : undefined);
   const compatible = target.compatibilityPreserved ?? (category === 'verification' && !!context.projectRoot && !!context.feature && !!target.files?.length
-    && target.files.every(file => (target.owner === 'coding' || hasImplementationTypeCompatibilityChange({ projectRoot: context.projectRoot!, feature: context.feature!, runId: context.runId, file }))
-      && codingTestPreservation({ projectRoot: context.projectRoot!, feature: context.feature!, runId: context.runId, file }).preserved));
+    && target.files.every(file => {
+      const source = { projectRoot: context.projectRoot!, feature: context.feature!, runId: context.runId, file, readGoalBaseline: context.readGoalBaseline };
+      return (target.owner === 'coding' || hasImplementationTypeCompatibilityChange(source)) && codingTestPreservation(source).preserved;
+    }));
   if (category === 'verification' && compatible && context.workflow?.artifacts.some(artifact => ownerCategory(artifact.id, context) === 'coding')) {
     owner = context.workflow.artifacts.find(artifact => ownerCategory(artifact.id, context) === 'coding')!.id;
     category = 'coding';
@@ -768,7 +772,9 @@ function recordedUtClosureStatus(projectRoot: string, feature: string, outputs: 
 }
 
 /** Re-read the selected historical test when old assertion preservation is at issue. */
-export function codingTestPreservation(input: { projectRoot: string; feature: string; file: string; runId?: string }): { preserved: boolean; reason: string; beforeText?: string } {
+type TestPreservationInput = { projectRoot: string; feature: string; file: string; runId?: string; readGoalBaseline?: RepairResponsibilityContext['readGoalBaseline'] };
+
+export function codingTestPreservation(input: TestPreservationInput): { preserved: boolean; reason: string; beforeText?: string } {
   const { validateProjectRelativePath, isInsideProjectRoot } = require('./project-relative-path') as typeof import('./project-relative-path');
   try {
     const file = validateProjectRelativePath(input.projectRoot, input.file, 'existing test source');
@@ -782,7 +788,7 @@ export function codingTestPreservation(input: { projectRoot: string; feature: st
   const recorded = evidence?.integrityOk && [...evidence.manifest.outputs, ...evidence.manifest.inputs]
     .find(entry => entry.path === input.file && entry.exists && entry.sha256);
   const current = sha256File(path.resolve(input.projectRoot, input.file));
-  const baseline = resolveEffectiveDiffBaseline(input.projectRoot, input.feature, input.runId);
+  const baseline = input.readGoalBaseline?.() ?? resolveEffectiveDiffBaseline(input.projectRoot, input.feature, input.runId);
   const original = baseline.available ? readFileAtRef(input.projectRoot, baseline.baseSha, input.file) : null;
   // An open UT result only records the tested input bytes.
   if (recorded && evidence?.integrityOk && (!original || recorded.sha256 !== current)) {
@@ -804,9 +810,9 @@ export function codingTestPreservation(input: { projectRoot: string; feature: st
 }
 
 /** A concrete old typed fixture broken by this implementation's newly-required fields. */
-export function hasImplementationTypeCompatibilityChange(input: { projectRoot: string; feature: string; file: string; runId?: string }): boolean {
+export function hasImplementationTypeCompatibilityChange(input: TestPreservationInput): boolean {
   const { readFileAtRef, resolveEffectiveDiffBaseline } = require('./git-diff') as typeof import('./git-diff');
-  const baseline = resolveEffectiveDiffBaseline(input.projectRoot, input.feature, input.runId);
+  const baseline = input.readGoalBaseline?.() ?? resolveEffectiveDiffBaseline(input.projectRoot, input.feature, input.runId);
   if (!baseline.available) return false;
   const original = readFileAtRef(input.projectRoot, baseline.baseSha, input.file)?.toString('utf8');
   if (original === undefined) return false;

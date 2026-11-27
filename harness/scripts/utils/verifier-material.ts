@@ -58,6 +58,7 @@ export type CurrentAcceptanceEvidenceInput = Pick<BuildVerifierMaterialInput,
   phaseIssues?: import('./repair-candidates').PhaseRepairIssues | null;
   authorityReaders?: IdentityNeutralDigestReaders;
   implementationChanges?: readonly StatusDiffEntry[] | null;
+  readGoalBaseline?: () => import('./goal-run-baseline').GoalRunBaseline;
 };
 
 /** Coding and Review consume the ordinary implementation diff. Other phases follow their bound evidence. */
@@ -114,7 +115,7 @@ export function collectTestStrengthContext(input: CurrentAcceptanceEvidenceInput
       } catch { out.push({ label: '(test source unavailable)', content: file }); }
     }
     for (const file of tests) {
-      const preservation = codingTestPreservation({ projectRoot: input.projectRoot, feature: input.feature, file, runId });
+      const preservation = codingTestPreservation({ projectRoot: input.projectRoot, feature: input.feature, file, runId, readGoalBaseline: input.readGoalBaseline });
       out.push({ label: `(existing assertion evidence: ${file})`, content: JSON.stringify({ file, preserved: preservation.preserved, reason: preservation.reason }) });
       if (preservation.beforeText !== undefined) out.push({ label: `(historical test original: ${file})`, content: preservation.beforeText });
     }

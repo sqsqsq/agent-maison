@@ -231,8 +231,11 @@ export function resolveRunBaseline(manifest: { run_base_sha?: string }, events: 
 }
 
 /** Shared events read so effective scope and baseline resolve off one on-disk read. */
-export function loadAuthoritativeRunEvents(projectRoot: string, feature: string, runId: string): GoalRunEvent[] {
-  const manifest = loadGoalManifestFromRun(projectRoot, runId, { feature });
+export function loadAuthoritativeRunEvents(projectRoot: string, feature: string, runId: string, knownManifest?: GoalManifest): GoalRunEvent[] {
+  if (knownManifest && (knownManifest.feature !== feature || knownManifest.run_id !== runId)) {
+    throw new Error('[execution-scope] 已解析 manifest 的 feature/run 身份失配');
+  }
+  const manifest = knownManifest ?? loadGoalManifestFromRun(projectRoot, runId, { feature });
   const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
   if (!fs.existsSync(eventsPath)) return [];
   const loaded = loadEventsJsonlStrict(eventsPath);
@@ -1204,16 +1207,18 @@ function validateRunCreatedEvent(event: GoalRunEvent, manifest: GoalRunManifest)
 export function inspectGoalRunCreation(
   projectRoot: string,
   manifest: GoalRunManifest,
+  events?: readonly GoalRunEvent[],
 ): GoalRunCreationInspection {
   const manifestPath = path.join(projectRoot, manifest.report_dir, 'manifest.json');
   const eventsPath = path.join(projectRoot, manifest.report_dir, 'events.jsonl');
-  return inspectGoalRunCreationFiles(manifestPath, eventsPath, manifest);
+  return inspectGoalRunCreationFiles(manifestPath, eventsPath, manifest, events);
 }
 
 export function inspectGoalRunCreationFiles(
   manifestPath: string,
   eventsPath: string,
   knownManifest?: GoalRunManifest,
+  strictEvents?: readonly GoalRunEvent[],
 ): GoalRunCreationInspection {
   if (!fs.existsSync(manifestPath)) return { state: 'absent' };
   let manifest = knownManifest;
@@ -1224,7 +1229,7 @@ export function inspectGoalRunCreationFiles(
       return { state: 'creation_incomplete', reason: `manifest 无法解析：${(error as Error).message}` };
     }
   }
-  const loaded = loadEventsJsonlStrict(eventsPath);
+  const loaded = strictEvents ? { events: strictEvents, corruptLines: [] } : loadEventsJsonlStrict(eventsPath);
   if (loaded.corruptLines.length > 0) {
     return { state: 'creation_incomplete', reason: 'events.jsonl 含损坏行' };
   }

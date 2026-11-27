@@ -747,15 +747,20 @@ export function scopeDependencyEdges(scope?: ScopeDependencyContext['scope'], wo
   return [...edges.values()];
 }
 
+function scopeRevisionInvalidatingDuties(previous: ExecutionScope, next: Pick<ExecutionScope, 'obligations'>, completed: ReadonlySet<string>) {
+  return next.obligations.flatMap(after => {
+    if (after.applicability !== 'required' || after.satisfied_by?.length) return [];
+    const before = previous.obligations.find(item => item.id === after.id && item.kind === after.kind);
+    const introduced = before?.applicability !== 'required';
+    return introduced || before?.satisfied_by?.length
+      || before && completed.has(before.owner_phase) && executionScopeFingerprint(before.basis) !== executionScopeFingerprint(after.basis)
+      ? [{ duty: after, introduced }] : [];
+  });
+}
+
 /** A revision revokes its real owner and consumers, never a suffix of the preferred order. */
 export function scopeRevisionInvalidations(previous: ExecutionScope, next: Pick<ExecutionScope, 'obligations'> & Partial<Pick<ExecutionScope, 'control_edges'>>, order: readonly string[], completed: ReadonlySet<string> = new Set(), workflow?: WorkflowSpec, dependencyContext: Pick<ScopeDependencyContext, 'inputOwners' | 'inputEdges'> = {}): string[] {
-  const roots = next.obligations.filter(after => {
-    if (after.applicability !== 'required') return false;
-    const before = previous.obligations.find(item => item.id === after.id && item.kind === after.kind);
-    if (!before || before.applicability !== 'required') return !after.satisfied_by?.length;
-    return !after.satisfied_by?.length && (!!before.satisfied_by?.length
-      || completed.has(before.owner_phase) && executionScopeFingerprint(before.basis) !== executionScopeFingerprint(after.basis));
-  }).map(item => item.owner_phase);
+  const roots = scopeRevisionInvalidatingDuties(previous, next, completed).map(({ duty }) => duty.owner_phase);
   const owners = new Set([...previous.obligations, ...next.obligations].map(item => item.owner_phase));
   return affectedScopePhases(roots, order, { ...dependencyContext, scope: { ...previous, ...next }, workflow }).filter(phase => owners.has(phase));
 }
@@ -805,7 +810,8 @@ export function isEffectivePhasePass(event: ScopeHistoryEvent): boolean {
 }
 
 /** Derived causal state only: history remains immutable and file mtimes never establish a PASS. */
-export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeHistoryEvent[], order: readonly string[], currentPhasePass?: string, workflow?: WorkflowSpec, dependencyContext: Pick<ScopeDependencyContext, 'inputOwners' | 'inputEdges'> = {}) {
+export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeHistoryEvent[], order: readonly string[], currentPhasePass?: string, workflow?: WorkflowSpec, dependencyContext: Pick<ScopeDependencyContext, 'inputOwners' | 'inputEdges'> = {},
+  returnedCheck?: { phase: string; returnedAt?: string }) {
   let scope = birth;
   const definitionProofs = new Map<string, InputBinding[]>();
   const inputProofs = (obligation?: ExecutionObligation): InputBinding[] | undefined =>
@@ -820,11 +826,25 @@ export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeH
   const passed = new Set<string>();
   const invalidatedAt = new Map<string, string>();
   const revisions = new Map<number, string[]>();
+  const deferredCheckDuties = new Set<string>();
+  const checkedAt = Date.parse(returnedCheck?.returnedAt ?? '');
+  let checkInvalidated = false;
   const observed = currentPhasePass ? [...events, { type: 'phase_verdict', phase: currentPhasePass, verdict: 'PASS', action: 'advance' }] : events;
   observed.forEach((event, index) => {
+    const when = event.ts ?? event.applied_at ?? '';
     let revoked: string[] = [];
     if (event.type === 'scope_revised' && event.execution_scope) {
       revoked = scopeRevisionInvalidations(scope, event.execution_scope, order, passed, workflow, dependencyContext);
+      if (returnedCheck && revoked.includes(returnedCheck.phase) && Date.parse(when) > checkedAt && !checkInvalidated) {
+        // Opening a definition revokes proof immediately. Unchanged consumers wait for its producer.
+        for (const { duty, introduced } of scopeRevisionInvalidatingDuties(scope, event.execution_scope, passed)) {
+          if (duty.owner_phase === returnedCheck.phase) checkInvalidated = true;
+          else if (affectedScopePhases([duty.owner_phase], order, { ...dependencyContext, scope: event.execution_scope, workflow }).includes(returnedCheck.phase)) {
+            if (introduced && ['acceptance-definition', 'design-decision'].includes(duty.kind)) deferredCheckDuties.add(duty.id);
+            else checkInvalidated = true;
+          }
+        }
+      }
       const explicitlyWithdrawn = scope.obligations.some(before => inputProofs(before)
         && !event.execution_scope!.obligations.find(after => after.id === before.id)?.satisfied_by?.length);
       for (const [id, inputs] of definitionProofs) {
@@ -854,7 +874,8 @@ export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeH
       // Observations and ordinary waits may withdraw PASS, but only an actual
       // revision or invalidation requires a result produced after that boundary.
       if (event.type === 'scope_revised' || event.type === 'phase_invalidated' || event.type === 'phase_backtrack_requested') {
-        invalidatedAt.set(phase, event.ts ?? event.applied_at ?? '');
+        invalidatedAt.set(phase, when);
+        if (event.type !== 'scope_revised' && phase === returnedCheck?.phase && Date.parse(when) > checkedAt) checkInvalidated = true;
       }
       if (event.type === 'phase_invalidated' || event.type === 'phase_backtrack_requested') {
         for (const [id] of definitionProofs) if (scope.obligations.find(obligation => obligation.id === id)?.owner_phase === phase) definitionProofs.delete(id);
@@ -865,7 +886,11 @@ export function scopeProofHistory(birth: ExecutionScope, events: readonly ScopeH
       else passed.delete(event.phase);
     }
   });
-  return { scope, invalidated, passed, invalidatedAt, revisions, definitionProofs };
+  if (!checkInvalidated && deferredCheckDuties.size) {
+    const pending = new Set(scope.obligations.filter(duty => duty.applicability === 'required' && !duty.satisfied_by?.length).map(duty => duty.id));
+    checkInvalidated = [...deferredCheckDuties].some(id => !pending.has(id));
+  }
+  return { scope, invalidated, passed, invalidatedAt, revisions, definitionProofs, checkInvalidated };
 }
 
 /** One qualification for current proof and reuse; undefined keeps an unknown repair-time boundary unknown. */

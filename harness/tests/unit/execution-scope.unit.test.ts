@@ -331,6 +331,25 @@ const cases: Array<{ name: string; run(): void | Promise<void> }> = [
     assert.throws(() => projectScopeSchedule(controlled, workflow, reads), /控制依赖存在环/,
       'a real declared control cycle remains invalid');
   } },
+  { name: 'new unproven definition revokes consumer proofs while unchanged checks wait for its producer', run() {
+    const birth = resolveExecutionScope(request(['spec', 'plan']), workflow);
+    const prior = { ...birth, obligations: [...birth.obligations, { id: 'acceptance:handoff',
+      kind: 'acceptance-definition', owner_phase: 'spec', applicability: 'required' as const, reason: 'check the first page handoff', basis: [] }] };
+    const order = ['spec', 'plan'];
+    const consumers = { inputEdges: [{ before: 'spec', after: 'plan' }] };
+    const revision = (execution_scope: ExecutionScope) => ({ type: 'scope_revised', execution_scope, ts: '2026-11-26T13:00:00Z' });
+    const view = (initial: ExecutionScope, events: ScopeHistoryEvent[], phase: string, returnedAt = '2026-11-26T12:00:00Z') =>
+      scopeProofHistory(initial, events, order, undefined, workflow, consumers, { phase, returnedAt });
+    const pending = view(birth, [revision(prior)], 'plan');
+    assert.deepEqual([...pending.invalidated], order);
+    assert.equal(pending.checkInvalidated, false);
+    assert.equal(view(birth, [revision(prior)], 'spec').checkInvalidated, true);
+    const signed = { ...prior, obligations: prior.obligations.map(item => item.id === 'acceptance:handoff'
+      ? { ...item, satisfied_by: [{ phase: 'spec', evidence_manifest_aggregate: 'a'.repeat(64) }] } : item) };
+    assert.equal(view(birth, [revision(prior), revision(signed)], 'plan').checkInvalidated, true);
+    assert.equal(view(birth, [revision(prior), revision(signed)], 'plan', '2026-11-26T14:00:00Z').checkInvalidated, false);
+    assert.equal(view(signed, [revision(prior)], 'plan').checkInvalidated, true);
+  } },
   { name: 'acceptance layers use the existing gate; invalid layers remain unknown and implementation requires review', run() {
     const binding = { input_id: 'acceptance', source: { kind: 'artifact' as const, artifact: 'acceptance@1' }, dependencies: [], source_refs: ['acceptance.yaml'], content_fingerprint: 'a'.repeat(64) };
     const build = (layer: string) => resolveExecutionScope(request(['coding'], 'feature'), workflow, { value: { criteria: [{ id: 'AC-1', priority: 'P1', ut_layer: layer }] } as AcceptanceSpec, binding });
@@ -455,6 +474,39 @@ cases.push({ name: 'D0.1 an impact judgement without structure or source never p
 cases.push({ name: 'D0.1 a basis binding that no longer verifies rejects the freeze', run() {
   assert.throws(() => resolveExecutionScope(req(['coding'], 'feature'), wf, acc('unit'),
     facts({ basis: [{ obligation_id: 'design:cu', input_id: 'contracts', ok: false, detail: '依据字节已变化' }] })), /义务依据冻结时核验失败[\s\S]*字节已变化/);
+} });
+cases.push({ name: 'CR-011 keeps an authorized testing duty when the legacy tested-code receipt appears or disappears', run() {
+  const { root, frameworkRoot, feature } = setupRunlessProject();
+  try {
+    const receipt = featureFilePath(root, feature, 'testing/reports/device-test-evidence.json');
+    const key = path.join(path.dirname(receipt), 'recorded/hylyre/execution-key.json');
+    fs.mkdirSync(path.dirname(key), { recursive: true });
+    fs.writeFileSync(key, '{"original":"execution-key"}');
+    fs.writeFileSync(receipt, '{"original":"receipt"}');
+    const targets = [receipt, key].map(file => path.relative(root, file).split(path.sep).join('/'));
+    const resolved = resolveCapabilityInputs({ projectRoot: root, frameworkRoot, feature, phase: 'testing', track: 'full', testTargets: targets,
+      inputContext: { schema_version: '1.1', subject: { feature }, obligations: {}, required_outputs: [] } }).inputs!.values.tested_code;
+    assert(resolved.state === 'resolved');
+    const binding = structuredClone(resolved.binding);
+    const input = req(['testing']);
+    input.facts.push({ id: 'device-evidence:CR-011', kind: 'device-evidence', applicability: 'required', reason: 'device retest', basis: [binding] });
+    const freeze = () => resolveExecutionScope(input, wf, acc('device'), collectResolvedScopeFacts(input, { projectRoot: root, frameworkRoot, feature }));
+    fs.rmSync(receipt);
+    for (const scenario of ['missing', 'appeared']) {
+      if (scenario === 'appeared') {
+        const recordedReceipt = binding.dependencies.find(dep => dep.path === receipt)!;
+        Object.assign(recordedReceipt, { exists: false, sha256: null });
+        fs.writeFileSync(receipt, '{}');
+      }
+      const scope = freeze();
+      const duty = scope.obligations.find(item => item.id === 'device-evidence:CR-011');
+      assert.equal(duty?.applicability, 'required');
+      assert.equal(duty?.satisfied_by, undefined);
+      assert.deepStrictEqual(scope.phase_chain, ['testing']);
+    }
+    fs.rmSync(key);
+    assert.throws(freeze, /义务依据冻结时核验失败[\s\S]*execution-key\.json/);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 } });
 cases.push({ name: 'D0.1 pixel_1to1 without visual acceptance opens a spec definition gap', run() {
   const pixel = (present: boolean) => resolveExecutionScope(req(['coding'], 'feature'), wf, acc('unit'),

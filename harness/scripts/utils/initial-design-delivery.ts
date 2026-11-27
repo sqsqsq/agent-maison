@@ -40,7 +40,7 @@ import { describeQuestioningChanges, renderQuestioningResultInstructions, select
 import { extractProviderFinalText } from './codex-terminal-events';
 import { invocationCompleted } from './invocation-completion';
 import { dispositionFacts } from './goal-failure-classifier';
-import { renderDesignAuthorityBoundary, writeBackAdmission, refreshBlueprintFingerprints, questioningDependencyChanges, latestUsableDesignQuestioning } from './design-repair-unattended';
+import { renderDesignAuthorityBoundary, writeBackAdmission, refreshBlueprintFingerprints, questioningDependencyChanges, questioningRunInputs, latestUsableDesignQuestioning } from './design-repair-unattended';
 import { currentBlueprintSliceId } from './blueprint-admission';
 import type { ProviderRef } from './types';
 import { prepareBlueprintDesignDraft, prepareBlueprintSourceItems } from './blueprint-discovery';
@@ -587,7 +587,7 @@ export function initialDesignInvocationLabel(observation: InitialDesignObservati
     : `initial-design-${observation.kind === 'questioning' ? 'questioning' : 'author'}`;
 }
 
-function previousDesignWork(input: { projectRoot: string; manifest: InitialDesignGoalManifest; observation: InitialDesignObservation; deliveryRuns?: readonly DeliveryRunFacts[] }): { lines: string[]; questioned: boolean; formatRepair?: boolean; selectedScopes?: string[] } {
+function previousDesignWork(input: { projectRoot: string; manifest: InitialDesignGoalManifest; observation: InitialDesignObservation; deliveryRuns?: readonly DeliveryRunFacts[]; questioningInputs?: string[] }): { lines: string[]; questioned: boolean; formatRepair?: boolean; selectedScopes?: string[] } {
   const directory = path.dirname(input.observation.blueprintPath);
   const files = fs.existsSync(directory) ? fs.readdirSync(directory, { withFileTypes: true })
     .filter(item => item.isFile() && /\.(md|yaml|json)$/.test(item.name)).map(item => path.join(directory, item.name)) : [];
@@ -612,6 +612,7 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
     let affectedDependencies: ReturnType<typeof questioningDependencyChanges> = [];
     try {
       const current = loadCanonicalBlueprint(input.projectRoot, input.manifest.feature).blueprint;
+      input.questioningInputs?.push(...questioningRunInputs(input.projectRoot, current, usable?.result ?? undefined));
       affectedDependencies = questioningDependencyChanges(input.projectRoot, current, previous?.preSnapshot, input.observation.blueprintPath, undefined, usable?.result ?? undefined);
       selectedScopes = selectQuestioningScopes(previous?.beforeDocument, current, usable?.result ?? undefined,
         affectedDependencies.map(item => isInsideProjectRoot(input.projectRoot, item.path) ? path.relative(input.projectRoot, item.path).replace(/\\/g, '/') : item.path), input.projectRoot);
@@ -669,7 +670,7 @@ function questioningReadingInstruction(blueprintPath: string, recheck: boolean, 
     : '这是首次独立阅读：先只读首屏和上述正文范围，按P1 §5逐题回答八问并定位仍看不懂之处；完成前不读参考区、YAML、需求原文或项目源码，不用作者解释替正文补全含义。'}\n${verification}`;
 }
 
-export function initialDesignAuthorInstruction(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest; observation: InitialDesignObservation; autonomyAuthorized: boolean; deliveryRuns?: readonly DeliveryRunFacts[]; material?: unknown[]; checkerResultPath?: string }): string {
+export function initialDesignAuthorInstruction(input: { projectRoot: string; frameworkRoot: string; manifest: InitialDesignGoalManifest; observation: InitialDesignObservation; autonomyAuthorized: boolean; deliveryRuns?: readonly DeliveryRunFacts[]; material?: unknown[]; checkerResultPath?: string; questioningInputs?: string[] }): string {
   const { manifest, observation, frameworkRoot, projectRoot } = input;
   const request = observation.request;
   const prepareDesign = observation.kind === 'author' && (!request || request.frame === 'small' && !request.implementation);
