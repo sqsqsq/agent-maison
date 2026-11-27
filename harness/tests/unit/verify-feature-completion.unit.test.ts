@@ -19,6 +19,8 @@ import {
   hasPendingHumanReview,
   resolvePhaseRunIds,
   readCurrentDispositionInput,
+  readCurrentCheckObservation,
+  readReusableCheckResult,
 } from '../../scripts/utils/verify-feature-completion';
 import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
 import {
@@ -452,6 +454,61 @@ const cases: Case[] = [
       assert.equal(missingInput.owner, 'testing');
       assert.match(missingInput.detail, /device-test-evidence\.json 缺失或不可解析/);
       assert.equal(missingFacts.completionEligible, false, '缺索引仍阻断完成，不能借PASS头或旧closed summary解除');
+    },
+  },
+  {
+    name: 'CR-011 check selection notices a missing, restored or replaced device receipt without rechecking other phases',
+    run: () => {
+      const root = mkProject();
+      try {
+        seedCleanChain(root, { chain: CHAIN_T, invocations: true,
+          beforeClosure: r => {
+            writeArtifact(r, 'acceptance.yaml', P0_ACCEPTANCE);
+            writeNativeRuntimeEvidence(r);
+            fs.writeFileSync(featureFilePath(r, FEATURE, 'testing/reports/script-report.json'), JSON.stringify({
+              checks: [{ id: 'device_test_evidence', status: 'PASS', severity: 'BLOCKER' }],
+            }));
+          } });
+        const testing = { projectRoot: root, feature: FEATURE, runId: 'RUN1', phase: 'testing' };
+        const observation = () => readCurrentCheckObservation(testing);
+        const evidenceFile = featureFilePath(root, FEATURE, 'testing/reports/device-test-evidence.json');
+        const evidenceKey = path.relative(root, evidenceFile).split(path.sep).join('/');
+        const original = fs.readFileSync(evidenceFile, 'utf8');
+        const runEvents = fs.readFileSync(path.join(runDirAbs(root, 'RUN1'), 'events.jsonl'), 'utf8').trim().split(/\r?\n/).map(line => JSON.parse(line));
+        const recordReturn = (inputs: ReturnType<typeof observation>['inputs']) => {
+          writeRunEvents(root, 'RUN1', [
+            ...runEvents.slice(0, -1),
+            { type: 'harness_start', phase: 'testing', invoke_id: 'testing-i4' },
+            { type: 'harness_end', phase: 'testing', invoke_id: 'testing-i4', exit_code: 0, timed_out: false, related_input_snapshot: inputs },
+            runEvents.at(-1),
+          ]);
+        };
+        const passInputs = observation().inputs;
+        recordReturn(passInputs);
+        assert.equal(observation().changed, false);
+        assert(!collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN_T }).length);
+        assert(readReusableCheckResult(testing), 'the original result is actually reusable before the receipt changes');
+        fs.rmSync(evidenceFile);
+        const missing = observation();
+        assert.equal(missing.returned, true);
+        assert.equal(missing.changed, true);
+        assert.equal(missing.inputs[evidenceKey].exists, false);
+        assert.equal(readReusableCheckResult(testing), null);
+        recordReturn(missing.inputs);
+        fs.writeFileSync(evidenceFile, 'null');
+        const appeared = observation();
+        assert.equal(appeared.changed, true);
+        assert.equal(appeared.inputs[evidenceKey].exists, true);
+        assert(collectCleanPassIssues({ projectRoot: root, feature: FEATURE, chain: CHAIN_T }).some(issue =>
+          issue.condition === 'runtime_step_evidence' && issue.owner === 'testing' && issue.detail.includes('缺少有效 trace_path')));
+        recordReturn(passInputs);
+        fs.writeFileSync(evidenceFile, JSON.stringify({ ...JSON.parse(original), attempt_id: 'other-attempt' }));
+        assert.equal(observation().changed, true);
+        assert.equal(readReusableCheckResult(testing), null);
+        assert(!readCurrentCheckObservation({ ...testing, phase: 'spec' }).inputs[evidenceKey]);
+        fs.writeFileSync(evidenceFile, original);
+        assert.equal(observation().changed, false, 'the same qualified result can still be reused after publication');
+      } finally { fs.rmSync(root, { recursive: true, force: true }); }
     },
   },
   {

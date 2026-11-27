@@ -18,7 +18,9 @@ import {
   itemFingerprintOf,
   findUnreadableDiagnosisChecks,
   parseIssueVerificationBlock,
+  parseReviewIssueRows,
   parseVerifierCheckStatus,
+  readableIssueEvidence,
   resolveInvalidatablePhases,
   restoreBacktrackCandidatesFromEvents,
   roundFingerprintOfCandidates,
@@ -44,6 +46,7 @@ import { extractFailureClassification as parseFailureClassificationFromDetails }
 import { formatRepairCandidatesMenu } from '../../scripts/utils/assess-renderer';
 import type { UnitCaseResult } from '../run-unit';
 
+import * as fs from 'fs';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { loadWorkflowSpec } from '../../workflow-loader';
@@ -243,6 +246,18 @@ export const UT_REAL_ASSERTION_CHECK = (() => {
 
 export function runAll(): UnitCaseResult[] {
   const results: UnitCaseResult[] = [];
+  run(results, 'coding upstream template preserves a combined description and evidence column', () => {
+    const instructions = fs.readFileSync(path.join(fixtureFramework, 'skills/reference/coding-workflow-detail.md'), 'utf8');
+    const header = instructions.split(/\r?\n/).find(line => line.startsWith('| ID |') && line.includes('问题描述/依据'))!;
+    const evidence = '同一权威输入缺定义：`harness/scripts/utils/repair-candidates.ts:1`';
+    for (const spelling of ['问题描述/依据', '问题描述 ／ 依据']) {
+      const report = ['## 问题清单', header.replace('问题描述/依据', spelling), '|---|---|---|---|---|---|---|',
+        `| UP-001 | BLOCKER | 逻辑错误 | doc/features/f/plan/plan.md | ${evidence} | 补齐契约 | 未关闭 |`].join('\n');
+      const [row] = parseReviewIssueRows(report);
+      assert(row?.evidence === evidence, 'the template cell remains the single diagnosis/evidence value');
+      assert(readableIssueEvidence(fixtureFramework, row.evidence!).length === 1, 'the actual upstream consumer can read the evidence');
+    }
+  });
   run(results, 'P2 C test text differences need current independent strength judgment instead of phase permission or author PASS', () => {
     const check = { id: 'coding_existing_test_preserved', details: 'tests/value.test.ts：用例/断言发生变化\n新增真实失败路径断言', affected_files: ['tests/value.test.ts'] };
     for (const verdict of ['confirmed', 'refuted', 'unclear']) {

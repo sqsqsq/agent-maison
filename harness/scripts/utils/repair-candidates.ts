@@ -25,6 +25,7 @@ import { createHash } from 'crypto';
 import { extractTables, getSectionContent, extractDeclaredVerdict, extractReviewVerdict } from './markdown-parser';
 import type { CorrectionCategory } from './correction-routing';
 import type { ExecutionScopeInput } from './execution-scope';
+import { deviceTestEvidencePath } from './device-test-evidence-shared';
 import type { GoalRunEvent } from './goal-runner-phase';
 import { isBlockingCheck, resultBasisOwner, type CurrentDisposition } from './check-disposition';
 import type { FidelityIntentSsot } from './fidelity-shared';
@@ -257,7 +258,7 @@ export interface ReviewCandidateInput {
   verifierReportText: string | null;
   /** @deprecated legacy receipt flag, ignored; human authorization cannot suppress a defect. */
   conditionalReceiptValid?: boolean;
-  /** 报告结构/引用/结论一致性等 report-validity 检查存在 BLOCKER FAIL → 抑制 */
+  /** 整体验真失败抑制报告派生候选，独立原件仍可逐项核对。 */
   reportValidityBlocked: boolean;
   /**
    * plan 33784ed1 §4.5：有拒修在案的候选（resolveRepairDeclineState 的 declined_rounds>0）。
@@ -281,35 +282,57 @@ export interface ReviewIssueRow {
   evidence?: string;
 }
 
-export function parseReviewIssueRows(reportText: string): ReviewIssueRow[] {
+const ISSUE_COLUMNS = {
+  id: ['编号', 'ID'],
+  severity: ['严重程度', '严重等级'],
+  classification: ['分类'],
+  description: ['问题描述', '描述'],
+  files: ['涉及文件'],
+  fix: ['修复建议'],
+  state: ['状态'],
+  evidence: ['依据', '证据'],
+} as const;
+
+const reviewIssueId = (id: string): string => id.replace(/^open_finding:/, '');
+const ISSUE_EVIDENCE_LINE_REF = /`([^`\r\n]+?):(\d+)(?:-(\d+))?`/g;
+
+export function getReviewIssueTable(reportText: string) {
   const section = getSectionContent(reportText, '问题清单');
-  if (!section) return [];
-  const tables = extractTables(section);
-  if (tables.length === 0) return [];
-  const table = tables[0];
-  const col = (pred: (h: string) => boolean): number => table.headers.findIndex(pred);
-  const iId = col(h => h.trim() === 'ID' || h.includes('编号'));
-  const iSev = col(h => h.includes('严重程度') || h.includes('严重等级'));
-  const iState = col(h => h.includes('状态'));
-  const iCategory = col(h => h.includes('分类'));
-  const iFiles = col(h => h.includes('涉及文件'));
-  const iFix = col(h => h.includes('修复建议'));
-  const iDesc = col(h => h.includes('问题描述') || h.includes('描述'));
-  const iEvidence = col(h => h.includes('依据') || h.includes('证据'));
-  if (iId < 0 || iSev < 0 || iFiles < 0) return [];
-  return table.rows.map(row => ({
-    id: (row[iId] ?? '').trim(),
-    severity: (row[iSev] ?? '').trim(),
-    classification: iCategory >= 0 ? (row[iCategory] ?? '').trim() : '',
-    state: iState >= 0 ? (row[iState] ?? '').trim() : '',
-    files: normalizeReviewFiles((row[iFiles] ?? '')
-      .split(/[,，、;；\s]+/)
-      .filter(Boolean)),
-    summary: normalizeSummary(
-      (iFix >= 0 ? row[iFix] : undefined) || (iDesc >= 0 ? row[iDesc] : undefined) || '',
-    ),
-    evidence: [iDesc >= 0 ? row[iDesc] : '', iEvidence >= 0 ? row[iEvidence] : ''].filter(Boolean).join('；'),
-  })).filter(r => r.id.length > 0);
+  const table = section && extractTables(section)[0];
+  if (!table) return null;
+  const keys = Object.keys(ISSUE_COLUMNS) as Array<keyof typeof ISSUE_COLUMNS>;
+  const headers = table.headers.map(header => header.replace(/[*`]/g, '').split(/[/／]/).map(name => name.trim()));
+  const columns = Object.fromEntries(keys.map(key => [key, headers.flatMap((names, index) => {
+    const aliases: readonly string[] = ISSUE_COLUMNS[key];
+    return names.some(name => aliases.some(alias => name === alias || name.startsWith(alias + '（') || name.startsWith(alias + ' ('))
+      || key === 'id' && name === '问题编号') ? [index] : [];
+  })])) as Record<keyof typeof ISSUE_COLUMNS, number[]>;
+  const cells = (row: string[], key: keyof typeof ISSUE_COLUMNS): string[] =>
+    [...new Set(columns[key].map(index => (row[index] ?? '').trim()).filter(Boolean))];
+  const missing = keys.filter(key => key !== 'state' && key !== 'evidence' && !columns[key].length)
+    .map(key => ISSUE_COLUMNS[key].join('/'));
+  const idCounts = new Map<string, number>();
+  for (const row of table.rows) for (const id of cells(row, 'id')) {
+    idCounts.set(id, (idCounts.get(id) ?? 0) + 1);
+  }
+  const conflicts = table.rows.flatMap((row, index) =>
+    keys.some(key => cells(row, key).length > 1) || cells(row, 'id').some(id => idCounts.get(id) !== 1) ? [index + 1] : []);
+  return { ...table, columns, missing, conflicts, cells };
+}
+
+export function parseReviewIssueRows(reportText: string): ReviewIssueRow[] {
+  const table = getReviewIssueTable(reportText);
+  if (!table || !table.columns.id.length || !table.columns.severity.length || !table.columns.files.length) return [];
+  return table.rows.flatMap((row, index) => {
+    if (table.conflicts.includes(index + 1)) return [];
+    const value = (key: keyof typeof ISSUE_COLUMNS): string => table.cells(row, key)[0] ?? '';
+    const id = value('id');
+    if (!id) return [];
+    return [{ id, severity: value('severity'), classification: value('classification'), state: value('state'),
+      files: normalizeReviewFiles(value('files').split(/[,，、;；\s]+/)),
+      summary: normalizeSummary(value('fix') || value('description')),
+      evidence: [...new Set([value('description'), value('evidence')].filter(Boolean))].join('；') }];
+  });
 }
 
 export interface PhaseRepairIssues {
@@ -324,7 +347,9 @@ export interface PhaseRepairIssues {
   independentReviewRows?: readonly string[];
 }
 
-function* independentReviewInvocations(projectRoot: string, feature: string, runId: string, reportPath: string) {
+export type ReviewRunHistory = ReadonlyArray<{ run_id: string; events: GoalRunEvent[] }>;
+
+function* independentReviewInvocations(projectRoot: string, feature: string, runId: string, reportPath: string, history?: ReviewRunHistory) {
   const { featureFilePath } = require('../../config') as typeof import('../../config');
   const { readExecutionRequestOriginal, acceptedSessionReport, handbackInvocationCompleted, readHandoffMaterial, sessionRunMaterialPath } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
   const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
@@ -332,7 +357,7 @@ function* independentReviewInvocations(projectRoot: string, feature: string, run
   const reportAbs = path.resolve(projectRoot, reportPath);
   try { realProjectPath(projectRoot, path.relative(projectRoot, reportAbs), 'independent review result'); }
   catch { return; }
-  for (const run of repairDeclineHistory(projectRoot, feature, runId).reverse()) {
+  for (const run of [...history ?? readRepairDeclineHistory(projectRoot, feature, runId)].reverse()) {
     const runDir = featureFilePath(projectRoot, feature, 'goal-runs/' + run.run_id);
     try { realProjectPath(projectRoot, path.relative(projectRoot, runDir), 'independent review run'); }
     catch { continue; }
@@ -376,8 +401,8 @@ function* independentReviewInvocations(projectRoot: string, feature: string, run
       const end = segment.find(event => event.type === 'agent_invoke_end' && event.phase === start.phase && event.invoke_id === start.invoke_id);
       try { if (!end || !handbackInvocationCompleted(runDir, original, end, run.events)) continue; }
       catch { continue; }
-      const writes = segment.filter(event => event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id
-        && (!relocated || (event as Record<string, unknown>).pre_snapshot === request.pre_snapshot!.sha256))
+      const writes = segment.filter(event => event.type === 'phase_write_observed' && event.phase === start.phase && event.invoke_id === start.invoke_id
+        && (event as Record<string, unknown>).pre_snapshot === request.pre_snapshot!.sha256)
         .flatMap(event => {
           const observed = event as GoalRunEvent & { owned?: Array<{ path: string; post_sha256?: string | null }>;
             observations?: Array<{ path: string; post_sha256?: string | null }> };
@@ -412,11 +437,27 @@ function* independentReviewInvocations(projectRoot: string, feature: string, run
         freshness.set(file, current);
         return current;
       };
-      yield { request, reportHash: latestHash, matchesCurrent, requestPath: path.join(runDir, original.reference.path),
+      yield { request, reportHash: latestHash, matchesCurrent, signedFiles: [...entries.keys()].filter((file): file is string => file !== null),
+        requestPath: path.join(runDir, original.reference.path),
         archivePath, archived: accepted?.draft_outputs?.[archivedName],
         attendedArchive: handedBack?.event.handoff_report && path.join(runDir, handedBack.event.handoff_report.path) };
     }
   }
+}
+
+type IndependentReviewInvocation = ReturnType<typeof independentReviewInvocations> extends Generator<infer T> ? T : never;
+
+function readIndependentReviewReport(invocation: IndependentReviewInvocation,
+  liveReport: string): { text: string; file: string } | undefined {
+  if (invocation.archived && invocation.attendedArchive) {
+    const bytes = Buffer.from(invocation.archived, 'base64');
+    if (sha256Hex(bytes) === invocation.reportHash) return { text: bytes.toString('utf8'), file: invocation.attendedArchive };
+  }
+  for (const file of [invocation.archivePath, liveReport]) try {
+    const bytes = fs.readFileSync(file);
+    if (sha256Hex(bytes) === invocation.reportHash) return { text: bytes.toString('utf8'), file };
+  } catch { /* A replaced or missing original remains unknown. */ }
+  return undefined;
 }
 
 export function readIssuedAcceptanceReview(text: string, issues: Readonly<Record<string, readonly string[]>>): IssueVerificationRead {
@@ -439,47 +480,78 @@ export function readIssuedAcceptanceReview(text: string, issues: Readonly<Record
 }
 
 /** Locate a CU review handback by its existing request, authorized result path and observed digest. */
-export function readIndependentReviewOutputs(projectRoot: string, feature: string, runId: string) {
+export function readIndependentReviewOutputs(projectRoot: string, feature: string, runId: string, history?: ReviewRunHistory) {
   const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
   const report = resolveFeatureArtifact(projectRoot, feature, 'review-report.md');
-  return [...independentReviewInvocations(projectRoot, feature, runId, report.actualPath)].flatMap(invocation => {
+  return [...independentReviewInvocations(projectRoot, feature, runId, report.actualPath, history)].flatMap(invocation => {
     const work = invocation.request.context.workInput?.material;
     const material = work?.acceptanceReview;
     if (!material) return [];
-    const parsed = (bytes: Buffer, file: string) => {
-      const text = bytes.toString('utf8');
-      const result = readIssuedAcceptanceReview(text, material);
-      return { material, signedSegments: work.segments, ...result, matchesCurrent: invocation.matchesCurrent,
-        originals: [invocation.requestPath, file] };
-    };
-    if (invocation.archived && invocation.attendedArchive) {
-      const bytes = Buffer.from(invocation.archived, 'base64');
-      if (sha256Hex(bytes) === invocation.reportHash) return [parsed(bytes, invocation.attendedArchive)];
-    }
-    for (const file of [invocation.archivePath, report.actualPath]) try {
-      const bytes = fs.readFileSync(file);
-      if (sha256Hex(bytes) !== invocation.reportHash) continue;
-      return [parsed(bytes, file)];
-    } catch { /* A replaced or missing original remains unknown. */ }
-    return [];
+    const original = readIndependentReviewReport(invocation, report.actualPath);
+    return original ? [{ material, signedSegments: work.segments, ...readIssuedAcceptanceReview(original.text, material),
+      matchesCurrent: invocation.matchesCurrent, originals: [invocation.requestPath, original.file] }] : [];
   });
 }
 
+/** File references in a signed diagnosis must resolve in that request's read snapshot. */
+function signedReviewEvidence(projectRoot: string, featureRoot: string, diagnosis: string, signedFiles: readonly string[]): string[] | null {
+  const out = new Set<string>();
+  const refs = [
+    ...Array.from(diagnosis.matchAll(ISSUE_EVIDENCE_LINE_REF), ([, file]) => ({ file, located: true })),
+    ...Array.from(diagnosis.matchAll(/`([^\s`():]+\.[A-Za-z0-9]+)`/g), ([, file]) => ({ file, located: false })),
+  ];
+  const abbreviated: Array<{ name: string; required: boolean }> = [];
+  for (const { file, located } of refs) {
+    const name = file.replace(/\\/g, '/');
+    const paths = [...new Set([path.resolve(projectRoot, name), path.resolve(featureRoot, name)])];
+    const matches = signedFiles.filter(signed => paths.includes(signed));
+    if (!matches.length && !name.includes('/')) {
+      if (paths.some(candidate => fs.existsSync(candidate))) return null;
+      abbreviated.push({ name, required: located });
+      continue;
+    }
+    if (matches.length !== 1) return null;
+    out.add(matches[0]);
+  }
+  for (const { name, required } of abbreviated) {
+    const matches = signedFiles.filter(file => path.basename(file) === name);
+    if (!matches.length && !required) continue; // Unlocated inline code such as flowStore.start is not a file reference.
+    if (matches.length === 1) { out.add(matches[0]); continue; }
+    const local = matches.filter(file => [...out].some(anchor => anchor.startsWith(path.dirname(file) + path.sep)));
+    const closest = local.filter(file => !local.some(other => path.dirname(other).startsWith(path.dirname(file) + path.sep)));
+    if (closest.length !== 1) return null;
+    out.add(closest[0]);
+  }
+  return [...out];
+}
+
+function nativeReviewRowEvidence(projectRoot: string, featureRoot: string, rows: readonly ReviewIssueRow[], row: ReviewIssueRow,
+  invocation: IndependentReviewInvocation): string[] | null {
+  if (!row.files.length || !row.evidence?.trim() || rows.filter(other => other.id === row.id).length !== 1) return null;
+  const evidence = signedReviewEvidence(projectRoot, featureRoot, row.evidence, invocation.signedFiles);
+  return evidence && evidence.every(invocation.matchesCurrent) && row.files.every(invocation.matchesCurrent) ? evidence : null;
+}
+
 function independentReviewRows(projectRoot: string, feature: string, runId: string | undefined,
-  reportPath: string, reportText: string, rows: readonly ReviewIssueRow[]): string[] | undefined {
+  reportPath: string, reportText: string, rows: readonly ReviewIssueRow[], nativeTable = false, history?: ReviewRunHistory): string[] | undefined {
   if (!runId) return undefined;
   const { featureFilePath } = require('../../config') as typeof import('../../config');
   const { invocationCompleted } = require('./invocation-completion') as typeof import('./invocation-completion');
   const reportHash = sha256Hex(reportText);
-  const runs = repairDeclineHistory(projectRoot, feature, runId);
+  const runs = history ?? readRepairDeclineHistory(projectRoot, feature, runId);
   const completedOriginal = (file: string): boolean => runs.some(run => {
     const relative = path.relative(featureFilePath(projectRoot, feature, 'goal-runs/' + run.run_id), path.resolve(projectRoot, file));
     const parts = relative.split(path.sep);
     return parts.length >= 4 && parts[0] === 'phases' && run.events.some(event => event.type === 'agent_invoke_end'
       && event.phase === parts[1] && event.invoke_id === parts[2] && invocationCompleted({ ...event, exitCode: event.exit_code }));
   });
-  for (const invocation of independentReviewInvocations(projectRoot, feature, runId, reportPath)) {
+  for (const invocation of independentReviewInvocations(projectRoot, feature, runId, reportPath, runs)) {
     if (invocation.reportHash !== reportHash) return undefined;
+    if (nativeTable) {
+      const table = getReviewIssueTable(reportText);
+      if (!table || table.missing.length) return [];
+      return rows.filter(row => nativeReviewRowEvidence(projectRoot, featureFilePath(projectRoot, feature, ''), rows, row, invocation) !== null).map(row => row.id);
+    }
     return rows.filter(row => {
       const evidence = readableIssueEvidence(projectRoot, row.evidence ?? '', { feature });
       return row.files.length > 0 && rows.filter(other => other.id === row.id).length === 1
@@ -488,6 +560,88 @@ function independentReviewRows(projectRoot: string, feature: string, runId: stri
     }).map(row => row.id);
   }
   return undefined;
+}
+
+type IndependentReviewFinding = { id: string; item_fingerprint: string; owner: string; files: string[]; detail: string;
+  evidence: string[]; verificationRequired?: boolean };
+
+/** Project active signed issues from the report originals, with each existing repair-group identity. */
+export function readIndependentReviewFindings(input: RepairResponsibilityContext & {
+  projectRoot: string; feature: string; runId: string; verifierReportText?: string | null;
+  readReviewHistory?: () => ReviewRunHistory;
+}): { findings: IndependentReviewFinding[]; closed: ReadonlySet<string> } {
+  const { resolveFeatureArtifact, featureFilePath } = require('../../config') as typeof import('../../config');
+  const { loadFidelityIntentSsot } = require('./fidelity-shared') as typeof import('./fidelity-shared');
+  const { projectRoot, feature, runId } = input;
+  const report = resolveFeatureArtifact(projectRoot, feature, 'review-report.md');
+  const featureRoot = featureFilePath(projectRoot, feature, '');
+  const fidelity = loadFidelityIntentSsot(projectRoot, feature);
+  const currentVerification = parseIssueVerificationBlock(input.verifierReportText ?? '').entries.map(entry => ({ ...entry, issue: reviewIssueId(entry.issue) }));
+  const seen = new Set<string>();
+  const closed = new Set<string>();
+  const out = new Map<string, IndependentReviewFinding>();
+  let currentHash: string | undefined;
+  try { currentHash = sha256Hex(fs.readFileSync(report.actualPath)); } catch { /* Archived originals may still be available. */ }
+  const rechecks = new Map<string, { entry: IssueVerificationEntry; originals: string[] }>();
+  const rel = (file: string): string => path.relative(projectRoot, file).replace(/\\/g, '/');
+  for (const invocation of independentReviewInvocations(projectRoot, feature, runId, report.actualPath, input.readReviewHistory?.())) {
+    const original = readIndependentReviewReport(invocation, report.actualPath);
+    if (!original) continue;
+    const entries = parseIssueVerificationBlock(original.text).entries;
+    const issued = invocation.request.context.workInput?.evaluation?.disposition.problems.filter(problem =>
+      !!problem.item_fingerprint && (problem.source_phase ?? problem.phase) === 'review' && !!problem.files?.length) ?? [];
+    const assigned = new Map<string, IssueVerificationEntry[]>();
+    for (const entry of entries) {
+      const { evidence } = entry;
+      if (!evidence || entry.invalid_reason) continue;
+      const sameId = issued.filter(problem => reviewIssueId(problem.id) === reviewIssueId(entry.issue));
+      const explicitlyCitesFingerprint = /\bitem_fingerprint\s*[:=]\s*`?[0-9a-f]{64}\b/i.test(evidence);
+      const named = sameId.filter(problem => evidence.includes(problem.item_fingerprint!));
+      const matches = explicitlyCitesFingerprint || named.length ? named : sameId;
+      if (matches.length !== 1 || ![...matches[0].files!, ...entry.production_paths ?? []].every(invocation.matchesCurrent)) continue;
+      const fp = matches[0].item_fingerprint!;
+      if (rechecks.has(fp)) continue;
+      assigned.set(fp, [...assigned.get(fp) ?? [], entry]);
+    }
+    for (const [fp, responses] of assigned) {
+      if (responses.length !== 1) continue;
+      const [entry] = responses;
+      const referenced = signedReviewEvidence(projectRoot, featureRoot, entry.evidence ?? '', invocation.signedFiles);
+      if (referenced?.every(invocation.matchesCurrent)) rechecks.set(fp, { entry, originals: [rel(original.file), ...referenced.map(rel)] });
+    }
+    const table = getReviewIssueTable(original.text);
+    if (!table || table.missing.length) continue;
+    const { verdict } = extractReviewVerdict(original.text);
+    if (!verdict) continue;
+    const rows = parseReviewIssueRows(original.text);
+    for (const row of rows) {
+      if (!reviewIssueRequiresRepair({ ...row, state: '' }, fidelity) || rows.filter(other => other.id === row.id).length !== 1) continue;
+      const evidence = nativeReviewRowEvidence(projectRoot, featureRoot, rows, row, invocation);
+      const currentResponse = invocation.reportHash === currentHash && !reviewIssueDiagnosis(row, currentVerification, {})
+        ? uniqueIssueVerification(currentVerification, row.id) : undefined;
+      for (const { category, files } of issueResponsibilityGroups(row, input, currentResponse?.repair_owner)) {
+        const fp = itemFingerprintOf(row.id, files, row.summary);
+        if (seen.has(fp)) continue;
+        const recheck = rechecks.get(fp);
+        const response = recheck?.entry ?? currentResponse;
+        if (response?.verdict === 'refuted' || evidence !== null && reviewIssueClosed(row.state)) {
+          seen.add(fp); closed.add(fp); out.delete(fp); continue;
+        }
+        if (verdict !== '有条件通过' && verdict !== '不通过') continue;
+        const confirmed = (evidence !== null || recheck?.entry.verdict === 'confirmed') && response?.verdict !== 'unclear';
+        const owner = confirmed ? resolveRepairResponsibility({ ...input, currentPhase: 'review', target: { files, category } }).owner : 'review';
+        if (!owner) continue;
+        // A newer unverified observation does not supersede a still-current independent original.
+        if (confirmed) seen.add(fp);
+        if (!confirmed && out.has(fp)) continue;
+        out.set(fp, { id: row.id, item_fingerprint: fp, owner, files,
+          detail: [row.evidence, row.summary, response?.evidence].filter(Boolean).join('；'),
+          evidence: [...new Set([rel(original.file), ...(evidence ?? []).map(rel), ...recheck?.originals ?? []])],
+          ...(!confirmed ? { verificationRequired: true } : {}) });
+      }
+    }
+  }
+  return { findings: [...out.values()], closed };
 }
 
 /** The existing test-strength protocol may be returned by the unit's actual independent reviewer. */
@@ -614,7 +768,7 @@ function verifiedRepairOwnerMatches(result: RepairResponsibility, verifiedOwner?
 /** Current project-local evidence; no new evidence protocol or caller-provided freshness flag. */
 export function readableIssueEvidence(projectRoot: string, text: string, context?: { feature?: string; diagnostics?: string[] }): Array<{ label: string; content: string }> {
   const out = new Map<string, string>();
-  const refs = [...text.matchAll(/`([^`\r\n]+?):(\d+)(?:-(\d+))?`/g)];
+  const refs = [...text.matchAll(ISSUE_EVIDENCE_LINE_REF)];
   if (!refs.length) return [];
   for (const ref of refs) {
     const rel = ref[1].replace(/\\/g, '/').replace(/^\.\//, '');
@@ -647,7 +801,8 @@ export function readableIssueEvidence(projectRoot: string, text: string, context
 }
 
 /** All production consumers resolve the same stage-owned artifact, including canonical/legacy rules. */
-export function readPhaseRepairIssues(projectRoot: string, feature: string, phase: string, context?: { subjectId?: string | null; frameworkRoot?: string; runId?: string }): PhaseRepairIssues | null {
+export function readPhaseRepairIssues(projectRoot: string, feature: string, phase: string,
+  context?: { subjectId?: string | null; frameworkRoot?: string; runId?: string; readReviewHistory?: () => ReviewRunHistory }): PhaseRepairIssues | null {
   if (phase === 'spec' || phase === 'plan') {
     const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
     const { parseResultBlock, verifierReportMdFilename } = require('./verifier-subject') as typeof import('./verifier-subject');
@@ -711,7 +866,7 @@ export function readPhaseRepairIssues(projectRoot: string, feature: string, phas
     return { phase, reportText, reportPath, rows,
       evidenceFiles: [...evidenceFiles].map(([label, content]) => ({ label, content })), diagnostics,
       ...(phase === 'review' ? { independentReviewRows: independentReviewRows(projectRoot, feature,
-        context?.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim(), reportPath, reportText, rows) } : {}) };
+        context?.runId ?? process.env.MAISON_GOAL_RUN_ID?.trim(), reportPath, reportText, rows, true, context?.readReviewHistory?.()) } : {}) };
   } catch { return null; }
 }
 
@@ -782,9 +937,13 @@ function isVerificationEvidenceCurrent(
 
 export type ReviewFidelity = Pick<FidelityIntentSsot, 'effective_fidelity' | 'acceptance_strictness'>;
 
+function reviewIssueClosed(state: string): boolean {
+  return /^(?:已关闭|已修复|closed|fixed)(?:$|[（(：:\s])/i.test(state.trim());
+}
+
 /** Classification is verified by the existing issue verifier; missing fidelity never grants disclosure. */
 export function reviewIssueRequiresRepair(row: ReviewIssueRow, fidelity?: ReviewFidelity | null): boolean {
-  if (!['BLOCKER', 'MAJOR'].includes(row.severity) || /已关闭|已修复|closed|fixed/i.test(row.state)) return false;
+  if (!['BLOCKER', 'MAJOR'].includes(row.severity) || reviewIssueClosed(row.state)) return false;
   return !(row.classification === '视觉保真' && row.severity === 'MAJOR'
     && fidelity?.acceptance_strictness === 'best_effort'
     && ['pixel_1to1', 'semantic_layout', 'reference_only'].includes(fidelity.effective_fidelity));
@@ -853,18 +1012,19 @@ export function reviewIssueDiagnosis(
  * · 归属可推导（路径域一致；review 无机器 check id 归属，走兜底）。
  */
 export function collectReviewRepairCandidates(input: ReviewCandidateInput): RepairCandidate[] {
-  if (input.reportValidityBlocked) return [];
   const { verdict } = extractReviewVerdict(input.reportText);
   if (verdict !== '有条件通过' && verdict !== '不通过') return [];
-  const verification = parseIssueVerificationBlock(input.verifierReportText ?? '');
-  const independentlyReviewed = !input.verifierReportText && input.phaseIssues?.reportText === input.reportText
+  const verification = parseIssueVerificationBlock(input.reportValidityBlocked ? '' : input.verifierReportText ?? '');
+  const entries = verification.entries.map(entry => ({ ...entry, issue: reviewIssueId(entry.issue) }));
+  const independentlyReviewed = input.phaseIssues?.reportText === input.reportText
     ? input.phaseIssues.independentReviewRows ?? [] : [];
   if (!verification.ok && !independentlyReviewed.length) return [];
   const out: RepairCandidate[] = [];
   for (const row of openReviewIssues(input.reportText, input.reviewFidelity)) {
-    if (!independentlyReviewed.includes(row.id) && (reviewIssueDiagnosis(row, verification.entries, input)
-      || verification.entries.find(entry => entry.issue === row.id)?.verdict !== 'confirmed')) continue;
-    for (const { category, files } of issueResponsibilityGroups(row, input.responsibility, verification.entries.find(entry => entry.issue === row.id)?.repair_owner)) out.push({
+    const verified = uniqueIssueVerification(entries, row.id);
+    const current = verified && !reviewIssueDiagnosis(row, entries, input) ? verified : undefined;
+    if (current ? current.verdict !== 'confirmed' : !independentlyReviewed.includes(row.id)) continue;
+    for (const { category, files } of issueResponsibilityGroups(row, input.responsibility, current?.repair_owner)) out.push({
       id: row.id,
       category,
       files,
@@ -921,7 +1081,10 @@ export function verifiedPhaseDesignFindings(input: Parameters<typeof verifiedPha
     const artifacts = row.files.filter(isDesignAuthorityRepairFile);
     if (!artifacts.length) return [];
     const { projectRoot, feature } = input.responsibility ?? {};
-    const projections = row.files.filter(file => !artifacts.includes(file));
+    const nativeReview = input.phaseIssues?.phase === 'review' && !input.verifierReportText;
+    const codeFiles = nativeReview ? issueResponsibilityGroups(row, input.responsibility)
+      .filter(group => group.category === 'coding').flatMap(group => group.files) : [];
+    const projections = row.files.filter(file => !artifacts.includes(file) && !codeFiles.includes(file));
     if (projections.some(file => {
       if (!projectRoot || !feature || !['acceptance.yaml', 'contracts.yaml', 'use-cases.yaml'].includes(path.basename(file))) return true;
       const { resolveFeatureArtifact } = require('../../config') as typeof import('../../config');
@@ -964,10 +1127,10 @@ export function readVerifiedPhaseDesignFindings(projectRoot: string, frameworkRo
   const { loadVerifierReportTextOrNull } = require('./verifier-evidence') as typeof import('./verifier-evidence');
   try {
     const summary = JSON.parse(fs.readFileSync(path.join(featurePhaseReportsDir(projectRoot, feature, phase, frameworkRoot), 'summary.json'), 'utf8'));
-    if (summary.report_validity === 'FAIL') return [];
+    if (summary.report_validity === 'FAIL' && phase !== 'review') return [];
     const phaseIssues = phaseIssuesForVerifierSubject(projectRoot, feature, phase, summary.verifier_subject_id ?? null, frameworkRoot, undefined, runId ?? summary.run_id);
     return verifiedPhaseDesignFindings({ phaseIssues, responsibility: { projectRoot, feature },
-      verifierReportText: loadVerifierReportTextOrNull(projectRoot, feature, phase, { frameworkRoot }),
+      verifierReportText: summary.report_validity === 'FAIL' ? null : loadVerifierReportTextOrNull(projectRoot, feature, phase, { frameworkRoot }),
       ...reviewRepairVerificationContext(projectRoot, feature, runId ?? summary.run_id, Boolean(summary.verifier_request)) });
   } catch { return []; }
 }
@@ -1740,12 +1903,13 @@ export function declineDisputeLines(
  * 从盘上读出交付周期内的原事件、Skill 方法账本与当前目标文本，
  * 交给 resolveRepairDeclineState。run 不存在或不可读 → 空状态。
  */
-function repairDeclineHistory(projectRoot: string, feature: string, runId: string): Array<{ run_id: string; events: GoalRunEvent[] }> {
+export function readRepairDeclineHistory(projectRoot: string, feature: string, runId: string,
+  parsed?: { manifest: Pick<import('./goal-manifest').GoalManifest, 'successor_of' | 'execution_scope'>; events: GoalRunEvent[] }): ReviewRunHistory {
   /* eslint-disable @typescript-eslint/no-require-imports */
   const pathMod = require('path') as typeof import('path');
   const { loadFrameworkConfig } = require('../../config') as typeof import('../../config');
   const { featureRelativePath } = require('./feature-identity') as typeof import('./feature-identity');
-  const { readSupersededAncestorRuns, loadAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
+  const { readSupersededAncestorRuns, loadAuthoritativeEvents, filterAuthoritativeEvents } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
   /* eslint-enable @typescript-eslint/no-require-imports */
   if (!runId.trim()) return [];
   let featuresDir = 'doc/features';
@@ -1755,16 +1919,16 @@ function repairDeclineHistory(projectRoot: string, feature: string, runId: strin
   if (!fs.existsSync(eventsPath)) return [];
   let successorSeed: string[] = [];
   try {
-    const m = JSON.parse(fs.readFileSync(pathMod.join(runDir, 'manifest.json'), 'utf8')) as { successor_of?: unknown; execution_scope?: unknown };
+    const m = parsed?.manifest ?? JSON.parse(fs.readFileSync(pathMod.join(runDir, 'manifest.json'), 'utf8')) as { successor_of?: unknown; execution_scope?: unknown };
     if (m.execution_scope && typeof m.successor_of === 'string' && m.successor_of) successorSeed = [m.successor_of];
   } catch { /* 无 manifest → 只看事件里的 supersede */ }
-  const events = loadAuthoritativeEvents(eventsPath);
+  const events = parsed ? filterAuthoritativeEvents(parsed.events) : loadAuthoritativeEvents(eventsPath);
   const ancestors = readSupersededAncestorRuns({ projectRoot, featuresDir, feature, seedTargets: successorSeed, currentEvents: events });
   return [...ancestors, { run_id: runId, events }];
 }
 
 export function loadRepairDeclineState(projectRoot: string, feature: string, runId: string, frameworkRoot = path.resolve(__dirname, '../../..')): Map<string, RepairDeclineState> {
-  const runs = repairDeclineHistory(projectRoot, feature, runId);
+  const runs = readRepairDeclineHistory(projectRoot, feature, runId);
   if (!runs.length) return new Map();
   const { relFeaturesDir } = require('../../config') as typeof import('../../config');
   const { loadHeadlessLedger } = require('./headless-assumptions') as typeof import('./headless-assumptions');
@@ -1811,7 +1975,7 @@ export function readRepairDeclineOriginals(projectRoot: string, feature: string,
   const { loadFeatureContracts, phaseContractIndex } = require('./skill-contract') as typeof import('./skill-contract');
   const { resolveEffectiveRunEnd } = require('./goal-runner-phase') as typeof import('./goal-runner-phase');
   const out: Array<{ path: string; raw: string; entries: import('./headless-assumptions').HeadlessDecisionEntry[] }> = [];
-  const runs = repairDeclineHistory(projectRoot, feature, runId);
+  const runs = readRepairDeclineHistory(projectRoot, feature, runId);
   const windows = runs.flatMap(run => {
     const rounds = (run.events as Array<GoalRunEvent & { candidates?: Array<{ item_fingerprint?: string }> }>)
       .filter(event => event.type === 'phase_backtrack_requested' && typeof event.ts === 'string');
@@ -2121,6 +2285,7 @@ export function scopeRevisionInputFromRepairCandidates(
   const { resolveEffectiveScopeSource } = require('./goal-run-creation') as typeof import('./goal-run-creation');
   const { OBLIGATION_PROVIDERS } = require('./execution-scope') as typeof import('./execution-scope');
   const { resolveCapabilityInputs, readRunBoundContracts } = require('./capability-resolution') as typeof import('./capability-resolution');
+  const { featurePhaseReportsDir } = require('../../config') as typeof import('../../config');
   /* eslint-enable @typescript-eslint/no-require-imports */
   // 第五轮必修 1：无 run 时**不能**直接返回 null——那样 D0.3 的修订触发在交互路径上整条失效
   //（无 run 出口读到的提案永远是空）。统一入口自己按载体选来源：有 run 读 run 的有效范围，
@@ -2178,6 +2343,16 @@ export function scopeRevisionInputFromRepairCandidates(
     const id = `${kind}:${candidate.id}`;
     const priorIndex = facts.findIndex(fact => fact.id === id);
     let targets = [...candidate.files];
+    let deviceAcceptance: ExecutionScopeInput['facts'][number]['basis'][number] | undefined;
+    if (kind === 'device-evidence') {
+      const receipt = deviceTestEvidencePath(featurePhaseReportsDir(ctx.projectRoot, ctx.feature, phase, ctx.frameworkRoot));
+      targets = targets.filter(file => path.relative(receipt, resolveDependencyPath(ctx.projectRoot, file, legacyRoot)) !== '');
+      if (!targets.length && candidate.files.length) {
+        deviceAcceptance = scope.obligations.filter(duty => duty.kind === kind && duty.applicability === 'required')
+          .flatMap(duty => duty.basis).find(binding => binding.source.kind === 'artifact' && binding.source.artifact === 'acceptance@1');
+        if (!deviceAcceptance) continue;
+      }
+    }
     let invalidated: string[] = [];
     if (responsibility.category === 'coding') {
       // UT 的 affected_files 是诊断落点（可含 ohosTest 目录/占位），不代表实现源码或写集。
@@ -2199,24 +2374,25 @@ export function scopeRevisionInputFromRepairCandidates(
         responsibility: context, hasActionable: false, candidateCategories: ['coding'], track: 'full' });
     }
     // 文件绑定走生产解析器，指纹与 §4.1.0 的核验同源（不自行拼 InputBinding）。
-    const resolvedInputs = resolveCapabilityInputs({
+    const resolvedInputs = targets.length ? resolveCapabilityInputs({
       projectRoot: ctx.projectRoot, frameworkRoot: ctx.frameworkRoot, feature: ctx.feature, phase, track: 'full',
       testTargets: targets,
       inputContext: { schema_version: '1.1', subject: { feature: ctx.feature }, obligations: {}, required_outputs: [] },
-    }).inputs?.values;
+    }).inputs?.values : undefined;
     const sourceBindings = Object.values(resolvedInputs ?? {}).filter(value => value.state === 'resolved' && value.binding.source.kind === 'derive'
       && ['derive.codebase', 'derive.test-targets'].includes(value.binding.source.provider_id)
       && targets.every(target => value.binding.dependencies.some(dependency => path.resolve(dependency.path) === path.resolve(ctx.projectRoot, target))));
     const resolved = sourceBindings.find(value => value.state === 'resolved' && value.binding.source.kind === 'derive'
       && value.binding.source.provider_id === (responsibility.category === 'verification' && kinds.includes('unit-evidence') ? 'derive.test-targets' : 'derive.codebase'));
-    if (!resolved || resolved.state !== 'resolved') continue;
+    const basis = deviceAcceptance ?? (resolved?.state === 'resolved' ? resolved.binding : undefined);
+    if (!basis) continue;
     for (const fact of facts) if (scope.obligations.some(obligation => obligation.id === fact.id && invalidated.includes(obligation.owner_phase))) delete fact.satisfied_by;
     const fact = {
       id, kind, applicability: 'required',
       // 语义是「这项发现需要责任阶段裁决」，不是「机器已证明该扩展合理」——
       // OpenSpec 的 scenario 要求 reason 本身说清这一点，不能只转述候选摘要。
       reason: scopeRepairReason(phase, candidate),
-      basis: [resolved.binding],
+      basis: [basis],
     } satisfies ExecutionScopeInput['facts'][number];
     if (priorIndex === -1) facts.push(fact);
     else facts[priorIndex] = fact;

@@ -10,7 +10,8 @@ import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-
 import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { reconcileChangeUnitBlueprintRefs, BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-design-preparation';
 import { diagnoseBlueprintSkillAuthority, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
-import { writeBackAdmission, reusableDesignQuestioning, questioningDependencyChanges } from '../../scripts/utils/design-repair-unattended';
+import { writeBackAdmission, reusableDesignQuestioning, questioningDependencyChanges, questioningRunInputs } from '../../scripts/utils/design-repair-unattended';
+import { selectQuestioningScopes } from '../../scripts/utils/blueprint-questioning';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots } from '../../scripts/utils/phase-write-boundary';
 import { tryAcquireLock, releaseLock, FEATURE_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
 import { fixture as projectionFixture } from './blueprint-skill-projection.unit.test';
@@ -146,6 +147,37 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       const doc = structuredClone(loaded.blueprint) as Json; node(doc).contracts.source_ref = 'context/new-contract.yaml';
       const changed = questioningDependencyChanges(root, doc, before, loaded.canonicalPath);
       assert(changed.some(entry => path.resolve(entry.path) === file && entry.exists), JSON.stringify(changed));
+    }),
+  },
+  {
+    name: 'daily design runtime: process artifacts do not shadow a referenced independent report or a missing original',
+    run: () => withProject(root => {
+      const { canonicalPath, blueprint } = loadCanonicalBlueprint(root, BLUEPRINT);
+      const result = structuredClone((blueprint as Json).review_summary.questioning);
+      const item = result.items[0];
+      const carrier = 'doc/features/ledger-app-blueprint/goal-runs/r1/phases/';
+      const preimage = carrier + 'initial-design-questioning/q1/blueprint-before.yaml';
+      const counterproof = carrier + 'review/r2/review-report.md';
+      const original = carrier + 'initial-design-questioning/q1/questioning-output.json';
+      write(path.join(root, preimage), blueprint);
+      item.verification_refs.push(preimage, counterproof);
+      const resolution = { projectRoot: root, protectedRoots: fs.readdirSync(root), executionRole: 'verifier' as const };
+      const inputs = questioningRunInputs(root, blueprint, result);
+      assert.deepEqual(inputs, [path.resolve(root, counterproof)]);
+      const otherInputs = questioningDependencyChanges(root, blueprint, undefined, canonicalPath, undefined, result)
+        .filter(dep => dep.exists).map(dep => dep.path);
+      const snapshot = () => capturePhaseInvocationSnapshot(resolution, { includeFiles: [...inputs, ...otherInputs] });
+      const before = snapshot();
+      const selected = (snapshot = before) => selectQuestioningScopes(blueprint, blueprint, result,
+        questioningDependencyChanges(root, blueprint, snapshot, canonicalPath, undefined, result)
+          .filter(dep => dep.exists || dep.recorded).map(dep => dep.path), root);
+      assert.deepEqual(selected(), []);
+      write(path.join(root, counterproof), 'Independent review observed the handoff break.');
+      assert.deepEqual(selected(), [item.scope_ref]);
+      const reviewed = snapshot();
+      assert.deepEqual(selected(reviewed), []);
+      item.review_original = { path: original, sha256: 'a'.repeat(64) };
+      assert.deepEqual(selected(reviewed), [item.scope_ref]);
     }),
   },
   {

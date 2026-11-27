@@ -13,13 +13,13 @@ import { resolveCapabilityInputs, readRunBoundContracts } from '../../scripts/ut
 import { resolveCapabilityResolutionEntryInput, loadFactsInvocationContext, loadFormalFactsObservation } from '../../scripts/utils/capability-resolution-entry-input';
 import { resolveExecutionScope, executionScopeFingerprint, type ExecutionScope, type ExecutionScopeInput } from '../../scripts/utils/execution-scope';
 import { designScopeRevisionChecks } from '../../scripts/utils/blueprint-skill-projection';
-import { buildSummaryRepairCandidates, checkOwnedCandidate, scopeRevisionInputFromRepairCandidates, testStrengthVerification, readPhaseRepairIssues } from '../../scripts/utils/repair-candidates';
+import { buildSummaryRepairCandidates, checkOwnedCandidate, collectPhaseRepairCandidates, readIndependentReviewFindings, scopeRevisionInputFromRepairCandidates, testStrengthVerification, readPhaseRepairIssues } from '../../scripts/utils/repair-candidates';
 import { collectResolvedScopeFacts, readScopeAcceptance, prepareFeatureScopeCandidate, featureScopePhaseHealth, resolveFeatureExecutionScope, featureTrackDeclPath, recomputeDefinitionFacts, resolveScopeRevisionProposal } from '../../scripts/utils/feature-track';
 import { ensureFeatureExecutionScopeFrozen } from '../../scripts/utils/feature-execution-scope';
 import { buildGoalManifestFromInput, loadGoalManifestFromRun, SCOPE_REVISION_FIELDS } from '../../scripts/utils/goal-manifest';
 import { ensureRunControl, readRunControl, casAcquireRunOwner, releaseRunOwner } from '../../scripts/utils/goal-run-control';
 import { issueSessionExecution, writePhaseExecutionRequestMaterial, executionRequestForInvoke } from '../../scripts/utils/session-execution-handoff';
-import { AttendedGoalPhaseExecutor, type WorkUnitExecutionContext } from '../../scripts/utils/goal-phase-executor';
+import { AttendedGoalPhaseExecutor, type WorkUnitExecutionContext, type WorkUnitInput } from '../../scripts/utils/goal-phase-executor';
 import { createGoalRun, loadEffectiveExecutionScope } from '../../scripts/utils/goal-run-creation';
 import { resolvePhaseWriteBoundary, capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots, classifyPhaseInvocationChanges } from '../../scripts/utils/phase-write-boundary';
 import { tryLoadUtSourceRootResolver } from '../../profile-host-loader';
@@ -32,6 +32,8 @@ import { checkFactsArtifact, factsPhaseFingerprint } from '../../scripts/utils/c
 import { checkUpstreamVerdictGate } from '../../scripts/utils/upstream-verdict-gate';
 import { collectCleanPassIssues, executionScopeEvidenceIssues, readCurrentDispositionInput } from '../../scripts/utils/verify-feature-completion';
 import { resolveCurrentDisposition } from '../../scripts/utils/check-disposition';
+import { renderWorkUnitAuthorFeedback, workUnitHasUndeliveredConfirmedProductRepair } from '../../scripts/goal-phase-runtime';
+import { evaluateCompletionProgress } from '../../scripts/utils/goal-failure-classifier';
 import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, resolvePhaseEvidenceManifest as resolvePhaseEvidenceManifestActual, writePhaseEvidenceManifest } from '../../scripts/utils/phase-evidence-manifest';
 import { computeRunRequirementSha, computeRequirementShaFromText } from '../../scripts/utils/fidelity-shared';
 import coding, { checkCodingExistingTestPreserved, checkDiffWithinScope } from '../../scripts/check-coding';
@@ -271,16 +273,17 @@ async function currentReviewFinding(f: ReturnType<typeof fixture>, row: { id: st
   return { report, summary };
 }
 
-function recordIndependentReview(f: ReturnType<typeof fixture>): void {
+function recordIndependentReview(f: ReturnType<typeof fixture>, invokeId = 'review-native-original', workInput?: WorkUnitInput): void {
   const file = 'doc/features/demo/review/review-report.md', bytes = fs.readFileSync(path.join(f.root, file));
   fs.unlinkSync(path.join(f.root, file));
-  const runId = f.manifest.run_id, runDir = path.join(f.root, f.manifest.report_dir), invokeId = 'review-native-original';
+  const runId = f.manifest.run_id, runDir = path.join(f.root, f.manifest.report_dir);
   const control = ensureRunControl(runDir, runId);
   const owner = casAcquireRunOwner(runDir, runId, control.current_epoch, { kind: 'process', owner_id: 'independent-review-fixture', pid: process.pid });
   assert(owner.ok);
   const context: WorkUnitExecutionContext = { runId, feature: 'demo', workflowId: 'obligation-driven', track: 'full', chain: ['review'], phase: 'review',
     attemptId: invokeId, owner: { ...owner.token, kind: 'process' }, projectRoot: f.root, frameworkRoot, runDir, reportDir: f.manifest.report_dir,
     adapter: 'generic', instruction: 'Independently read the current objects and write the actual review report.',
+    ...(workInput ? { workInput } : {}),
     runtimeFacts: { receiptRequired: false, resume: false, successor: false }, childEnv: {} };
   const boundary = resolvePhaseWriteBoundary({ projectRoot: f.root, frameworkRoot, feature: 'demo', runId,
     phaseOrder: workflow.auto_chain!, track: 'full', profileDir: f.profileDir, productLayerDirs: ['src'], executionRole: 'verifier', verifierResultPath: file });
@@ -298,6 +301,7 @@ function recordIndependentReview(f: ReturnType<typeof fixture>): void {
   appendRunEvent(f, { type: 'phase_write_observed', phase: 'review', invoke_id: invokeId, pre_snapshot: pre.sha256, post_snapshot: post.sha256,
     owned: classified.allowed.map(write => ({ path: write.path, pre_sha256: write.preSha256, post_sha256: write.postSha256 })) });
   appendRunEvent(f, { type: 'agent_invoke_end', phase: 'review', purpose: 'review', invoke_id: invokeId, exit_code: 0, completion_observed: true, status: 'passed' });
+  fs.writeFileSync(path.join(runDir, path.dirname(issued.reference.path), 'independent-review-report.md'), bytes);
   releaseRunOwner(runDir, owner.token);
 }
 async function scopeCheck(f: ReturnType<typeof fixture>) {
@@ -309,6 +313,84 @@ async function scopeCheck(f: ReturnType<typeof fixture>) {
 
 
 const cases: Array<{ name: string; newFile?: boolean; baselineTest?: boolean; extraContractFiles?: string[]; requirement?: string; materializedAdapter?: 'generic'; run(f: ReturnType<typeof fixture>): Promise<void> | void }> = [
+  { name: 'signed review retains separate same-ID repairs and carries the original diagnosis ahead of format feedback', async run(f) {
+    const first = { id: 'CR-001', files: 'src/demo/value.ts', fix: '第一次诊断：`src/demo/value.ts:1` 编码对象缺少业务输入' };
+    await currentReviewFinding(f, first);
+    recordIndependentReview(f, 'original-diagnosis');
+    const file = path.join(f.root, 'doc/features/demo/review/review-report.md');
+    const later = fs.readFileSync(file, 'utf8').split(first.fix).join('第二次诊断：同号的另外一个附带问题');
+    fs.writeFileSync(file, later.replace('| 问题描述 |', '| 描述 |'));
+    recordIndependentReview(f, 'different-diagnosis');
+    const input = { projectRoot: f.root, frameworkRoot, feature: 'demo', runId: f.manifest.run_id };
+    const openings = readIndependentReviewFindings(input).findings.filter(finding => finding.id === first.id);
+    assert.equal(openings.length, 2);
+    assert.equal(new Set(openings.map(finding => finding.item_fingerprint)).size, 2);
+    const problems = openings.map(finding => ({ ...finding, id: `open_finding:${finding.id}`, phase: 'review',
+      action: 'repair' as const, affects: 'completion' as const, severity: 'BLOCKER' as const }));
+    const disposition = resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [
+      { id: 'issue_table_format', phase: 'review', action: 'repair', affects: 'completion', severity: 'BLOCKER', detail: '格式待核' }, ...problems,
+    ] });
+    const authorFeedback = renderWorkUnitAuthorFeedback({ ...input, disposition });
+    assert(authorFeedback.includes(first.fix) && authorFeedback.includes('independent-review-report.md'));
+    assert(authorFeedback.indexOf(first.fix) < authorFeedback.indexOf('格式待核'));
+    assert(workUnitHasUndeliveredConfirmedProductRepair({ ...input, disposition }));
+    const only = (problem: typeof problems[number]) => resolveCurrentDisposition({ endpoint: 'request', phases: [], additionalProblems: [problem] });
+    const relabeled = { ...problems[0], item_fingerprint: 'd'.repeat(64), detail: '同一证据改写措辞',
+      evidence: problems[0].evidence.map(ref => ref.endsWith('/independent-review-report.md') ? 'new/archive/independent-review-report.md' : ref) };
+    const inputs = { [first.files]: { exists: true, contentHash: createHash('sha256').update(fs.readFileSync(path.join(f.root, first.files))).digest('hex') } };
+    const previous = { acceptanceKey: 'demo', inputs, completed: true, disposition: only(problems[0]) };
+    const context = executionRequestForInvoke(path.join(f.root, f.manifest.report_dir), 'different-diagnosis')!.request.context;
+    const originalAuthor = { ...context, phase: 'work-unit-author', workInput: { material: { purpose: 'work-unit-author', segments: [] }, evaluation: previous } };
+    assert(!workUnitHasUndeliveredConfirmedProductRepair({ ...input, disposition: only(relabeled) }, originalAuthor));
+    assert(evaluateCompletionProgress({ previous, current: { ...previous, disposition: only(relabeled) },
+      feedbackDelivered: true, authorReturned: true }).halt, 'new wording and report archive cannot bypass the existing no-progress stop');
+    assert(workUnitHasUndeliveredConfirmedProductRepair({ ...input, disposition: only({
+      ...relabeled, evidence: [...relabeled.evidence, 'testing/new/trace.json'],
+    }) }, originalAuthor), 'new behavior evidence receives priority');
+    const refuted = openings.find(finding => finding.detail.includes(first.fix))!;
+    const recheck = (id: string, issue: string, evidence: string): void => {
+      fs.writeFileSync(file, '```issue-verification\n' + YAML.stringify([{ issue, verdict: 'refuted', evidence }]) + '```\n');
+      recordIndependentReview(f, id, { material: { purpose: 'review', segments: [] },
+        evaluation: { acceptanceKey: 'demo', inputs: {}, completed: false, disposition } });
+    };
+    recheck('ambiguous-refutation', 'open_finding:CR-001', '现行输入真实，但未指出是哪个同号发现：`src/demo/value.ts:1`');
+    assert.equal(readIndependentReviewFindings(input).findings.length, 2, 'one ambiguous response cannot close both issues');
+    recheck('bound-refutation', 'CR-001', `item_fingerprint: ${refuted.item_fingerprint}；` + '核定取源成立：`src/demo/value.ts:1`');
+    assert.deepStrictEqual(readIndependentReviewFindings(input).findings.map(finding => finding.item_fingerprint),
+      openings.filter(finding => finding !== refuted).map(finding => finding.item_fingerprint));
+    f.write(first.files, 'export const value = 43;\n');
+    assert(readIndependentReviewFindings(input).findings.every(finding => finding.owner === 'review' && finding.verificationRequired));
+  } },
+  { name: 'signed review tolerates code members while holding ambiguous columns and unsigned evidence references', async run(f) {
+    const row = { id: 'CR-001', files: 'src/demo/value.ts',
+      fix: '`src/demo/value.ts:1` 的 `flowStore.start` 未提供真实的 `product.bankCode`' };
+    f.write('src/demo/old/review-note.txt', 'old observation\n');
+    f.write('src/demo/new/review-note.txt', 'new observation\n');
+    await currentReviewFinding(f, row);
+    const file = path.join(f.root, 'doc/features/demo/review/review-report.md');
+    const unverified = [
+      ['CR-003', '`review-note.txt` 记录失败'],
+      ['CR-004', '`missing-note.txt:1` 记录失败'],
+      ['CR-005', '`src/demo/unbound-note.txt` 记录失败'],
+    ].map(([id, diagnosis]) => `| ${id} | MAJOR | 逻辑错误 | ${diagnosis} | | ${row.files} | 待核 | 未关闭 |`);
+    const reportText = fs.readFileSync(file, 'utf8')
+      .replace('| 问题描述 |', '| 问题描述 | 描述 |')
+      .replace('|---|---|---|---|---|---|---|', '|---|---|---|---|---|---|---|---|')
+      .replace(`| ${row.id} | MAJOR | 逻辑错误 | ${row.fix} |`,
+        [`| CR-002 | MAJOR | 逻辑错误 | 诊断甲 | 诊断乙 | ${row.files} | 待核 | 未关闭 |`,
+          ...unverified,
+          `| ${row.id} | MAJOR | 逻辑错误 | ${row.fix} | ${row.fix} |`].join('\n'));
+    fs.writeFileSync(file, reportText);
+    recordIndependentReview(f);
+    f.write('src/demo/unbound-note.txt', 'not in the signed request\n');
+    const responsibility = { projectRoot: f.root, frameworkRoot, feature: 'demo', runId: f.manifest.run_id };
+    const phaseIssues = readPhaseRepairIssues(f.root, 'demo', 'review', responsibility);
+    const checks = await review.check(f.context('review'));
+    assert.equal(checks.find(check => check.id === 'issue_table_format')?.status, 'FAIL');
+    const candidates = collectPhaseRepairCandidates({ phase: 'review', reportValidity: 'FAIL', phaseIssues,
+      reviewReportText: reportText, verifierReportText: null, responsibility, checks: [] });
+    assert.deepStrictEqual(candidates.map(candidate => [candidate.id, candidate.category]), [[row.id, 'coding']]);
+  } },
   { name: '3f8a6c21 native review cannot override a current verifier-refuted design finding', async run(f) {
     const authority = 'doc/features/demo/blueprint/component-blueprint.yaml'; f.write(authority, 'blueprint_id: demo\nrevision: 1\n');
     const row = { id: 'CR-DESIGN', files: authority, fix: '核对当前设计声明，错误提案须驳回' };

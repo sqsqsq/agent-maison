@@ -1,6 +1,6 @@
 import { phaseInvocationStart, repairInvocationCompleted, readSupersededAncestorRuns } from './goal-runner-phase';
 import type { IdentityNeutralDigestReaders } from './identity-neutral-digest';
-import { readRepairDependencyContext, resolveRepairResponsibility } from './repair-responsibility';
+import { readRepairDependencyContext, repairResponsibilityContext, resolveRepairResponsibility } from './repair-responsibility';
 import type { WorkflowSpec } from '../../workflow-loader';
 // ============================================================================
 // verify-feature-completion.ts — feature 完成凭证：生成与唯一验证入口
@@ -581,6 +581,22 @@ export function readCurrentCheckObservation(opts: { projectRoot: string; framewo
     if (previous) previous = { ...recorded, ...previous };
     else previous = recorded;
   }
+  if (opts.phase === 'testing') {
+    const receipt = deviceTestEvidencePath(featurePhaseReportsDir(opts.projectRoot, opts.feature, 'testing', opts.frameworkRoot));
+    if (isInsideProjectRoot(opts.projectRoot, receipt)) {
+      const key = path.relative(opts.projectRoot, receipt).split(path.sep).join('/');
+      const hash = current.outputs.find(entry => entry.path === key)?.sha256 ?? null;
+      inputs[key] = { exists: hash !== null, contentHash: hash ?? '' };
+      if (previous) {
+        const published = bound ? loaded?.manifest.outputs.find(entry => entry.path === key && entry.exists)?.sha256 ?? null : null;
+        // The coordinator can publish the checked receipt after the tool records its return.
+        // The matching manifest proves that publication belongs to the observed check.
+        if ((published !== null && published === hash) || !previous[key]) {
+          previous = { ...previous, [key]: { exists: published !== null, contentHash: published ?? '' } };
+        }
+      }
+    }
+  }
   const providerKey = '<environment:visual_provider_pin>';
   const hadProviderInput = !!asRecord(previous)?.[providerKey];
   const consumesProvider = report ? report.checks.some(check => ['visual_provider_round', 'visual_diff'].includes(String(asRecord(check.structured)?.kind)))
@@ -823,14 +839,12 @@ function currentFindingEvidence(projectRoot: string, phase: string, finding: { i
   return [...new Set(diagnostic)];
 }
 
-function uniqueFindingObjects<T extends { id: string; item_fingerprint?: string }>(findings: readonly T[]): T[] {
-  const seen = new Map<string, Set<string | undefined>>();
+function uniqueFindingObjects<T extends { id: string; item_fingerprint?: string; detail: string; files?: readonly string[] }>(findings: readonly T[]): T[] {
+  const seen = new Set<string>();
   return findings.filter(finding => {
-    const fingerprint = finding.item_fingerprint || undefined;
-    const prior = seen.get(finding.id);
-    if (!prior) { seen.set(finding.id, new Set([fingerprint])); return true; }
-    if (!fingerprint || prior.has(undefined) || prior.has(fingerprint)) return false;
-    prior.add(fingerprint);
+    const identity = finding.item_fingerprint ?? JSON.stringify([finding.id, finding.files, finding.detail]);
+    if (seen.has(identity)) return false;
+    seen.add(identity);
     return true;
   });
 }
@@ -1010,9 +1024,24 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
   opts = { ...opts, authorityReaders: opts.authorityReaders ?? (require('./identity-neutral-digest') as typeof import('./identity-neutral-digest')).createIdentityNeutralDigestReaders() };
   if (!opts.executionScope && opts.runId) opts = { ...opts, executionScope: resolveEffectiveScopeSource(opts.projectRoot, opts.feature, opts.runId)?.scope };
   const { projectRoot, feature, chain } = opts;
+  const runManifest = opts.runId ? loadGoalManifestFromRun(projectRoot, opts.runId, { feature }) : undefined;
+  const runEvents = runManifest ? loadAuthoritativeRunEvents(projectRoot, feature, runManifest.run_id, runManifest) : [];
+  const runReaders: {
+    readGoalBaseline?: () => import('./goal-run-baseline').GoalRunBaseline;
+    readReviewHistory?: () => import('./repair-candidates').ReviewRunHistory;
+  } = runManifest ? (() => {
+    const { resolveGoalRunBaseline } = require('./goal-run-baseline') as typeof import('./goal-run-baseline');
+    const { readRepairDeclineHistory } = require('./repair-candidates') as typeof import('./repair-candidates');
+    let baseline: ReturnType<typeof resolveGoalRunBaseline> | undefined;
+    let reviewHistory: ReturnType<typeof readRepairDeclineHistory> | undefined;
+    return {
+      readGoalBaseline: () => baseline ??= resolveGoalRunBaseline(projectRoot, feature, runManifest.run_id, { manifest: runManifest, events: runEvents }),
+      readReviewHistory: () => reviewHistory ??= readRepairDeclineHistory(projectRoot, feature, runManifest.run_id, { manifest: runManifest, events: runEvents }),
+    };
+  })() : {};
   const endpoint = opts.endpoint ?? (opts.executionScope?.completion_target === 'request' ? 'request' : 'feature-completion');
   const additionalProblems: NonNullable<CurrentDispositionInput['additionalProblems']>[number][] = [];
-  const strength = (require('./acceptance-review-strength') as typeof import('./acceptance-review-strength')).readTaggedAcceptanceStrength(opts);
+  const strength = (require('./acceptance-review-strength') as typeof import('./acceptance-review-strength')).readTaggedAcceptanceStrength({ ...opts, ...runReaders });
   for (const outcome of strength) {
     if (outcome.passed) continue;
     if ('gap' in outcome) {
@@ -1083,8 +1112,12 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
   } catch {
     /* 账本损坏由既有 DEBT_PIPELINE_ERROR 投影处理，不在这里另加重判据 */
   }
-  const responsibility = { projectRoot, feature, frameworkRoot: opts.frameworkRoot ?? path.resolve(__dirname, '../../..'),
-    runId: opts.runId, workflow: opts.workflow, executionScope: opts.executionScope, authorityReaders: opts.authorityReaders };
+  const responsibilityInput = { projectRoot, feature, frameworkRoot: opts.frameworkRoot ?? path.resolve(__dirname, '../../..'),
+    runId: opts.runId, workflow: opts.workflow, executionScope: opts.executionScope, authorityReaders: opts.authorityReaders, ...runReaders };
+  const responsibility = (() => {
+    try { return { ...responsibilityInput, ...repairResponsibilityContext(responsibilityInput) }; }
+    catch { return responsibilityInput; } // Preserve the individual responsibility reader's unavailable result.
+  })();
   const independent = new Map<string, import('./verifier-evidence').VerifierEvidence | null>();
   const independentBody = (phase: string, subject: string, evidence: import('./verifier-evidence').VerifierEvidence): string => {
     const verifier = require('./verifier-evidence') as typeof import('./verifier-evidence');
@@ -1110,8 +1143,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
     independent.set(key, result);
     return result;
   };
-  const runEvents = opts.runId ? loadAuthoritativeRunEvents(projectRoot, feature, opts.runId) : [];
-  const predecessor = opts.runId ? loadGoalManifestFromRun(projectRoot, opts.runId, { feature }).successor_of : undefined;
+  const predecessor = runManifest?.successor_of;
   const ancestorRuns = readSupersededAncestorRuns({ projectRoot, feature, featuresDir: relFeaturesDir(projectRoot),
     seedTargets: predecessor ? [predecessor] : [], currentEvents: runEvents });
   const repairEvents = [...ancestorRuns.flatMap(run => run.events).sort((a, b) => String(a.ts).localeCompare(String(b.ts))), ...runEvents];
@@ -1235,7 +1267,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       ? (require('./phase-closure-finalizer') as typeof import('./phase-closure-finalizer')).readCurrentPhaseRepairCandidates({
         projectRoot, frameworkRoot: responsibility.frameworkRoot, feature, phase: source, goalRunId: opts.runId,
         resolvedInputs: current?.resolvedInputs ?? opts.resolvedInputs, authorityReaders: opts.authorityReaders,
-        executionScope: opts.executionScope, workflow: opts.workflow,
+        executionScope: opts.executionScope, workflow: opts.workflow, ...runReaders,
       }, featurePhaseReportsDir(projectRoot, feature, source, opts.frameworkRoot),
       (summary.raw ?? {}) as Parameters<typeof import('./phase-closure-finalizer').readCurrentPhaseRepairCandidates>[2]) : undefined;
     const registered = readRegisteredFindings(lateCandidates === undefined ? summary.raw
@@ -1255,35 +1287,51 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       }
     }
     const currentCollected = new Set<typeof registered[number]>();
-    if (nativeReviewBound && asRecord(summary.raw)?.report_validity === 'PASS') {
+    if (source === 'review' && sourceRunId) {
       const repairs = require('./repair-candidates') as typeof import('./repair-candidates');
-      const phaseIssues = repairs.readPhaseRepairIssues(projectRoot, feature, source, { frameworkRoot: opts.frameworkRoot, runId: sourceRunId });
-      const verifierReportText = (require('./verifier-evidence') as typeof import('./verifier-evidence')).loadVerifierReportTextOrNull(
-        projectRoot, feature, source, { frameworkRoot: opts.frameworkRoot, subjectId: subject, resolvedInputs: current?.resolvedInputs ?? opts.resolvedInputs });
-      if (!verifierReportText && phaseIssues?.independentReviewRows !== undefined) {
-        const projected = structuredClone(asRecord(summary.raw)) as unknown as import('./types').HarnessRunSummary;
-        projected.repair_candidates = lateCandidates;
-        projected.blockers = projected.blockers.filter(blocker => blocker.source !== 'issue-verification');
-        repairs.projectDesignFindingsIntoSummary(projected, repairs.verifiedPhaseDesignFindings({ phaseIssues, verifierReportText: null,
-          responsibility: { projectRoot, feature } }));
-        for (const finding of readRegisteredFindings(projected, { ...responsibility, currentPhase: source })) {
-          if (!registered.some(row => row.id === finding.id)) registered.push(finding);
+      const phaseIssues = current?.phaseIssues ?? repairs.readPhaseRepairIssues(projectRoot, feature, source, { frameworkRoot: opts.frameworkRoot, runId: sourceRunId,
+        readReviewHistory: runReaders.readReviewHistory });
+      const verifierReportText = nativeReviewBound ? (require('./verifier-evidence') as typeof import('./verifier-evidence')).loadVerifierReportTextOrNull(
+        projectRoot, feature, source, { frameworkRoot: opts.frameworkRoot, subjectId: subject, resolvedInputs: current?.resolvedInputs ?? opts.resolvedInputs }) : null;
+      const native = repairs.readIndependentReviewFindings({ ...responsibility, projectRoot, feature, runId: sourceRunId, verifierReportText });
+      for (let index = registered.length - 1; index >= 0; index--) {
+        const fp = registered[index].item_fingerprint;
+        if (fp && native.closed.has(fp)) registered.splice(index, 1);
+      }
+      for (const finding of native.findings) {
+        const known = registered.find(row => row.item_fingerprint === finding.item_fingerprint);
+        if (known && finding.verificationRequired && verifierReportText
+          && lateCandidates?.some(candidate => candidate.item_fingerprint === finding.item_fingerprint)) {
+          currentCollected.add(known);
+          continue;
+        }
+        if (known) Object.assign(known, finding);
+        else registered.push(finding);
+        currentCollected.add(known ?? finding);
+      }
+      if (phaseIssues?.independentReviewRows !== undefined) {
+        for (const design of repairs.verifiedPhaseDesignFindings({ phaseIssues, verifierReportText, responsibility })) {
+          if (registered.some(row => row.id === design.check && row.detail === design.basis)) continue;
+          const finding = { id: design.check, owner: 'external', files: design.artifacts, detail: design.basis, evidence: [phaseIssues.reportPath] };
+          registered.push(finding);
+          currentCollected.add(finding);
         }
         const fidelity = loadFidelityIntentSsot(projectRoot, feature);
         for (const row of phaseIssues.rows.filter(row => repairs.reviewIssueRequiresRepair(row, fidelity))) {
-          const known = registered.find(finding => finding.id === row.id || finding.id === `${source}:${row.id}`);
-          const evidence = [`review:${row.id}:${row.summary}`];
-          if (known) {
-            known.evidence = [...(known.evidence ?? []), ...evidence];
-            if (phaseIssues.independentReviewRows.includes(row.id)) currentCollected.add(known);
-          }
-          else registered.push({ id: row.id, detail: row.summary, owner: source, verificationRequired: true, files: row.files, evidence });
+          const fingerprint = repairs.itemFingerprintOf(row.id, row.files, row.summary);
+          const known = registered.some(finding => finding.item_fingerprint && finding.id === row.id
+            && finding.files?.every(file => row.files.includes(file))
+            && finding.item_fingerprint === repairs.itemFingerprintOf(row.id, finding.files ?? [], row.summary));
+          if (!known && !phaseIssues.independentReviewRows.includes(row.id)) registered.push({
+            id: row.id, item_fingerprint: fingerprint, detail: row.evidence || row.summary, owner: source,
+            verificationRequired: true, files: row.files, evidence: [phaseIssues.reportPath],
+          });
         }
       }
     }
     if (!current && lateCandidates === undefined && readReusableCheckResult({ projectRoot, frameworkRoot: opts.frameworkRoot,
       feature, phase: source, runId: opts.runId, currentRequirementSha: opts.currentRequirementSha, authorityReaders: opts.authorityReaders }) === null) {
-      for (const finding of registered) { finding.owner = source; finding.verificationRequired = true; }
+      for (const finding of registered.filter(finding => !currentCollected.has(finding))) { finding.owner = source; finding.verificationRequired = true; }
     }
     if (source === 'testing' && actionableEvidence?.defects.length) {
       const candidates = (require('./repair-candidates') as typeof import('./repair-candidates'))
@@ -1297,7 +1345,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
       if (phaseIssues === undefined) phaseIssues = (require('./repair-candidates') as typeof import('./repair-candidates'))
         .readPhaseRepairIssues(projectRoot, feature, source, { subjectId: subject, frameworkRoot: opts.frameworkRoot, runId: opts.runId });
       const { collectCurrentAcceptanceEvidence, readVerifierMaterialOrNull, verifierMaterialFileMatchesCurrent } = require('./verifier-material') as typeof import('./verifier-material');
-      const evidence = current?.acceptanceEvidence ?? (currentAcceptanceEvidence ??= collectCurrentAcceptanceEvidence({ ...opts, phase: source, subjectId: subject, phaseIssues }));
+      const evidence = current?.acceptanceEvidence ?? (currentAcceptanceEvidence ??= collectCurrentAcceptanceEvidence({ ...opts, ...runReaders, phase: source, subjectId: subject, phaseIssues }));
       const reviewed = subject ? readVerifierMaterialOrNull(featurePhaseReportsDir(projectRoot, feature, source, opts.frameworkRoot), subject) : null;
       if (evidence.filter(file => !file.label.startsWith('(')).some(file => !reviewed || !verifierMaterialFileMatchesCurrent({
         projectRoot, feature, material: reviewed, file: file.label, authorityReaders: opts.authorityReaders }))) {
@@ -1396,8 +1444,7 @@ export function readCurrentDispositionInput(opts: CleanPassOptions | CurrentRequ
   });
   let minimumAssurance = opts.minimumAssurance;
   if (!minimumAssurance && opts.runId) {
-    try { minimumAssurance = loadGoalManifestFromRun(projectRoot, opts.runId, { feature }).minimum_assurance; }
-    catch { /* The common identity reader retains corrupt or missing run facts. */ }
+    minimumAssurance = runManifest?.minimum_assurance;
   }
   const phases = phaseNames.map(phase => {
     const proofCurrent = proofIsCurrent(phase);
@@ -1633,6 +1680,7 @@ export function runtimeFidelityEvidenceIssue(
   } catch (error) {
     return `device-test-evidence.json 缺失或不可解析：${(error as Error).message}`;
   }
+  if (!asRecord(doc) || typeof doc.trace_path !== 'string' || !doc.trace_path.trim()) return 'device-test-evidence.json 缺少有效 trace_path';
   // 身份：run/attempt 由 resolvePhaseRunIds 重算，doc 自报值须相等（文案沿用 legacy 两条）。
   if (expectedGoalRunId && doc.goal_run_id !== expectedGoalRunId) {
     return `runtime evidence goal_run_id 不匹配（${doc.goal_run_id} vs ${expectedGoalRunId}）`;
@@ -1645,7 +1693,7 @@ export function runtimeFidelityEvidenceIssue(
   // HAP 已由 testing 门禁闭环时验过并被 manifest 冻结、⑤ lineage_fresh 保证未改，完成侧不重算
   // （同一批事实只裁决一次）。
   // plan b2d7f4e9 t4：trace_path 按写入时工程根记成绝对路径；换根加载按同一文档推出的旧根重定位（只读侧）。
-  if (typeof doc.trace_path === 'string') doc = { ...doc, trace_path: resolveDependencyPath(projectRoot, doc.trace_path, inferLegacyProjectRoot(projectRoot, doc)) };
+  doc = { ...doc, trace_path: resolveDependencyPath(projectRoot, doc.trace_path, inferLegacyProjectRoot(projectRoot, doc)) };
   let raw: unknown;
   try {
     raw = JSON.parse(fs.readFileSync(doc.trace_path, 'utf-8'));

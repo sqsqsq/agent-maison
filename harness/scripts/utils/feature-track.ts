@@ -12,6 +12,7 @@ import { inferLegacyProjectRoot, isInsideProjectRoot, resolveDependencyPath } fr
 import { loadEffectiveExecutionScope, resolveEffectiveScopeSource } from './goal-run-creation';
 import { loadFeatureContracts, contractFingerprint } from './skill-contract';
 import { loadPhaseEvidenceManifest, recomputePhaseEvidenceStaleness, sha256File } from './phase-evidence-manifest';
+import { deviceTestEvidencePath } from './device-test-evidence-shared';
 import { authoritativeContentDrift, compareAuthoritativeContent, deriveBlueprintSkillInput, describeAuthoritativeDrift, projectionContentEqual } from './blueprint-skill-projection';
 import { hasNewSourcedFact } from './execution-scope';
 import { resolveWorkflowSpec } from '../../workflow-loader';
@@ -243,7 +244,7 @@ const relPosix = (projectRoot: string, abs: string): string => path.relative(pro
  *
  * This exemption is for `basis` (and `request.impact.basis`) ONLY — never for `satisfied_by`.
  */
-function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature: string, binding: InputBinding, skipContentCheck = false, requirement?: string | null, legacyRoot?: string): { ok: boolean; detail: string } {
+function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature: string, binding: InputBinding, skipContentCheck = false, requirement?: string | null, legacyRoot?: string, deviceObservation?: string): { ok: boolean; detail: string } {
   const at = (dep: { path: string }): string => resolveDependencyPath(projectRoot, dep.path, legacyRoot);
   // `derive.requirement` 的解析值就是需求文本本身（`capability-resolution.ts:273-276`），
   // 所以重解析时必须把**同一份**需求文本交回去；否则该 provider 落到 feature 分支，
@@ -260,8 +261,11 @@ function verifyBasisBinding(projectRoot: string, frameworkRoot: string, feature:
   // so a blueprint-derived binding legitimately records the absent physical artifact — demanding
   // existence there would reject every blueprint source, which D0.1 explicitly allows as a basis.
   for (const dep of binding.dependencies) {
-    if (!isInsideProjectRoot(projectRoot, at(dep))) return { ok: false, detail: `${binding.input_id}: 依据不在项目内 ${dep.path}` };
-    if (fs.existsSync(at(dep)) !== dep.exists) return { ok: false, detail: `${binding.input_id}: 依据存在性变化 ${dep.path}` };
+    const file = at(dep);
+    if (!isInsideProjectRoot(projectRoot, file)) return { ok: false, detail: `${binding.input_id}: 依据不在项目内 ${dep.path}` };
+    if ((!deviceObservation || path.relative(deviceObservation, file)) && fs.existsSync(file) !== dep.exists) {
+      return { ok: false, detail: `${binding.input_id}: 依据存在性变化 ${dep.path}` };
+    }
   }
   // 它不该拦住谁：**手上没有需求文本**的只读投影（`resolveChangeUnitExpectedExecution` 的 CU
   // 交接预判）。`derive.requirement` 的解析值就是那段文本，没有对照物就无从比对——依赖项的
@@ -466,7 +470,12 @@ export function collectResolvedScopeFacts(input: ExecutionScopeInput, ctx: Scope
   for (const fact of input.facts) {
     for (const binding of fact.basis) {
       const birthObservation = EXECUTION_SOURCE_KINDS.has(fact.kind) && binding.dependencies.every(dep => dep.role === 'derive');
-      basis.push({ obligation_id: fact.id, input_id: binding.input_id, ...verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, birthObservation, ctx.requirement, legacyRoot) });
+      // Older device-repair facts recorded the testing receipt as tested code. Its historical
+      // binding still documents the finding while the Testing proof owns current evidence.
+      const deviceObservation = birthObservation && fact.kind === 'device-evidence' && binding.input_id === 'tested_code'
+        && binding.source.kind === 'derive' && binding.source.provider_id === 'derive.codebase'
+        ? deviceTestEvidencePath(featurePhaseReportsDir(projectRoot, feature, 'testing', frameworkRoot)) : undefined;
+      basis.push({ obligation_id: fact.id, input_id: binding.input_id, ...verifyBasisBinding(projectRoot, frameworkRoot, feature, binding, birthObservation, ctx.requirement, legacyRoot, deviceObservation) });
     }
   }
 
@@ -1202,7 +1211,7 @@ export function featureScopePhaseHealth(
  */
 export function readScopeProofHistory(input: {
   projectRoot: string; frameworkRoot: string; feature: string; workflow: WorkflowSpec; previous: ExecutionScope;
-  currentRunId?: string; currentPhasePass?: string;
+  currentRunId?: string; currentPhasePass?: string; returnedCheck?: Parameters<typeof scopeProofHistory>[6];
 }) {
   const { projectRoot, frameworkRoot, feature } = input;
   const { loadFrozenExecutionScope, loadAuthoritativeRunEvents } = require('./goal-run-creation') as typeof import('./goal-run-creation');
@@ -1213,7 +1222,7 @@ export function readScopeProofHistory(input: {
   if (input.currentPhasePass) events.push({ type: 'phase_verdict', phase: input.currentPhasePass, verdict: 'PASS', action: 'advance' });
   const order = [...new Set([...(input.workflow.auto_chain ?? []), ...input.workflow.artifacts.map(a => a.id)])];
   const dependencies = readRepairDependencyContext(projectRoot, feature, input.workflow, input.previous, frameworkRoot);
-  const history = scopeProofHistory(birth, events, order, undefined, input.workflow, dependencies);
+  const history = scopeProofHistory(birth, events, order, undefined, input.workflow, dependencies, input.returnedCheck);
   return { birth, events, dependencies, history };
 }
 

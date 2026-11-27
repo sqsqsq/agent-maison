@@ -535,6 +535,7 @@ import {
   collectSpecTextUniverse,
   isLineCoveredBySpecTexts,
   blindReviewPendingAbsPath,
+  writeBlindReviewPending,
 } from '../../capture-completeness-check';
 import {
   collectVisibleTextIssues,
@@ -548,6 +549,25 @@ import { checkVisualFidelityReview } from '../../../../../harness/scripts/check-
 const MINE_ETS = path.join(FIXTURES, 'source', 'MineTabPage.ets.txt');
 const GUIDE_ETS = path.join(FIXTURES, 'source', 'CardGuideSection.ets.txt');
 const STRING_JSON = path.join(FIXTURES, 'source', 'string.json.txt');
+
+test('blind_review_pending_keeps_unchanged_bytes', () => {
+  const { root, ctx } = mkProject('screens: []');
+  const entry = { screen: 'list', text: '选卡', y: 0.42, confidence: 91, auto_disposition: 'unverifiable_blind' as const };
+  try {
+    const file = writeBlindReviewPending(root, 'homepage', [entry]);
+    const prior = fs.readFileSync(file, 'utf8').replace(/generated_at:.*$/m, 'generated_at: 2026-01-01T00:00:00.000Z');
+    fs.writeFileSync(file, prior);
+    writeBlindReviewPending(root, 'homepage', [{ ...entry }]);
+    assert.strictEqual(fs.readFileSync(file, 'utf8'), prior);
+    writeBlindReviewPending(root, 'homepage', [{ ...entry, text: '选择银行卡' }]);
+    assert.match(fs.readFileSync(file, 'utf8'), /选择银行卡/);
+    assert.deepStrictEqual(checkCaptureExternalAudit(ctx, SPEC_MD.replace('ui_change: new_or_changed', 'ui_change: none')), []);
+    assert.ok(!fs.existsSync(file));
+  } finally {
+    assert.strictEqual(path.dirname(root), path.resolve(os.tmpdir()));
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('p0d_line_cover_units', () => {
   const spec = ['集中管理您的卡证票券钥匙', '添加管理卡片', '卡包'];
@@ -609,6 +629,9 @@ test('p0d_external_audit_blind_tier_warn_not_blocker_writes_pending_list', () =>
   assert.ok(hit, '应产出 capture_completeness_external 结果');
   assert.strictEqual(hit!.status, 'WARN', `盲档下应降 WARN（非 agent 无解的 BLOCKER），实际 ${hit!.status}：${hit!.details.slice(0, 200)}`);
   assert.strictEqual(hit!.severity, 'MAJOR', `盲档下应降 MAJOR，实际 ${hit!.severity}`);
+  const sourceEvidence = hit!.structured;
+  assert.ok(sourceEvidence && typeof sourceEvidence === 'object' && 'source_attempt_dependencies' in sourceEvidence);
+  assert.deepStrictEqual(sourceEvidence.source_attempt_dependencies, [{ path: path.join(root, 'doc', 'refs', 'add_card.jpg') }]);
   assert.ok(/待复核清单|盲档降级/.test(hit!.details), `details 应说明盲档降级：${hit!.details.slice(0, 200)}`);
   const pendingAbs = blindReviewPendingAbsPath(root, 'homepage');
   assert.ok(fs.existsSync(pendingAbs), `应写出 blind-review-pending.yaml：${pendingAbs}`);

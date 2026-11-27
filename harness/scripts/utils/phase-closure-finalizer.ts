@@ -101,7 +101,9 @@ export interface FinalizePhaseClosureOptions {
 
 type PhaseRepairFeedbackOptions = Pick<FinalizePhaseClosureOptions,
   'projectRoot' | 'frameworkRoot' | 'feature' | 'phase' | 'goalRunId' | 'resolvedInputs'>
-  & Pick<import('./verify-feature-completion').CleanPassOptions, 'authorityReaders' | 'executionScope' | 'workflow'>;
+  & Pick<import('./verify-feature-completion').CleanPassOptions, 'authorityReaders' | 'executionScope' | 'workflow'>
+  & { readGoalBaseline?: () => import('./goal-run-baseline').GoalRunBaseline;
+    readReviewHistory?: () => import('./repair-candidates').ReviewRunHistory };
 type PhaseRepairSummary = Partial<Pick<HarnessRunSummary,
   'repair_candidates' | 'verifier_subject_id' | 'report_validity' | 'run_id' | 'verifier_request'>>;
 
@@ -694,8 +696,10 @@ export function readCurrentPhaseRepairCandidates(
         ...opts, phase, subjectId, runId, phaseIssues,
       }) };
     })() : undefined;
+    const reviewIssues = phase === 'review' && opts.readReviewHistory
+      ? readPhaseRepairIssues(opts.projectRoot, opts.feature, phase, { frameworkRoot: opts.frameworkRoot, runId, readReviewHistory: opts.readReviewHistory }) : undefined;
     const phaseIssues = phaseIssuesForVerifierSubject(opts.projectRoot, opts.feature, phase,
-      subjectId, opts.frameworkRoot, undefined, runId, currentEvidence);
+      subjectId, opts.frameworkRoot, reviewIssues, runId, currentEvidence);
     const reviewReportText = opts.phase === 'review' ? phaseIssues?.reportText ?? null : null;
     // 字段名必须是 `failure_kind`——`buildSummaryRepairCandidates` 的输入契约收的是它，
     // 内部才投影成 `classification`。这里若直接写 `classification`，机器归因会被**静默丢弃**
@@ -723,7 +727,7 @@ export function readCurrentPhaseRepairCandidates(
     const candidates = buildSummaryRepairCandidates({
       responsibility: { projectRoot: opts.projectRoot, frameworkRoot: opts.frameworkRoot ?? path.resolve(__dirname, '../../..'), feature: opts.feature,
         runId: opts.goalRunId?.trim() || base.run_id?.trim(), currentPhase: String(opts.phase),
-        authorityReaders: opts.authorityReaders, executionScope: opts.executionScope, workflow: opts.workflow },
+        authorityReaders: opts.authorityReaders, executionScope: opts.executionScope, workflow: opts.workflow, readGoalBaseline: opts.readGoalBaseline },
       reviewFidelity: loadFidelityIntentSsot(opts.projectRoot, opts.feature),
       phase: String(opts.phase),
       checks: candidateChecks,

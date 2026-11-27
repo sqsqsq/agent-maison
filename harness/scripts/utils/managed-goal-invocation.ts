@@ -154,7 +154,9 @@ export function managedAuthorCheckMatchesEvidence(input: {
   if (!start || !qualifiedManagedAuthorCheck({ ...input, runDir }, start, end, input.evidenceSha256)) return false;
   // The same observation determines whether the coordinator must run new machine work.
   const { readCurrentCheckObservation } = require('./verify-feature-completion') as typeof import('./verify-feature-completion');
-  return compareRelatedInputSnapshots(end.related_input_snapshot, readCurrentCheckObservation(input).inputs) === 'unchanged';
+  const observation = readCurrentCheckObservation(input);
+  return input.phase === 'testing' ? observation.change === 'unchanged'
+    : compareRelatedInputSnapshots(end.related_input_snapshot, observation.inputs) === 'unchanged';
 }
 
 function writeManagedCheckEvent(actor: ManagedGoalInvocation, event: GoalRunEvent): void {
