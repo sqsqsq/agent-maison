@@ -782,6 +782,56 @@ const cases = [
       assert(!fs.existsSync(path.join(extensionDir, 'knowledge/ux/guide.md')));
     }),
   },
+  {
+    name: '升级资源替换期间中断，原安装入口可恢复新增及删除的文件再提交新版',
+    run: () => inProject((project, source, extensionDir) => {
+      dynamicSource(source, '1.0.0');
+      state(project, 'install', { source });
+      const removed = 'skills/ux/reference/stable.md';
+      const created = 'skills/ux/reference/created.md';
+      const restored = 'skills/ux/reference/restored.md';
+      const installedRemoved = path.join(extensionDir, removed);
+      dynamicSource(source, '2.0.0');
+      fs.unlinkSync(path.join(source, removed));
+      write(path.join(source, created), 'new resource');
+      write(path.join(source, restored), 'second new resource');
+
+      const hook = path.join(path.dirname(source), 'crash-swap.cjs');
+      write(hook, `
+        const fs = require('node:fs');
+        const unlink = fs.unlinkSync;
+        fs.unlinkSync = (target) => {
+          unlink(target);
+          if (target === ${JSON.stringify(installedRemoved)}) process.exit(87);
+        };
+      `);
+      const harness = path.join(frameworkRoot, 'harness');
+      const interrupted = spawnSync(process.execPath, ['-r', hook,
+        ...testCliArgs(path.join(harness, 'scripts/extension.ts')), 'install', source, 'ux', '--project-root', project, '--json',
+      ], { cwd: harness, encoding: 'utf8', timeout: 15_000 });
+      assert.equal(interrupted.status, 87, interrupted.stderr + interrupted.stdout);
+      const manifest = () => YAML.parse(fs.readFileSync(path.join(extensionDir, 'manifest.yaml'), 'utf8')).installations.ux;
+      const saved = manifest();
+      assert.equal(saved.version, '1.0.0');
+      assert.equal(saved.enabled, false);
+      const records = saved.pending_cleanup.replacement.files as Array<{ path: string; before?: string; after?: string }>;
+      assert.deepEqual(Object.keys(records.find(item => item.path === created)!).sort(), ['after', 'path']);
+      assert.deepEqual(Object.keys(records.find(item => item.path === removed)!).sort(), ['before', 'path']);
+      assert(!fs.existsSync(installedRemoved));
+      assert.equal(fs.readFileSync(path.join(extensionDir, created), 'utf8'), 'new resource');
+
+      // An interrupted recovery can already have removed one newly published file.
+      fs.unlinkSync(path.join(extensionDir, restored));
+      const upgraded = state(project, 'install', { source });
+      assert.equal(upgraded.outcomes[0].state, 'enabled');
+      assert(upgraded.filesWritten.includes(`doc/extensions/${removed}`));
+      assert(upgraded.filesRemoved.includes(`doc/extensions/${created}`));
+      assert.equal(manifest().pending_cleanup, undefined);
+      assert.equal(manifest().version, '2.0.0');
+      assert(!fs.existsSync(installedRemoved));
+      assert.equal(fs.readFileSync(path.join(extensionDir, 'knowledge/ux/guide.md'), 'utf8'), '2.0.0');
+    }),
+  },
 ];
 
 export async function runAll() {

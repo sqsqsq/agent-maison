@@ -432,7 +432,7 @@ function stageReplacement(root: string, ability: string, files: ReplacementFile[
   const stage = replacementStage(ability);
   return { stage, files: files.map(({ path: resource, before, after }, index) => {
     if (before) writeExtensionFileAtomic(ordinaryFile(root, `${stage}/${index}.backup`), before.bytes, true);
-    return { path: resource, before: before?.sha256, after: after?.sha256 };
+    return { path: resource, ...(before ? { before: before.sha256 } : {}), ...(after ? { after: after.sha256 } : {}) };
   }) };
 }
 
