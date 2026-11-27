@@ -10,8 +10,8 @@ import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-
 import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
 import { reconcileChangeUnitBlueprintRefs, BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-design-preparation';
 import { diagnoseBlueprintSkillAuthority, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
-import { writeBackAdmission, reusableDesignQuestioning, questioningDependencyChanges, questioningRunInputs } from '../../scripts/utils/design-repair-unattended';
-import { selectQuestioningScopes } from '../../scripts/utils/blueprint-questioning';
+import { assessDesignQuestioning, writeBackAdmission, reusableDesignQuestioning, questioningDependencyChanges, questioningRunInputs } from '../../scripts/utils/design-repair-unattended';
+import { mergeIndependentQuestioningResult, selectQuestioningScopes, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots } from '../../scripts/utils/phase-write-boundary';
 import { tryAcquireLock, releaseLock, FEATURE_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
 import { fixture as projectionFixture } from './blueprint-skill-projection.unit.test';
@@ -42,6 +42,124 @@ async function withProject(run: (root: string, fixture: ReturnType<typeof projec
 }
 
 const cases: Array<{ name: string; run: () => Promise<void> }> = [
+  {
+    name: 'daily design Q: shared P0 writes need evidence of both operations and unrelated calls cannot stand in',
+    run: async () => {
+      const writeCheck = { id: 'AC-1', priority: 'P0', linked_flow: 'edit' };
+      const clearCheck = { id: 'AC-2', priority: 'P0', linked_flow: 'edit' };
+      const joint = { id: 'ordering', linked_acceptance: ['BD-1'], expected_port_calls: ['Port.load', 'Other.read'] };
+      const flow = { flow_id: 'store', source_of_truth: { persistence: 'store' }, development_owner_ref: 'view:development/node:editor',
+        external_contract_refs: ['contract:store'], mutations: [
+          { mutation_id: 'one', persistence_ref: 'store', verification_refs: ['AC-1', 'BD-1'] },
+          { mutation_id: 'two', persistence_ref: 'store', verification_refs: ['AC-2', 'BD-1'] },
+        ] };
+      const doc = { design_views: [{ view_id: 'runtime', applicability: 'applicable', evolution_impact: 'changed', runtime_data_flows: [flow] },
+        { view_id: 'development', nodes: [{ node_id: 'editor',
+          acceptance: { criteria: [writeCheck, clearCheck], boundaries: [{ id: 'BD-1', linked_flow: 'edit', linked_branch: 'ordering' }] },
+          use_cases: { use_cases: [{ id: 'edit', branches: [
+            { id: 'one', linked_acceptance: ['AC-1'], expected_port_calls: ['Port.edit'] },
+            { id: 'two', linked_acceptance: ['AC-2'], expected_port_calls: ['Port.delete'] }, joint,
+          ] }] },
+        }] }], contracts: [{ contract_id: 'store', idempotency: { source_ref: 'contract.yaml#/idempotency', verification_refs: ['AC-1', 'AC-2'] } }] };
+      const row = { scope_kind: 'flow', scope_ref: 'flow:store', disposition: 'answered_with_evidence',
+        question: 'Do the writes permit the declared results?', owner: 'editor', answer: 'Independent response', evidence_refs: ['AC-1'], verification_refs: ['BD-1'] };
+      const check = () => validateBlueprintQuestioning({ ...doc, review_summary: {
+        questioning: mergeIndependentQuestioningResult(doc, { items: [row] }, 'independent'),
+      }}).filter(issue => issue.id === 'blueprint_questioning_evidence_missing');
+      assert.equal(check().length, 1);
+      joint.expected_port_calls = ['Port.edit', 'Port.load'];
+      assert.equal(check().length, 1);
+      row.evidence_refs = ['contract.yaml#/idempotency'];
+      assert.equal(check().length, 0, 'exact contract for both P0 results is interchangeable evidence');
+      row.evidence_refs = ['AC-1'];
+      joint.expected_port_calls = ['Port.edit', 'Port.delete'];
+      assert.equal(check().length, 0);
+      row.verification_refs = ['AC-1'];
+      assert.equal(check().length, 1, 'an independent answer covering one operation cannot be promoted');
+    },
+  },
+  {
+    name: 'daily design Q: same-file evidence must resolve in its declared range and optional lens rows can be absent',
+    run: () => withProject(root => {
+      const source = path.join(root, 'source.ets');
+      fs.writeFileSync(source, 'one\ntwo\nthree\nfour\n');
+      const row = { scope_kind: 'view', scope_ref: 'view:deployment', question: 'Any change?', owner: 'design', answer: 'Source unchanged',
+        disposition: 'answered_with_evidence', evidence_refs: ['source.ets#L2-L3'], verification_refs: ['source.ets'] };
+      const doc = { app_lens: { feature_flags: { disposition: 'answered_with_evidence' } },
+        design_views: [{ view_id: 'deployment', applicability: 'applicable', evolution_impact: 'verified_unchanged',
+        unchanged_evidence: { evidence_refs: ['source.ets'] } }] };
+      const check = () => validateBlueprintQuestioning({ ...doc, review_summary: {
+        questioning: mergeIndependentQuestioningResult(doc, { items: [row] }, 'independent'),
+      }}, root).filter(issue => ['blueprint_questioning_unchanged_evidence_unrelated', 'blueprint_questioning_coverage_missing'].includes(issue.id));
+      assert.deepEqual(check(), []);
+      row.evidence_refs = ['source.ets#L2-L200'];
+      assert.equal(check().length, 1);
+      row.evidence_refs = ['elsewhere/source.ets#L2'];
+      assert.equal(check().length, 1);
+      doc.design_views[0].unchanged_evidence.evidence_refs = ['source.ets#L1-L2'];
+      row.evidence_refs = ['source.ets#L3-L4'];
+      assert.equal(check().length, 1);
+      row.evidence_refs = ['source.ets#L2-L3'];
+      assert.deepEqual(check(), []);
+      doc.app_lens.feature_flags.disposition = 'blocker';
+      assert(check().some(issue => issue.id === 'blueprint_questioning_coverage_missing' && issue.message.includes('app_lens:feature_flags')));
+    }),
+  },
+  {
+    name: 'daily design Q: receipt outside a requested scope cannot erase a negative and a second counterexample retains both',
+    run: async () => {
+      const doc = { design_views: [{ view_id: 'runtime', applicability: 'applicable', evolution_impact: 'changed',
+        runtime_data_flows: [{ flow_id: 'flow' }] }] };
+      const row = { scope_kind: 'flow', scope_ref: 'flow:flow', question: 'Lost result', answer: 'Late first completion', disposition: 'blocker',
+        verification_refs: ['source.ets#L3'], review_original: { path: 'old-q.json', sha256: '7'.repeat(64) } };
+      const old = { items: [row] };
+      const apply = (result: typeof row) => mergeIndependentQuestioningResult(doc, { items: [result] }, 'independent', old, []).items as Json[];
+      const [unchanged] = apply({ ...row, disposition: 'answered_with_evidence', question: 'New wording', answer: 'Everything passes' });
+      assert.equal(unchanged.answer, row.answer);
+      const [both] = apply({ ...row, question: 'Wrong persistent value', answer: 'Delete overtaken at flush' });
+      assert(both.answer.includes(row.answer) && both.answer.includes('Delete overtaken at flush') && both.answer.includes('old-q.json'));
+      assert.equal(both.disposition, 'blocker');
+    },
+  },
+  {
+    name: 'daily design Q: directory comparison uses snapshot members, with exact scope for addition and deletion',
+    run: () => withProject(root => {
+      const loaded = loadCanonicalBlueprint(root, BLUEPRINT), doc = loaded.blueprint as Json;
+      const directory = path.join(root, 'dir');
+      fs.mkdirSync(directory);
+      fs.writeFileSync(path.join(directory, 'stable.txt'), 'same bytes');
+      const answer = doc.review_summary.questioning.items[0];
+      answer.evidence_refs.push('dir');
+      answer.verification_refs.push('dir');
+      const args = { projectRoot: root, blueprintPath: loaded.canonicalPath, blueprint: doc, beforeDocument: doc,
+        previous: doc.review_summary.questioning, revisitFindings: false };
+      const snap = () => capturePhaseInvocationSnapshot({ projectRoot: root, protectedRoots: fs.readdirSync(root), executionRole: 'verifier' });
+      const initial = snap(), added = path.join(directory, 'added.txt');
+      assert.deepEqual(assessDesignQuestioning({ ...args, beforeSnapshot: initial }).selectedScopes, []);
+      fs.writeFileSync(added, 'new source');
+      const next = snap();
+      assert.deepEqual(assessDesignQuestioning({ ...args, beforeSnapshot: initial }).selectedScopes, [answer.scope_ref]);
+      fs.unlinkSync(added);
+      assert.deepEqual(assessDesignQuestioning({ ...args, beforeSnapshot: next }).selectedScopes, [answer.scope_ref]);
+      const native = require('fs') as typeof fs, readdir = native.readdirSync;
+      let enumerations = 0;
+      try {
+        native.readdirSync = ((file: fs.PathLike, ...options: unknown[]) => {
+          if (path.resolve(String(file)) === directory) {
+            enumerations++;
+            throw Object.assign(new Error('simulated directory read failure'), { code: 'EACCES' });
+          }
+          return (readdir as (...input: unknown[]) => unknown)(file, ...options);
+        }) as typeof fs.readdirSync;
+        const failed = assessDesignQuestioning({ ...args, beforeSnapshot: initial });
+        assert.deepEqual(failed.selectedScopes, [answer.scope_ref]);
+        assert(failed.affectedDependencies.some(dep => dep.path === directory && dep.state === 'unknown'));
+        assert.equal(enumerations, 1);
+        assert.deepEqual(assessDesignQuestioning({ ...args, beforeSnapshot: initial, observedSnapshot: initial }).selectedScopes, []);
+        assert.equal(enumerations, 1, 'use supplied snapshot without enumerating again');
+      } finally { native.readdirSync = readdir; }
+    }),
+  },
   {
     name: 'daily design content: actual malformed authority is diagnosed and the owner repair restores projection',
     run: () => withProject(root => {

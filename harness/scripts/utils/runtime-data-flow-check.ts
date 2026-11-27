@@ -7,6 +7,7 @@ import {
   asRecords,
   asStrings,
   getId,
+  hasOwn,
   issue,
   nonEmptyString,
 } from './component-blueprint-model';
@@ -78,7 +79,10 @@ export function validateRuntimeDataFlows(blueprint: BlueprintRecord): BlueprintI
   const out: BlueprintIssue[] = [];
   const runtime = asRecords(blueprint.design_views).find(view => view.view_id === 'runtime');
   const flows = asRecords(runtime?.runtime_data_flows);
-  const assessment = asRecord(asRecord(blueprint.app_lens)?.runtime_flow_trigger_assessment);
+  const lens = asRecord(blueprint.app_lens);
+  const assessment = asRecord(lens?.runtime_flow_trigger_assessment);
+  const processRecovery = asRecord(lens?.process_recovery);
+  const backgroundWrite = asRecord(assessment?.background_system_external_scheduled_write);
   // M7：六类 flow 触发条件只对 runtime=changed 评估。runtime 视图 verified_unchanged 时
   // 本次演进不触碰运行时数据闭环——其"不变"由 blueprint-views 的 unchanged_evidence 与
   // 掩盖变化检测负责，不在此重复要求逐条触发裁决或 not_applicable disposition。
@@ -128,6 +132,7 @@ export function validateRuntimeDataFlows(blueprint: BlueprintRecord): BlueprintI
     const publicationIds = indexedLocalIds(publications, 'publication_id', `${base}.publications`, out);
     const consumers = asRecords(flow.consumers);
     const consumerIds = indexedLocalIds(consumers, 'consumer_id', `${base}.consumers`, out);
+    const triggers = asRecords(flow.triggers);
     const mutations = asRecords(flow.mutations);
     const subscriptions = asRecords(flow.subscriptions);
     indexedLocalIds(mutations, 'mutation_id', `${base}.mutations`, out);
@@ -143,7 +148,7 @@ export function validateRuntimeDataFlows(blueprint: BlueprintRecord): BlueprintI
     if (asStrings(sourceOfTruth?.projections_and_caches).length === 0) {
       out.push(issue('runtime_flow_content_empty', `${base}.source_of_truth.projections_and_caches`, 'projections_and_caches 不能为空。'));
     }
-    if (asRecords(flow.triggers).some(trigger => !nonEmptyString(trigger.idempotency))) {
+    if (triggers.some(trigger => !nonEmptyString(trigger.idempotency))) {
       out.push(issue('runtime_flow_trigger_idempotency_missing', `${base}.triggers`, '每个 trigger 必须声明 idempotency。'));
     }
     if (!initialLoad || !nonEmptyString(initialLoad.strategy) || !nonEmptyString(initialLoad.freshness)) {
@@ -221,9 +226,27 @@ export function validateRuntimeDataFlows(blueprint: BlueprintRecord): BlueprintI
       }
     });
     const lifecycle = asRecord(flow.lifecycle_coverage);
+    const required = new Set([
+      ...triggers.map(trigger => trigger.kind),
+      ...asRecords(asRecord(flow.contracts)?.state_management).flatMap(state => asStrings(state.lifecycle_triggers)),
+    ]);
+    const flowRef = flowId && `view:runtime/flow:${flowId}`;
+    if (mutations.some(mutation => mutation.kind === 'background')
+      || runtimeChanged && backgroundWrite?.applies === true && flowRef && asStrings(backgroundWrite.evidence_refs).includes(flowRef)) {
+      required.add('background_write');
+    }
+    const localProcessRecovery = getId(recovery ?? {}, 'process_recreation')?.toLowerCase();
+    const hasLocalProcessRecovery = localProcessRecovery && !['unknown', 'tbd', 'todo', 'none', 'not_applicable'].includes(localProcessRecovery);
+    if (hasLocalProcessRecovery || flowRef && (processRecovery?.disposition === 'answered_with_evidence' || processRecovery?.disposition === 'decided_with_authority')
+      && asStrings(processRecovery.evidence_refs).includes(flowRef)) {
+      required.add('process_recreation');
+    }
     for (const event of LIFECYCLE_EVENTS) {
+      const applies = required.has(event);
+      if (!applies && (!lifecycle || !hasOwn(lifecycle, event))) continue;
       const coverage = asRecord(lifecycle?.[event]);
-      if (!coverage || !['covered', 'not_applicable'].includes(String(coverage.status)) || asStrings(coverage.evidence_refs).length === 0) {
+      if ((coverage?.status !== 'covered' && (applies || coverage?.status !== 'not_applicable'))
+        || asStrings(coverage?.evidence_refs).length === 0) {
         out.push(issue('runtime_flow_lifecycle_gap', `${base}.lifecycle_coverage.${event}`, `生命周期 ${event} 未证据化闭合。`));
       }
     }

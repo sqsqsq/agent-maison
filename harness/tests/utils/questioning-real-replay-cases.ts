@@ -191,6 +191,34 @@ export function questioningRealReplayCases() {
         assert(!changes.includes(source), 'the shared requirements actually changed');
         assert.deepStrictEqual(before.blueprint.discovery.facts, current.blueprint.discovery.facts, 'original terminology cites these facts');
       }
+      if (first === 10 && revised === 13) {
+        const scope = 'view:development';
+        const reason = expected.reasons[scope];
+        assert.equal(reason.from, 'view:scenarios');
+        const witness = 'view:scenarios/node:sc-open-card-success';
+        assert.equal(reason.edge.witness[1].value, witness);
+        const oldIndex = stableAddressIndex(before.blueprint), newIndex = stableAddressIndex(current.blueprint);
+        assert(oldIndex.has(witness));
+        assert.deepStrictEqual(newIndex.get(witness), oldIndex.get(witness), 'the scenario consumed by development is unchanged');
+        assert.deepStrictEqual(newIndex.get(scope), oldIndex.get(scope), 'development itself is unchanged');
+        assert.deepStrictEqual(changes, [], 'no changed external source can invalidate the development answer');
+        const prior = asRecords(before.previous.items).find(item => item.scope_ref === scope)!;
+        const refs = [...asStrings(prior.verification_refs), ...asStrings(prior.evidence_refs)].filter(ref => ref.includes('#/'));
+        assert(refs.length > 0);
+        for (const ref of refs) {
+          const at = ref.slice(ref.indexOf('#') + 1);
+          assert(pointer(before.blueprint, at) !== undefined);
+          assert.deepStrictEqual(pointer(current.blueprint, at), pointer(before.blueprint, at), ref);
+        }
+        const flow = 'view:runtime/flow:flow-card-open-run';
+        const oldFlow = oldIndex.get(flow)!, newFlow = newIndex.get(flow)!;
+        const state = asRecords(asRecord(newFlow.contracts)?.state_management)[0];
+        assert.equal(state.owner_ref, 'view:development/node:dev-card-open-session');
+        assert(String(state.data).includes('完整卡号，仅内存'));
+        assert.notDeepStrictEqual(newFlow, oldFlow, 'retain the actual changed card identity handoff');
+        assert(selected.includes('flow:flow-card-open-run'));
+        reused.push(scope);
+      }
       const required = [...requiredQuestioningScopes(current.blueprint).keys()];
       const precise = preciseScopeEdits(first, revised, before.blueprint, current.blueprint);
       reused.push(...precise.retain);

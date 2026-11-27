@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import { rebindTaskModel, freezeModelPin } from './adapter-model';
 import * as path from 'path';
 import * as YAML from 'yaml';
-import { createHash } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { stableStringify } from './phase-evidence-manifest';
 import { asRecord, asRecords, ComponentBlueprintResolutionError, blueprintAuthorContent, renderBlueprintFieldResponsibilities, type BlueprintRecord, type BlueprintIssue } from './component-blueprint-model';
 import { loadFrameworkConfig, relFeaturesDir, featureFilePath, featurePhaseReportsDir } from '../../config';
@@ -13,7 +13,7 @@ import { nativeFixedScale, requestTargetFingerprint } from './request-intake';
 import { readRequestExecutionInputs } from './request-execution-inputs';
 import { computeGateFingerprint } from './gate-fingerprint';
 import { collectUnitScopeIds } from './acceptance-layering';
-import { describePhaseWriteConflicts, readPhaseRecoveryFile, unresolvedPhaseWrites } from './phase-write-boundary';
+import { describePhaseWriteConflicts, hasConfirmedPhaseWriteViolation, hasSignedPhaseInputDrift, readPhaseRecoveryFile, unresolvedPhaseWrites } from './phase-write-boundary';
 import { blueprintReviewPath, inspectBlueprintReview, materializeBlueprintReview } from './blueprint-review-materialization';
 import { realProjectPath, isInsideProjectRoot } from './project-relative-path';
 import type { AcceptanceSpec, CheckResult } from './types';
@@ -33,14 +33,14 @@ import { readChangeUnitDesignOwnership } from './change-unit-design-gate';
 import { deriveChangeUnitProgressionDecision, inspectActiveChangeUnitRuns } from './change-unit-progress-loop';
 import { profileHasDesignLens } from './blueprint-provider-boundary';
 import { loadAuthoritativeEvents, loadEventsJsonlStrict, resolveEffectiveRunEnd, type GoalRunEvent } from './goal-runner-phase';
-import { acceptedSessionReport, readHandoffMaterial, sessionReportInputPath, sessionExecutionForInvoke, type SessionExecutionReport } from './session-execution-handoff';
+import { acceptedSessionReport, handbackInvocationCompleted, readExecutionRequestOriginal, readHandoffMaterial, sessionReportInputPath, sessionExecutionForInvoke, type SessionExecutionReport } from './session-execution-handoff';
 import { readOriginalDeliveryActivity, readOriginalDeliveryRuns, resolveOriginalDeliveryExecution, currentOriginalDelivery, type DeliveryRunFacts } from './delivery-origin';
 import { independentQuestioningBlockers } from './blueprint-questioning';
-import { describeQuestioningChanges, renderQuestioningResultInstructions, selectQuestioningScopes } from './blueprint-questioning';
+import { describeQuestioningChanges, renderQuestioningResultInstructions } from './blueprint-questioning';
 import { extractProviderFinalText } from './codex-terminal-events';
 import { invocationCompleted } from './invocation-completion';
 import { dispositionFacts } from './goal-failure-classifier';
-import { renderDesignAuthorityBoundary, writeBackAdmission, refreshBlueprintFingerprints, questioningDependencyChanges, questioningRunInputs, latestUsableDesignQuestioning } from './design-repair-unattended';
+import { assessDesignQuestioning, renderDesignAuthorityBoundary, writeBackAdmission, refreshBlueprintFingerprints, questioningRunInputs, latestUsableDesignQuestioning } from './design-repair-unattended';
 import { currentBlueprintSliceId } from './blueprint-admission';
 import type { ProviderRef } from './types';
 import { prepareBlueprintDesignDraft, prepareBlueprintSourceItems } from './blueprint-discovery';
@@ -273,8 +273,60 @@ export interface InitialDesignObservation {
   progression?: ReturnType<typeof deriveChangeUnitProgressionDecision>;
   scope?: { feature: string; candidatePath: string; command: string };
   candidateRejection?: { code: string; detail: string };
+  questioning?: InitialDesignQuestioning;
   designRepair?: { feature: string; brief: import('./design-repair-unattended').DesignRepairBriefLike };
   request?: { frame: 'trivial' | 'small'; prepared: PreparedDesignRequest; implementation?: boolean };
+}
+
+type QuestioningHistory = ReturnType<typeof latestUsableDesignQuestioning>;
+
+export interface InitialDesignQuestioning {
+  original: QuestioningHistory['original'];
+  previous: QuestioningHistory['result'];
+  questioningResult: QuestioningHistory['result'];
+  questioningCurrent: boolean;
+  selectedScopes?: string[];
+  affectedDependencies: ReturnType<typeof assessDesignQuestioning>['affectedDependencies'];
+  unavailable: boolean;
+}
+
+/** The current decision and the next signed request use the same verified original and scope comparison. */
+export function readInitialDesignQuestioning(projectRoot: string, manifest: InitialDesignGoalManifest,
+  blueprintPath: string, blueprint: BlueprintRecord, runs: readonly DeliveryRunFacts[] = readOriginalDeliveryRuns(projectRoot, manifest)): InitialDesignQuestioning {
+  let unavailable = false;
+  let usable: (QuestioningHistory & { run: DeliveryRunFacts }) | undefined;
+  for (const run of runs.filter(run => isInitialDesignManifest(run.manifest))) {
+    const runDir = path.resolve(projectRoot, run.manifest.report_dir);
+    const initial = latestUsableDesignQuestioning(runDir, ['initial-design-questioning'], projectRoot, run.events);
+    const repair = latestUsableDesignQuestioning(runDir, ['design-repair-questioning'], projectRoot, run.events);
+    unavailable ||= initial.unavailable;
+    const publishedRepair = repair.result && repair.original?.beforeDocument
+      && !independentQuestioningBlockers({ review_summary: { questioning: repair.result } }).length
+      && stableStringify(blueprintAuthorContent(repair.original.beforeDocument)) === stableStringify(blueprintAuthorContent(blueprint));
+    const position = (row: QuestioningHistory) => run.events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === row.original?.invokeId);
+    const candidate = publishedRepair && position(repair) > position(initial) ? repair : initial;
+    if (candidate.original && candidate.result) {
+      usable = { run, ...candidate };
+      break;
+    }
+  }
+  const original = usable?.original ?? null;
+  const previous = usable?.result ?? null;
+  const denied = !!previous && independentQuestioningBlockers({ review_summary: { questioning: previous } }).length > 0;
+  const authorReturned = denied && usable && (() => {
+    const answer = usable.run.events.find(event => event.type === 'agent_invoke_end' && event.invoke_id === original?.invokeId);
+    return runs.some(run => isInitialDesignManifest(run.manifest) && run.events.some(event => event.type === 'agent_invoke_end'
+      && event.phase === 'initial-design-author' && String(event.ts) > String(answer?.ts)
+      && invocationCompleted({ ...event, exitCode: event.exit_code })));
+  })();
+  const assessment = original && previous ? assessDesignQuestioning({ projectRoot, blueprintPath, blueprint,
+    beforeDocument: original.beforeDocument, beforeSnapshot: original.preSnapshot, previous, signedBoundary: original.signedBoundary,
+    snapshotOptions: original.snapshotOptions, revisitFindings: !denied }) : undefined;
+  const selectedScopes = assessment?.selectedScopes;
+  // A denial is feedback to the author. Ask again once that author has changed its basis.
+  const questioningCurrent = !!previous && (denied && !authorReturned || selectedScopes?.length === 0);
+  return { original, previous, questioningResult: questioningCurrent ? previous : null, questioningCurrent,
+    selectedScopes, affectedDependencies: assessment?.affectedDependencies ?? [], unavailable };
 }
 
 /** Existing report carrier for this original Goal, independent of later native message ids. */
@@ -451,6 +503,88 @@ export function validateInitialDesignInvocation(purpose: 'author' | 'questioning
   } catch { return purpose === 'questioning' ? '独立质询输出不可解析。' : null; }
 }
 
+function writeInitialDesignProjection(projectRoot: string, file: string, before: Buffer, blueprint: BlueprintRecord): { before: string; after: string } {
+  const after = Buffer.from(YAML.stringify(blueprint));
+  const staged = `${file}.tmp-${randomUUID()}`;
+  try {
+    fs.writeFileSync(staged, after, { flag: 'wx' });
+    if (!readPhaseRecoveryFile(projectRoot, file).bytes?.equals(before)) throw new Error('蓝图在写回独立质询前已变化。');
+    fs.renameSync(staged, file);
+  } finally { if (fs.existsSync(staged)) fs.unlinkSync(staged); }
+  return { before: createHash('sha256').update(before).digest('hex'), after: createHash('sha256').update(after).digest('hex') };
+}
+
+/** A bound published revision retains its bytes. Unbound design consumes the verified answer once. */
+export function publishInitialDesignQuestioning(projectRoot: string, blueprintId: string, result: BlueprintRecord, expectedBlueprintSha?: string): boolean {
+  const loaded = loadCanonicalBlueprint(projectRoot, blueprintId);
+  if (expectedBlueprintSha && loaded.artifactSha256 !== expectedBlueprintSha) throw new Error('蓝图在判定独立质询后已变化。');
+  if (enumerateCanonicalChangeUnits(projectRoot, blueprintId).some(unit =>
+    asRecord(unit.changeUnit.component_blueprint_ref)?.revision === loaded.blueprint.revision)) return false;
+  const before = stableStringify(loaded.blueprint);
+  loaded.blueprint.review_summary = { ...asRecord(loaded.blueprint.review_summary), questioning: result };
+  writeBackAdmission(loaded.blueprint, { projectRoot, canonicalPath: loaded.canonicalPath });
+  if (stableStringify(loaded.blueprint) === before) return false;
+  writeInitialDesignProjection(projectRoot, loaded.canonicalPath, loaded.bytes, loaded.blueprint);
+  return true;
+}
+
+/** Recover an author's independently proven section edit without overwriting the rest of its return. */
+export function recoverInitialDesignAuthorQuestioning(input: {
+  projectRoot: string; blueprintPath: string; runDir: string; events: readonly GoalRunEvent[]; end: GoalRunEvent;
+  before: string; output: string;
+}): { path: string; pre_sha256: string; post_sha256: string } | null {
+  const { projectRoot, blueprintPath, runDir, events, end } = input;
+  const invokeId = end.invoke_id;
+  if (!invokeId || end.phase !== 'initial-design-author' || hasConfirmedPhaseWriteViolation(events, invokeId)
+    || hasSignedPhaseInputDrift(events, invokeId)) return null;
+  const relative = path.relative(projectRoot, blueprintPath).replace(/\\/g, '/');
+  const digest = (text: string) => createHash('sha256').update(text).digest('hex');
+  const beforeSha = digest(input.before), outputSha = digest(input.output);
+  const issued = readExecutionRequestOriginal(runDir, invokeId, events);
+  if (!issued?.event.handoff_request || issued.event.handoff_request.sha256 !== issued.reference.sha256
+    || issued.request.purpose !== 'author' || issued.request.pre_snapshot?.failureReason
+    || !handbackInvocationCompleted(runDir, issued, end, events)
+    || !issued.request.pre_snapshot?.entries.some(row => row.kind === 'file' && row.path === relative && row.sha256 === beforeSha)) return null;
+  const signedPost = end.handoff_report && readHandoffMaterial<{
+    post_snapshot?: { failureReason?: string; entries?: Array<{ kind: string; path: string; sha256: string }> };
+    draft_outputs?: Record<string, string>;
+  }>(runDir, end.handoff_report);
+  const archived = signedPost?.draft_outputs?.['initial-design-blueprint.yaml'];
+  const provenPost = signedPost ? !signedPost.post_snapshot?.failureReason && archived && digest(Buffer.from(archived, 'base64').toString('utf8')) === outputSha
+    && signedPost.post_snapshot?.entries?.some(row => row.kind === 'file' && row.path === relative && row.sha256 === outputSha)
+    : events.some(event => event.type === 'phase_write_observed' && event.invoke_id === invokeId && 'owned' in event
+      && asRecords(event.owned).some(row => row.path === relative && row.pre_sha256 === beforeSha && row.post_sha256 === outputSha));
+  if (!provenPost) return null;
+  const start = events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === invokeId);
+  const prior = latestUsableDesignQuestioning(runDir, ['initial-design-questioning'], projectRoot, events.slice(0, start));
+  const preimage = asRecord(YAML.parse(input.before));
+  const postimage = asRecord(YAML.parse(input.output));
+  const priorBlueprint = prior.original?.beforeDocument;
+  if (!preimage || !postimage || !priorBlueprint || !prior.result
+    || stableStringify(blueprintAuthorContent(priorBlueprint)) !== stableStringify(blueprintAuthorContent(preimage))) return null;
+  for (const key of ['blueprint_id', 'component_id', 'revision']) if (preimage[key] !== postimage[key]) return null;
+  if (typeof postimage.blueprint_id !== 'string' || enumerateCanonicalChangeUnits(projectRoot, postimage.blueprint_id).some(unit =>
+    asRecord(unit.changeUnit.component_blueprint_ref)?.revision === postimage.revision)) return null;
+  const current = readPhaseRecoveryFile(projectRoot, blueprintPath).bytes;
+  if (!current) return null;
+  const doc = asRecord(YAML.parse(current.toString('utf8')));
+  if (!doc || ['blueprint_id', 'component_id', 'revision'].some(key => doc[key] !== postimage[key])
+    || stableStringify(blueprintAuthorContent(doc)) !== stableStringify(blueprintAuthorContent(postimage))) return null;
+  const verified = { ...prior.result, status: stableStringify(blueprintAuthorContent(preimage)) === stableStringify(blueprintAuthorContent(postimage))
+    ? prior.result.status : 'incomplete' };
+  const currentAnswer = asRecord(doc.review_summary)?.questioning;
+  const priorAnswer = asRecord(asRecord(preimage.review_summary)?.questioning);
+  const currentSha = digest(current.toString('utf8'));
+  if (stableStringify(currentAnswer) === stableStringify(verified)) return { path: relative, pre_sha256: outputSha, post_sha256: currentSha };
+  // Older writers may already have restored the exact preimage answer while leaving its recovery halt in place.
+  if (currentSha !== outputSha && (!priorAnswer || stableStringify(currentAnswer) !== stableStringify({ ...priorAnswer, status: 'incomplete' }))) return null;
+  doc.review_summary = { ...asRecord(doc.review_summary), questioning: verified };
+  refreshBlueprintFingerprints(doc);
+  writeBackAdmission(doc, { projectRoot, canonicalPath: blueprintPath });
+  const written = writeInitialDesignProjection(projectRoot, blueprintPath, current, doc);
+  return { path: relative, pre_sha256: written.before, post_sha256: written.after };
+}
+
 /** Observation only; admission, candidate acceptance and P3 writes remain runtime-owned. */
 export function initialDesignCandidateRejection(observed: InitialDesignObservation, error: unknown, rootFeature: string): InitialDesignObservation {
   const findings = error instanceof ChangeUnitCandidateRejected ? error.designAuthority : undefined;
@@ -466,7 +600,8 @@ export function initialDesignCandidateRejection(observed: InitialDesignObservati
 }
 
 export function readInitialDesignDelivery(input: { projectRoot: string; frameworkRoot?: string; manifest: InitialDesignGoalManifest;
-  providerState?: 'available' | 'unavailable' | 'unknown'; questioningCurrent?: boolean; questioningResult?: BlueprintRecord | null }): InitialDesignObservation {
+  providerState?: 'available' | 'unavailable' | 'unknown'; questioningCurrent?: boolean; questioningResult?: BlueprintRecord | null;
+  questioning?: InitialDesignQuestioning }): InitialDesignObservation {
   const blueprintPath = componentBlueprintPath(input.projectRoot, input.manifest.feature);
   const candidatesPath = path.join(path.dirname(blueprintPath), 'change-unit-candidates.json');
   const base = { blueprintPath, candidatesPath };
@@ -489,9 +624,11 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
     const designRepair = fs.existsSync(blueprintPath) ? requestDesignRepair(input.projectRoot, input.manifest) : undefined;
     if (designRepair) return { ...base, kind: 'author', designRepair, issues: designRepair.brief.items.map(item => item.basis) };
     const loaded = loadCanonicalBlueprint(input.projectRoot, input.manifest.feature);
-    if (input.questioningResult) loaded.blueprint.review_summary = { ...asRecord(loaded.blueprint.review_summary), questioning: input.questioningResult };
+    const result = input.questioning ? input.questioning.questioningResult : input.questioningResult;
+    const current = input.questioning ? input.questioning.questioningCurrent : input.questioningCurrent;
+    if (result) loaded.blueprint.review_summary = { ...asRecord(loaded.blueprint.review_summary), questioning: result };
     // Denials are author feedback; a pass alone needs the current author-content receipt.
-    if (input.questioningResult === null || input.questioningCurrent === false && !independentQuestioningBlockers(loaded.blueprint).length) {
+    if (result === null || current === false && !independentQuestioningBlockers(loaded.blueprint).length) {
       const questioning = asRecord(asRecord(loaded.blueprint.review_summary)?.questioning);
       if (questioning) questioning.status = 'incomplete';
     }
@@ -504,7 +641,7 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
     const disposition = resolveCurrentDisposition(readCurrentDispositionInput({ endpoint: 'design', projectRoot: input.projectRoot,
       blueprintPath, blueprint: loaded.blueprint, blueprintIssues, questioningFindings: denied,
       phase: 'component-design', providerState: input.providerState ?? 'unknown' }));
-    const state = { ...base, blueprintIssues, disposition };
+    const state = { ...base, blueprintIssues, disposition, ...(input.questioning ? { questioning: input.questioning } : {}) };
     const feedback = [...blueprintIssues.filter(issue => issue.severity === 'BLOCKER').map(issue => `${issue.id} ${issue.path}: ${issue.message}`),
       ...denied.map(item => `独立质询否定 ${String(item.scope_ref)}：${String(item.question)}；${String(item.answer ?? "")}；verification_refs=${JSON.stringify(item.verification_refs ?? [])}；由设计作者修复，原独立质询再核。`)];
     const inspection = inspectActiveChangeUnitRuns(input.projectRoot, units.map(item => asChangeUnitArtifact(item.changeUnit)));
@@ -557,6 +694,7 @@ export function readInitialDesignDelivery(input: { projectRoot: string; framewor
     }
     if (disposition.completionBlocking.some(problem => problem.action === 'repair')) return { ...state, kind: 'author', issues: feedback };
     if (disposition.completionBlocking.length) {
+      if (input.questioning?.selectedScopes?.length) return { ...state, kind: 'questioning', issues: feedback };
       if (!units.length && fs.existsSync(candidatesPath)) {
         const precheck = inspectChangeUnitCandidateBatch({ projectRoot: input.projectRoot, blueprintId: input.manifest.feature, candidatesPath });
         if (precheck.issues.length) {
@@ -603,32 +741,29 @@ function previousDesignWork(input: { projectRoot: string; manifest: InitialDesig
   const label = initialDesignInvocationLabel(input.observation);
   const runs = input.deliveryRuns ?? readOriginalDeliveryRuns(input.projectRoot, input.manifest);
   if (input.observation.kind === 'questioning') {
-    const available = runs.filter(run => run.manifest.feature === input.manifest.feature)
-      .map(run => ({ run, ...latestUsableDesignQuestioning(path.resolve(input.projectRoot, run.manifest.report_dir), [label], input.projectRoot, run.events) }));
-    const usable = available.filter(item => item.original).sort((a, b) => String(a.run.manifest.created_at).localeCompare(String(b.run.manifest.created_at))).at(-1);
-    const previous = usable?.original;
-    let selectedScopes: string[] | undefined;
+    let questioning = input.observation.questioning;
     let actualDiff: import('./types').ContextFileEntry[] | null = null;
-    let affectedDependencies: ReturnType<typeof questioningDependencyChanges> = [];
     try {
       const current = loadCanonicalBlueprint(input.projectRoot, input.manifest.feature).blueprint;
-      input.questioningInputs?.push(...questioningRunInputs(input.projectRoot, current, usable?.result ?? undefined));
-      affectedDependencies = questioningDependencyChanges(input.projectRoot, current, previous?.preSnapshot, input.observation.blueprintPath, undefined, usable?.result ?? undefined);
-      selectedScopes = selectQuestioningScopes(previous?.beforeDocument, current, usable?.result ?? undefined,
-        affectedDependencies.map(item => isInsideProjectRoot(input.projectRoot, item.path) ? path.relative(input.projectRoot, item.path).replace(/\\/g, '/') : item.path), input.projectRoot);
+      questioning ??= readInitialDesignQuestioning(input.projectRoot, input.manifest, input.observation.blueprintPath, current, runs);
+      const previous = questioning.original;
+      input.questioningInputs?.push(...questioningRunInputs(input.projectRoot, current, questioning.previous ?? undefined));
       if (previous?.beforeDocument) actualDiff = [{ label: '(actual blueprint changes)',
         content: describeQuestioningChanges(previous.beforeDocument, current, previous.beforeSource, input.observation.blueprintPath) }];
     } catch { /* Missing originals retain full first-reading context. */ }
+    const previous = questioning?.original;
+    const selectedScopes = questioning?.selectedScopes;
     parts.push(...independentVerificationContext({ designQuestioning: true, previousOriginal: previous
       ? { label: previous.source, kind: 'path', content: '上轮独立原件；只定向读取本轮范围的原结论及来源，未变项由机器保留。' } : null,
-      actualDiff, affectedDependencies, currentEvidence: [{ label: input.observation.blueprintPath, kind: 'path', content: '当前设计与全部机器缺口；旧run基线不是上次Q前像。' }] })
+      actualDiff, affectedDependencies: questioning?.affectedDependencies ?? [],
+      currentEvidence: [{ label: input.observation.blueprintPath, kind: 'path', content: '当前设计与全部机器缺口；旧run基线不是上次Q前像。' }] })
       .map(entry => `${entry.label}\n${entry.content}`));
-    if (usable?.result) {
-      const relevant = asRecords(usable.result.items).filter(item => selectedScopes?.includes(String(item.scope_ref)));
+    if (questioning?.previous) {
+      const relevant = asRecords(questioning.previous.items).filter(item => selectedScopes?.includes(String(item.scope_ref)));
       parts.push(`本轮相关旧结论与未决项位置：${previous?.source}。scope=${relevant.map(item => item.scope_ref).join('、')}；依原件定向核实，不复制全部旧回答。`);
     }
-    if (available.some(item => item.unavailable)) parts.push('上次质询未交回可用对象，请按既有格式返回。');
-    return { lines: parts, questioned: !!previous, selectedScopes, formatRepair: available.some(item => item.unavailable) };
+    if (questioning?.unavailable) parts.push('上次质询未交回可用对象，请按既有格式返回。');
+    return { lines: parts, questioned: !!previous, selectedScopes, formatRepair: questioning?.unavailable };
   }
   const previous = runs.filter(run => run.manifest.feature === input.manifest.feature).flatMap(run => run.events
     .filter(event => event.type === 'agent_invoke_end' && event.phase === label && event.invoke_id).map(event => ({ run, event })))

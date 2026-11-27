@@ -21,7 +21,7 @@ import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-
 import { deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { designRepairTarget, designRepairSignature, runUnattendedDesignRepair, type DesignRepairBriefLike, type UnattendedDesignRepairInput } from '../../scripts/utils/design-repair-unattended';
 import { blueprintSourceRefFiles } from '../../scripts/utils/blueprint-skill-projection';
-import { prepareInitialDesignDraft, readInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
+import { prepareInitialDesignDraft, publishInitialDesignQuestioning, readInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
 import { readDesignQuestioningOriginal, recordDesignRepairInvocation, reusableDesignQuestioning } from '../../scripts/utils/design-repair-unattended';
 import { fixture } from './blueprint-skill-projection.unit.test';
 import { DISPOSITIONS } from '../../scripts/utils/component-blueprint-model';
@@ -260,6 +260,10 @@ function machineAdmissionCompatibility(): void {
 function initialMachinePreparation(): void {
   const f = fixture();
   try {
+    const boundBytes = fs.readFileSync(f.blueprintFile);
+    const boundAnswer = read(f.blueprintFile).review_summary.questioning;
+    assert.equal(publishInitialDesignQuestioning(f.root, 'ledger-app-blueprint', { ...boundAnswer, status: 'incomplete' }), false);
+    assert(fs.readFileSync(f.blueprintFile).equals(boundBytes), 'a bound CU preserves its precise blueprint identity');
     for (const unit of enumerateCanonicalChangeUnits(f.root, 'ledger-app-blueprint')) {
       fs.rmSync(unit.canonicalPath, { force: true });
     }
@@ -280,6 +284,13 @@ function initialMachinePreparation(): void {
     assert.equal(pending.kind, 'questioning', pending.issues.join('\n'));
     assert(pending.blueprintIssues?.some(issue => issue.id === 'blueprint_questioning_provider_missing'));
     assert.equal(fs.readFileSync(f.blueprintFile, 'utf8'), preparedBytes, 'a transient qualification erased original public Q answers');
+    const unanswered = read(f.blueprintFile);
+    delete unanswered.review_summary.questioning;
+    write(f.blueprintFile, unanswered);
+    assert(publishInitialDesignQuestioning(f.root, 'ledger-app-blueprint', original.review_summary.questioning));
+    const published = fs.readFileSync(f.blueprintFile);
+    assert.equal(publishInitialDesignQuestioning(f.root, 'ledger-app-blueprint', original.review_summary.questioning), false);
+    assert(fs.readFileSync(f.blueprintFile).equals(published), 'rejoining after the machine answer write must reuse the same blueprint SHA');
     const changed = read(f.blueprintFile); changed.design_views[0].purpose += ' current business design';
     changed.component_id = 'author-chosen-id'; changed.blueprint_id = 'author-chosen-workspace'; changed.revision = 999;
     write(f.blueprintFile, changed);

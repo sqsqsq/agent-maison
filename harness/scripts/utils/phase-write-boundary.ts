@@ -120,7 +120,7 @@ export function readPhaseRecoveryFile(projectRoot: string, file: string): { actu
 export function capturePhaseInvocationSnapshot(
   resolution: Pick<PhaseWriteBoundaryResolution, 'projectRoot' | 'protectedRoots' | 'executionRole' | 'immutableInputPaths' | 'verifierResultPath'>,
   options: { ownedPrefixes?: readonly string[]; runtimeExcluded?: readonly string[]; includeFiles?: readonly string[];
-    wholeProject?: boolean; onObservedPath?: (relative: string) => void } = {},
+    wholeProject?: boolean; strictRead?: boolean; onObservedPath?: (relative: string) => void } = {},
 ): PhaseInvocationSnapshot {
   const entries: PhaseInvocationSnapshotEntry[] = [];
   const seen = new Set<string>();
@@ -138,7 +138,7 @@ export function capturePhaseInvocationSnapshot(
   }
   const explicitlyIncluded = (rel: string): boolean => included.has(rel) || immutableInputs.some(prefix => prefixMatches(rel, prefix));
   const readFailure = (rel: string, operation: string, error: unknown): string | null =>
-    !resolution.executionRole || explicitlyIncluded(rel) || prefixMatches(rel, 'framework')
+    options.strictRead || !resolution.executionRole || explicitlyIncluded(rel) || prefixMatches(rel, 'framework')
       ? `${operation} failed: ${rel}: ${(error as Error).message}` : null;
   const excludedByRuntime = (rel: string): boolean =>
     (runtimeExcluded.some(prefix => prefixMatches(rel, prefix)) && !(resolution.executionRole && explicitlyIncluded(rel)))
@@ -169,6 +169,8 @@ export function capturePhaseInvocationSnapshot(
       }
     }
     if (stat.isDirectory()) {
+      if (seen.has(rel)) return null;
+      seen.add(rel);
       let children: string[];
       try {
         children = fs.readdirSync(abs).sort();

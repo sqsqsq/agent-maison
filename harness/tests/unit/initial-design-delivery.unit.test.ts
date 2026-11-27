@@ -618,7 +618,7 @@ cases.push({
     const entry = require('../../scripts/goal-mode-entry') as typeof import('../../scripts/goal-mode-entry');
     const { readSessionExecution } = require('../../scripts/utils/session-execution-handoff') as typeof import('../../scripts/utils/session-execution-handoff');
     const { renderDesignAuthorityBoundary } = require('../../scripts/utils/design-repair-unattended') as typeof import('../../scripts/utils/design-repair-unattended');
-    const { requiredQuestioningScopes } = require('../../scripts/utils/blueprint-questioning') as typeof import('../../scripts/utils/blueprint-questioning');
+    const { mandatoryQuestioningScopes, requiredQuestioningScopes } = require('../../scripts/utils/blueprint-questioning') as typeof import('../../scripts/utils/blueprint-questioning');
     try {
       fs.writeFileSync(path.join(directory, 'framework.config.json'), JSON.stringify({ schema_version: '1.0', project_name: 'AuthorityPrompt',
         project_profile: { name: 'hmos-app' }, active_workflow: 'obligation-driven', features_dir: 'doc/features' }));
@@ -653,9 +653,10 @@ cases.push({
           assert(prompt.includes('这是首次独立阅读') && prompt.includes('第1–4行'));
           assert(!prompt.includes('前次真实否定仍待复核'));
           assert(!prompt.includes('执行前读取工程AGENTS'));
-          const scopes = requiredQuestioningScopes(blueprint);
-          assert.equal(scopes.size, 19);
-          for (const scope of scopes.keys()) assert(prompt.includes(`- ${scope}（`), 'all substantive scopes remain required');
+          assert.equal(requiredQuestioningScopes(blueprint).size, 19, 'historical scopes remain recognizable');
+          const scopes = mandatoryQuestioningScopes(blueprint);
+          assert.equal(scopes.length, 9);
+          for (const scope of scopes) assert(prompt.includes(`- ${scope}（`), 'all substantive scopes remain required');
         }
       }
       for (const kind of ['decompose', 'scope'] as const) {
@@ -704,7 +705,7 @@ cases.push({
       assert(recheck.includes('第1–4行') && !recheck.includes('本次控制入口已核实可信原请求'));
       assert(!recheck.includes('前次真实否定仍待复核') && !recheck.includes('旧交接问题是否已修复？'));
       assert(!recheck.includes(path.join(priorDir, 'draft-output.yaml')));
-      for (const scope of requiredQuestioningScopes(blueprint).keys()) assert(recheck.includes(`- ${scope}（`));
+      for (const scope of mandatoryQuestioningScopes(blueprint)) assert(recheck.includes(`- ${scope}（`));
       fs.unlinkSync(path.join(priorDir, 'draft-output.yaml'));
       const unfinished = delivery.initialDesignAuthorInstruction({ projectRoot: directory, frameworkRoot, manifest, autonomyAuthorized: false,
         observation: { kind: 'questioning', blueprintPath, candidatesPath, issues: [] }, deliveryRuns: [{ manifest: previous, events }] });

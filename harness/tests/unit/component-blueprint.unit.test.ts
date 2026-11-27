@@ -1399,6 +1399,62 @@ export function runAll(): UnitCaseResult[] {
     assert(validateFixture(blueprint).some(item => item.id === 'blueprint_generated_graph_parse_failed' && item.severity === 'BLOCKER'), 'flowchart 原阻断级别被削弱');
   }));
 
+  results.push(test('runtime lifecycle checks follow exact flow commitments without requiring generic rows', () => {
+    const blueprint = validBlueprint();
+    const flow = runtimeFlow(blueprint);
+    const lifecycle = asRecord(flow.lifecycle_coverage)!;
+    const lens = asRecord(blueprint.app_lens)!;
+    const assessment = asRecord(lens.runtime_flow_trigger_assessment)!;
+    const flowRef = 'view:runtime/flow:ledger-refresh-flow';
+    lens.process_recovery = {
+      disposition: 'answered_with_evidence', answer: 'Read the persisted ledger after restart.', evidence_refs: [flowRef],
+    };
+    for (const condition of ['cold_start_resume_mount_account_switch', 'cache_sync_freshness_consistency_process_recreation']) {
+      assessment[condition] = { applies: true, evidence_refs: [flowRef] };
+    }
+
+    delete lifecycle.account_switch;
+    delete lifecycle.background_write;
+    delete lifecycle.process_recreation;
+    const gaps = () => validateRuntimeDataFlows(blueprint).filter(item => item.id === 'runtime_flow_lifecycle_gap').map(item => item.path);
+    assert(gaps().length === 1 && gaps()[0].endsWith('.process_recreation'), '只有当前 flow 承诺的进程重建须覆盖');
+
+    asRecord(lens.process_recovery)!.evidence_refs = ['view:runtime', 'view:runtime/flow:other'];
+    assert(gaps().length === 1 && gaps()[0].endsWith('.process_recreation'), '本 flow 的恢复设计也是进程重建的正证');
+    asRecord(flow.failure_recovery)!.process_recreation = 'unknown';
+    assert(gaps().length === 0, '泛指视图、其它 flow 或合并触发组不能绑定本 flow 的某个事件');
+    assert(!('account_switch' in lifecycle) && !('background_write' in lifecycle), '检查器不能替首审裁决不适用');
+
+    delete lifecycle.cold_start;
+    assert(gaps().length === 1 && gaps()[0].endsWith('.cold_start'), '当前 flow 的明确冷启动触发仍须覆盖');
+  }));
+
+  results.push(test('a real background writer requires coverage only for the affected flow', () => {
+    const blueprint = validBlueprint();
+    const runtime = findView(blueprint, 'runtime');
+    const flow = runtimeFlow(blueprint);
+    const other = clone(flow);
+    other.flow_id = 'other';
+    delete asRecord(other.lifecycle_coverage)!.background_write;
+    runtime.runtime_data_flows = [flow, other];
+    const assessment = asRecord(asRecord(blueprint.app_lens)!.runtime_flow_trigger_assessment)!;
+    const background = asRecord(assessment.background_system_external_scheduled_write)!;
+    background.applies = true;
+    background.evidence_refs = ['view:runtime'];
+    const gaps = () => validateRuntimeDataFlows(blueprint).filter(item => item.id === 'runtime_flow_lifecycle_gap').map(item => item.path);
+    assert(gaps().length === 0, '泛指 runtime 不将后台写义务分配给所有 flow');
+
+    background.evidence_refs = ['view:runtime/flow:ledger-refresh-flow'];
+    const ownPath = '$.design_views[runtime].runtime_data_flows[0].lifecycle_coverage.background_write';
+    assert(gaps().length === 1 && gaps()[0] === ownPath, '正向后台 assessment 准确绑定 flow 时不能标为不适用');
+    background.applies = false;
+    asRecords(flow.mutations)[0].kind = 'background';
+    assert(gaps().length === 1 && gaps()[0] === ownPath, '真实后台 mutation 不能被旧不适用或全局否盖掉');
+    asRecord(asRecord(flow.lifecycle_coverage)!.background_write)!.status = 'covered';
+    assert(gaps().length === 0, '已有背景写覆盖及证据可继续使用');
+  }));
+
+
   results.push(test('read-only initial-load flow does not fabricate mutation publication or subscription', () => {
     const readOnly = validBlueprint();
     const flow = runtimeFlow(readOnly);

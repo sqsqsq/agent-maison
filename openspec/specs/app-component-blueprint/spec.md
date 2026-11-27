@@ -314,6 +314,8 @@ guide MUST NOT 固化 CU 数量/ID/修订/依赖；正文施工 SHALL 按当前�
 
 主 agent SHALL 按 P1 workflow §4“派出独立质询”条目把通用规则及材料位置写入实际派发任务，MUST NOT 依赖质询者自行读取 P1，MUST NOT 附父会话设计结论、目标样稿或宿主答案。任务 SHALL 明确：首次先只读首屏/正文答八问，答完前不读参考区、YAML 或需求原文；之后首次核源逐条对照本次适用原需求、有效人类裁决、最终设计与验收，并按发现证据复核本次已有页面/入口的同一对应，沿既有报告引原句/出处及设计/验收位置，MUST NOT 以来源路径、scope 齐全或检查 PASS 代替行为满足。质询者提出删除/收窄明示数据交接、跳转或清栈建议前 SHALL 引受影响原句及适用裁决、说明风险，并给出兼顾原行为与约束的替代；无法兼顾或缺依据 SHALL 沿已有未决决定/待确认说明，MUST NOT 直接删后闭项。派发任务还 SHALL 转达每次修订重渲后的正文通读规则：返修保留旧意见及修法直接影响的原要求/验收复核，每次作者修订并按摘要规则重渲后，该轮既有质询方 SHALL 从头读当前正文到“技术与追溯参考”之前，只核改过行为跨段一致、无事实/授权依据的推断或待确认处理不冒充已调和、已定或已确认，沿原答复报告通过或剩余矛盾。MUST NOT 预判最后一轮、只看 diff/旧意见定位或凭初稿记忆；需要依据 SHALL 仅定向查相关原文/事实/精确验收，不重做完整八问、全需求/全源码或架构评审。未改且该轮已读的当前正文无需重读；复核后又改稿（含根契约）并重渲 SHALL 按同一规则再复核，旧阅读 MUST NOT 代表新稿。该要求复用既有返修复核，MUST NOT 新增独立 reader、固定调用轮次、回执、状态或门禁。
 
+首审 SHALL 对照真实用户承诺、已授权契约及可达失败后果检查完整设计。作用于同一持久状态的写入和清空应沿现有 flow、契约、验收及结果消费者核对顺序和可观察后果；指出有据的保证或可达反例。没有明确触发或承诺的通用生命周期不要求另造覆盖，存在冲突或证据缺口交既有质询职责裁决。
+
 设计修订 SHALL 优先换实现以满足原需求。作者采纳建议前 SHALL 核需求与授权；涉及原文明示的携带数据、跳转目的地或页面清理时，SHALL 回原文复核，同步步骤、旅程、图、恢复及数据生命周期，核谁持有/谁接收/交接渠道/何时清理及失败无写入标识的情形，MUST NOT 强制明文路由参数交接或将具体样本实现固化成通用模板。必要偏离 SHALL 沿既有未决决定/待确认说明原要求、拟变更、理由和影响，无用户或既有明确授权 MUST NOT 删除或标已裁决；质询建议和作者核对本身 MUST NOT 构成人类变更授权，有效裁决仅在其真实范围生效。该责任 SHALL 复用原质询/报告，MUST NOT 新增文件、持久状态、强制调用轮次、评分、逐句机器比较或签字/准入门。
 
 流程效果 SHALL 以用户相同话术和任务边界的真实回归判断，MUST NOT 手修测试宿主或修改原需求后宣称框架通过。派发原文可见 SHALL 核原文是否转达上述约束；因加密等原因不可见 SHALL 如实标原文未核验，按质询实际是否引原句、给保需求替代或沿原承载待确认判断，MUST NOT 单因不可见阻止验收或声称已核过原文。未发生删减建议 SHALL 不刻意制造意见，仍核最终设计保留原要求；确定性展示验证 MUST NOT 冒充真实流程与实读通过。
@@ -571,7 +573,7 @@ blueprint_id、revision、source_fingerprint、artifact_sha256），并完整投
 
 当满足以下任一条件时，runtime view MUST 生成带稳定 `flow_id` 的 `runtime_data_flow`：持久化或远端数据会被 UI 展示；同一数据被多个页面、组件或聚合 projection 消费；存在后台、系统、外部或定时写入；冷启动、恢复前台、页面挂载或账号切换时需要加载、刷新或调和；一处用户修改需要刷新其它消费者；存在缓存、云同步、数据新鲜度、一致性或进程重建要求。全部六项均不满足时，只允许数据闭环子模型带证据和重新触发条件标为 `not_applicable`，可执行 App 的 runtime 视图仍须覆盖其它运行交互。
 
-每条流至少 MUST 表达以下完整语义形状：`data_domain_refs`、`external_contract_refs`、`source_of_truth`（含 `authority`、`persistence`、非空 `projections_and_caches`、`reconciliation`）、非空 `triggers`（每项含 `kind`、`timing`、`idempotency`）、`initial_load`（含稳定 `initial_load_id`、`strategy`、`owner`、`data_scope`、`freshness`）、`state_owner`（含 `ref`、非空 `states`）、数组形状的 `mutations`、`publications`、`subscriptions`、`consumers`、含稳定 `recovery_id` 的 `failure_recovery`、`decisions_and_gaps`、非空 `evidence_refs` 和 `verification_refs`。四类行为数组是否有条目 MUST 由实际 trigger 和已声明行为派生：只读/首次加载流不得为满足 schema 伪造 mutation、publication 或 subscription；一旦声明 mutation，必须解析到真实 publication/recovery，且该 publication 必须继续追到至少一个受影响 consumer；一旦声明 publication，必须有 consumer 更新引用；一旦声明 subscription，必须解析到 consumer 并具备 replay/snapshot、顺序/并发、attach/detach/cleanup；consumer 必须能反向追到首次加载，并在存在 publication/subscription 时追到更新来源。flow 局部 mutation/publication/subscription/consumer id MUST 唯一。构建完整性时 MUST 同时执行 consumer 反向追首次加载/适用时更新来源、producer 正向追传播/所有受影响 consumer、以及对 cold start、warm resume、page attach/detach、account switch、process recreation、background write 的生命周期矩阵交叉检查；孤立 publication/consumer、悬空引用或未闭合边 MUST 进入 frontier 并阻止当前层声称闭合。
+每条流至少 MUST 表达以下完整语义形状：`data_domain_refs`、`external_contract_refs`、`source_of_truth`（含 `authority`、`persistence`、非空 `projections_and_caches`、`reconciliation`）、非空 `triggers`（每项含 `kind`、`timing`、`idempotency`）、`initial_load`（含稳定 `initial_load_id`、`strategy`、`owner`、`data_scope`、`freshness`）、`state_owner`（含 `ref`、非空 `states`）、数组形状的 `mutations`、`publications`、`subscriptions`、`consumers`、含稳定 `recovery_id` 的 `failure_recovery`、`decisions_and_gaps`、非空 `evidence_refs` 和 `verification_refs`。四类行为数组是否有条目 MUST 由实际 trigger 和已声明行为派生：只读/首次加载流不得为满足 schema 伪造 mutation、publication 或 subscription；一旦声明 mutation，必须解析到真实 publication/recovery，且该 publication 必须继续追到至少一个受影响 consumer；一旦声明 publication，必须有 consumer 更新引用；一旦声明 subscription，必须解析到 consumer 并具备 replay/snapshot、顺序/并发、attach/detach/cleanup；consumer 必须能反向追到首次加载，并在存在 publication/subscription 时追到更新来源。flow 局部 mutation/publication/subscription/consumer id MUST 唯一。构建完整性时 MUST 同时执行 consumer 反向追首次加载/适用时更新来源、producer 正向追传播/所有受影响 consumer、以及对有明确触发、后台写入或精确来源承诺的生命周期执行交叉检查。flow 中已声明的覆盖或不适用条目必须有证据。遇到该 flow 的正向义务，缺少覆盖或标成不适用 MUST 报缺口。全局合并触发条件或仅指向 runtime 视图的引用不足以定位某事件适用的 flow。未声明且无正向义务的通用项由独立质询根据原需求、用户动作和可达后果裁决，缺行保留为待判。孤立 publication/consumer、悬空引用或未闭合边 MUST 进入 frontier 并阻止当前层声称闭合。
 
 #### Scenario: A consumer has no initial load source
 
@@ -582,6 +584,11 @@ blueprint_id、revision、source_fingerprint、artifact_sha256），并完整投
 
 - **WHEN** 系统后台写入只通知内存 store，没有持久化、前台恢复或进程重建后的读取路径
 - **THEN** 生命周期矩阵必须报告 mutation→persistence/recovery 的断链，并将该断链保留为 frontier
+
+#### Scenario: Lifecycle obligations follow the affected flow
+
+- **WHEN** 最近搜索 flow 只接受用户写入，账号切换和后台写均无相反触发，且 `process_recovery` 用精确 flow 引用承诺重启后的读回
+- **THEN** 缺少账号切换和后台写行不构成机器阻断，缺少进程重建覆盖仍报告该 flow 的缺口。已声明后台写时仍须给出该 flow 的覆盖依据
 
 #### Scenario: Late subscription lacks replay or snapshot
 
@@ -602,7 +609,7 @@ blueprint_id、revision、source_fingerprint、artifact_sha256），并完整投
 
 ### Requirement: Independent evidence-driven questioning is mandatory
 
-蓝图送评审前 MUST 经过独立质询 provider；质询上下文必须与蓝图编写上下文隔离，输入包括蓝图草稿、结构化证据包和已登记外部输入。质询 MUST 从 canonical YAML 派生 required scope，并唯一覆盖每个 `applicability=applicable` 的 view、每条跨视图 relation、每条 runtime flow 和十个 App lens 强制根问题；证据化 `not_applicable` 的 view 不属于强制 view scope，不能用一个问题自报覆盖全部 scope。每个问题必须记录问题文本、证据回答、source/provenance、disposition、frontier fingerprint、owner 和 verification refs。质询过程报告只是过程证据，不是新的 SSOT；稳定事实、设计决策和外部契约结论 MUST 只回写蓝图及既有 ADR/契约真源。质询 provider 缺失、scope 缺失/重复、重复 frontier 超预算或无法产生可解释退出时 MUST 形成结构化 blocker，不能静默跳过或自证 PASS。
+蓝图送评审前 MUST 经过独立质询 provider；质询上下文必须与蓝图编写上下文隔离，输入包括蓝图草稿、结构化证据包和已登记外部输入。质询 MUST 从 canonical YAML 派生 required scope，并唯一覆盖适用视图、跨视图 relation、runtime flow 及已派发的具体义务。十个 App lens 根问题供首审查漏与定位，已签历史答案继续可读。通用根问题的覆盖可由具体义务上的答复证明。作者已明确的开放决定、仍有效的独立否决与待决项必须保留并处理，已选中的定向复核义务必须实答。证据化的不适用视图无需覆盖，单个自报结论不能代替具体义务。每个问题必须记录问题文本、证据回答、source/provenance、disposition、frontier fingerprint、owner 和 verification refs。质询过程报告只是过程证据，不是新的 SSOT；稳定事实、设计决策和外部契约结论 MUST 只回写蓝图及既有 ADR/契约真源。质询 provider 缺失、scope 缺失/重复、重复 frontier 超预算或无法产生可解释退出时 MUST 形成结构化 blocker，不能静默跳过或自证 PASS。
 
 #### Scenario: The questioning provider is unavailable
 

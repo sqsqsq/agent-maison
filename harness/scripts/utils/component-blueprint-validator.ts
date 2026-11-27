@@ -108,7 +108,7 @@ export function validateComponentBlueprintUpstream(
     ...validateBlueprintMethodProjection(blueprint),
     ...validateRuntimeDataFlows(blueprint),
     ...validateCrossViewRelations(blueprint),
-    ...validateBlueprintQuestioning(blueprint),
+    ...validateBlueprintQuestioning(blueprint, context.projectRoot),
     ...generatedGraphs.issues,
     ...validateBlueprintReconciliation(blueprint),
     ...validateEvolutionDecisions(blueprint, context.projectRoot, context.architecture),
