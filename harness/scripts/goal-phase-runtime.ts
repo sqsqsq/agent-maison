@@ -4663,6 +4663,7 @@ export class GoalPhaseRuntime {
       const designEvaluations: CompletionEvaluation[] = [];
       let currentQuestioningInvokeId: string | undefined;
       let processAuthorWait: { phase: string; detail: string } | undefined;
+      let reconsideredQuestioningWrite = false;
       const questioningObservation = () => {
         try {
           const loaded = loadCanonicalBlueprint(projectRoot, manifest.feature);
@@ -4803,7 +4804,13 @@ export class GoalPhaseRuntime {
           observed = { ...feedback, disposition: readInitialDesignCompletionDisposition({ projectRoot, frameworkRoot, manifest, observation: feedback }) };
         }
         if (!restoration.size && !observed.request && !observed.designRepair && currentQuestioning?.questioningResult) {
-          if (publishInitialDesignQuestioning(projectRoot, manifest.feature, currentQuestioning.questioningResult, currentQuestioning.blueprintSha)) {
+          const publication = publishInitialDesignQuestioning(projectRoot, manifest.feature, currentQuestioning.questioningResult, currentQuestioning.blueprintSha);
+          if (publication === 'stale') {
+            if (reconsideredQuestioningWrite) return conclude('executor_waiting', '蓝图在消费独立质询期间再次变化，已保留当前材料，沿当前输入继续核实。');
+            reconsideredQuestioningWrite = true;
+            continue currentDesignWork;
+          }
+          if (publication) {
             observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest, questioning: currentQuestioning });
           }
         } else if (!restoration.size && !observed.request && !observed.candidateRejection && (observed.kind === 'author' || observed.kind === 'decompose') && !enumerateCanonicalChangeUnits(projectRoot, manifest.feature).length
@@ -4819,6 +4826,7 @@ export class GoalPhaseRuntime {
           observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest, questioning: currentQuestioning,
             ...(!currentQuestioning ? { questioningResult: null } : {}) });
         }
+        reconsideredQuestioningWrite = false;
         if (restoration.size) observed = { ...observed, kind: 'author', progression: undefined, designRepair: undefined,
           issues: [...observed.issues, buildPhaseWriteRecoveryContextBlock({ sourcePhase: 'initial-design-author', targetPhase: 'initial-design-author', files: [...restoration.keys()], preimages: Object.fromEntries(restoration) })] };
         if (!restoration.size && observed.progression?.action === 'blocked') {

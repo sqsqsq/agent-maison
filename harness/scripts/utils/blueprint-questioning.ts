@@ -213,7 +213,7 @@ function unansweredWriteInteraction(blueprint: BlueprintRecord, item: BlueprintR
   });
   if (writes.length < 2 || new Set(writes.flatMap(write => write.promises)).size < 2) return [];
   const missing = writes.map(write => String(write.mutation.mutation_id));
-  if (item.disposition !== 'answered_with_evidence' && item.disposition !== 'decided_with_authority') return missing;
+  if (!['answered_with_evidence', 'decided_with_authority', 'open_decision'].includes(String(item.disposition))) return missing;
   const evidence = new Set([...asStrings(item.verification_refs), ...asStrings(item.evidence_refs)]);
   const pointer = (ref: string) => {
     if (ref.startsWith('#/')) return ref.slice(1);
@@ -227,7 +227,18 @@ function unansweredWriteInteraction(blueprint: BlueprintRecord, item: BlueprintR
     const value = location && resolveBlueprintReaderSource(blueprint, location)?.value;
     return asRecord(value) ? [value as BlueprintRecord] : [];
   }));
-  if (writes.every(write => sources.has(write.mutation) && write.promises.some(id => evidence.has(id) || evidence.has(`acceptance:${id}`)))) return [];
+  const independentlyChecked = new Set([...evidence].map(ref => ref.replace(/^acceptance:/, '')).filter(ref => p0.has(ref)));
+  for (const owner of owners) {
+    const cases = asRecords(asRecord(owner.use_cases)?.use_cases);
+    for (const criterion of asRecords(asRecord(owner.acceptance)?.criteria)) {
+      if (!nonEmptyString(criterion.id) || !p0.has(criterion.id)) continue;
+      const matching = cases.filter(row => row.id === criterion.linked_flow);
+      const signedBranch = matching.length === 1 && asRecords(matching[0].branches).some(branch =>
+        sources.has(branch) && asStrings(branch.linked_acceptance).includes(criterion.id as string));
+      if (sources.has(criterion) || signedBranch) independentlyChecked.add(criterion.id);
+    }
+  }
+  if (writes.every(write => sources.has(write.mutation) && write.promises.some(id => independentlyChecked.has(id)))) return [];
   for (const owner of owners) {
     const cases = asRecords(asRecord(owner.use_cases)?.use_cases);
     const acceptance = asRecord(owner.acceptance);
@@ -259,7 +270,7 @@ function unansweredWriteInteraction(blueprint: BlueprintRecord, item: BlueprintR
     const field = asRecord(contract.idempotency);
     if (!field || !(sources.has(field) || nonEmptyString(field.source_ref) && evidence.has(field.source_ref))) continue;
     const verifies = asStrings(field.verification_refs);
-    if (writes.every(write => write.promises.some(id => verifies.includes(id)))) return [];
+    if (writes.every(write => write.promises.some(id => verifies.includes(id) && independentlyChecked.has(id)))) return [];
   }
   return missing;
 }
@@ -408,9 +419,9 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
   }));
   for (const [ref, kind] of required) {
     const candidates = items.filter(item => item.scope_ref === ref);
-    // Prior findings must be reconsidered, but only changed design facts propagate to their consumers.
+    // A stable open decision is still the independent answer. Existing admission handles current owner work.
     if (revisitFindings && (candidates.length !== 1 && (candidates.length > 1 || questioningAnswerRequired(current, ref, kind))
-      || candidates.some(item => item.disposition === 'blocker' || item.disposition === 'open_decision')
+      || candidates.some(item => item.disposition === 'blocker')
       || asRecords(previous.items).some((item, index) => invalidIndexes.has(index) && item.scope_ref === ref))) affected.add(ref);
   }
   const global = (doc: BlueprintRecord): BlueprintRecord => {
@@ -723,7 +734,7 @@ export function renderQuestioningResultInstructions(blueprint: BlueprintRecord, 
     ...(lens.length ? [`首审用这些 App 视角查漏：${lens.join('、')}。相关义务已有独立结论时可省略重复行；发现实际反例仍交回该 scope 及具体依据。`] : []),
     '适用视图、流程、关系、具体承诺和未闭合发现逐项实答。通用 app_lens 行用于定位与查漏，相关实际义务已有独立结论时可省略重复行。只交回本轮实际复核的范围；未选中的旧结论沿用原题、原答与原件。同引未变的需求文档不能证明受影响。用具体决定、稳定地址或精确字段指针定位依据。已签答复之外发现可复现的实质反例，可在对应 scope 交回，并在 answer 与 verification_refs 明确原承诺、可达触发、后果与来源。同一 scope 的仍开放旧反例和独立新反例写在同一条内。用紧凑JSON返回，不写临时结果或复述完整材料。',
     '用原需求逐项核对预期结果、独立验收 ID 和适用观察通道。以反例判断设计是否允许违反当前已授权行为，例如生产者交出的对象与消费者需要的本次对象不一致。失败返回落点依据原文及既有路由解释；参考图按既有来源核验并保留到施工/视觉验收。',
-    '当实际写入与清空作用于同一持久状态、分别承担本次用户承诺时，核对操作开始和完成允许的顺序、实际落盘与结果消费者。沿当前 flow 的具体 mutation、对应验收与用例分支，或同一现有合同中的明确顺序保证给出独立裁决。若两操作不可能冲突，引用各操作和相关验收位置说明约束来源。只核对真实触发或承诺的生命周期；没有正向依据的通用事件由独立方判断是否适用。',
+    '当实际写入与清空作用于同一持久状态、分别承担本次用户承诺时，核对操作开始和完成允许的顺序、实际落盘与结果消费者。沿当前 flow 的具体 mutation、对应验收与用例分支，或同一现有合同中的明确顺序保证给出独立裁决。若引用合同，给出能证明有关操作先后的具体原文，并在回执引用两侧各自的 P0 或可定位的验收分支。重复同一操作的幂等与不同操作间的顺序是两项承诺。若两操作不可能冲突，引用各操作和相关验收位置说明约束来源。只核对真实触发或承诺的生命周期；没有正向依据的通用事件由独立方判断是否适用。',
     '同一通道可以承担不同义务。按原需求分别核对输入映射和默认值、生产写入与读回、外部界面与导航、可见时间变化和真实调用次数。逐项核对 P0 的动作和断言，多个 UI 义务可以共用同一动作，各自的预期结果须有可观察的断言。结果页出现可以证明导航；持久状态和调用次数须由能读取实际值的应用内测试承担，应用内测试即使在真机执行也归 unit。不同 CU 的局部同号及多个目标共用同一完整定义可按实际消费范围保留。',
     '当前义务遗漏或混写、证据通道无法观察所承诺的结果、产品设计存在实质矛盾或违反本次授权时，在对应 scope 给 blocker，写清原文或相冲突的设计出处、条目位置与实际后果。核对动作发生时必需的生产者、接收者、触发、交接或清理是否成立。例如选卡页首次进入时若拿不到用户刚选的银行和卡型，就无法列出本行卡片，选卡、同意协议及进入验证码的承诺也无法兑现。该缺口须判 blocker 并交设计作者。当前必须裁决的需求或授权沿既有未决决定与权限处理。',
     '设计已明确义务、可观察通道及生产行为时，以设计原文完成 answered_with_evidence。例如已明确选卡页首次进入时从路由参数或已签发的只读流程接口取得本次银行和卡型，具体参数名可以交施工。具体测试 API/入口、注入与定位方式、样本数据/隔离/复位前置、用例步骤和断言强度交既有 CU 计划及施工后的独立核验；需要时在答复留一句交接说明。只有这些执行细节未定时不报 blocker 或 open_decision，也不声称测试已执行或义务已验证。远期决定沿原 owner、needed-by 和解除条件记录；其依赖未变时复用原结论。',

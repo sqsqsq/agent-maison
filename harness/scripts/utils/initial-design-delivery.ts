@@ -503,29 +503,28 @@ export function validateInitialDesignInvocation(purpose: 'author' | 'questioning
   } catch { return purpose === 'questioning' ? '独立质询输出不可解析。' : null; }
 }
 
-function writeInitialDesignProjection(projectRoot: string, file: string, before: Buffer, blueprint: BlueprintRecord): { before: string; after: string } {
+function writeInitialDesignProjection(projectRoot: string, file: string, before: Buffer, blueprint: BlueprintRecord): { before: string; after: string } | null {
   const after = Buffer.from(YAML.stringify(blueprint));
   const staged = `${file}.tmp-${randomUUID()}`;
   try {
     fs.writeFileSync(staged, after, { flag: 'wx' });
-    if (!readPhaseRecoveryFile(projectRoot, file).bytes?.equals(before)) throw new Error('蓝图在写回独立质询前已变化。');
+    if (!readPhaseRecoveryFile(projectRoot, file).bytes?.equals(before)) return null;
     fs.renameSync(staged, file);
   } finally { if (fs.existsSync(staged)) fs.unlinkSync(staged); }
   return { before: createHash('sha256').update(before).digest('hex'), after: createHash('sha256').update(after).digest('hex') };
 }
 
 /** A bound published revision retains its bytes. Unbound design consumes the verified answer once. */
-export function publishInitialDesignQuestioning(projectRoot: string, blueprintId: string, result: BlueprintRecord, expectedBlueprintSha?: string): boolean {
+export function publishInitialDesignQuestioning(projectRoot: string, blueprintId: string, result: BlueprintRecord, expectedBlueprintSha?: string): boolean | 'stale' {
   const loaded = loadCanonicalBlueprint(projectRoot, blueprintId);
-  if (expectedBlueprintSha && loaded.artifactSha256 !== expectedBlueprintSha) throw new Error('蓝图在判定独立质询后已变化。');
+  if (expectedBlueprintSha && loaded.artifactSha256 !== expectedBlueprintSha) return 'stale';
   if (enumerateCanonicalChangeUnits(projectRoot, blueprintId).some(unit =>
     asRecord(unit.changeUnit.component_blueprint_ref)?.revision === loaded.blueprint.revision)) return false;
   const before = stableStringify(loaded.blueprint);
   loaded.blueprint.review_summary = { ...asRecord(loaded.blueprint.review_summary), questioning: result };
   writeBackAdmission(loaded.blueprint, { projectRoot, canonicalPath: loaded.canonicalPath });
   if (stableStringify(loaded.blueprint) === before) return false;
-  writeInitialDesignProjection(projectRoot, loaded.canonicalPath, loaded.bytes, loaded.blueprint);
-  return true;
+  return writeInitialDesignProjection(projectRoot, loaded.canonicalPath, loaded.bytes, loaded.blueprint) ? true : 'stale';
 }
 
 /** Recover an author's independently proven section edit without overwriting the rest of its return. */
@@ -572,17 +571,18 @@ export function recoverInitialDesignAuthorQuestioning(input: {
     || stableStringify(blueprintAuthorContent(doc)) !== stableStringify(blueprintAuthorContent(postimage))) return null;
   const verified = { ...prior.result, status: stableStringify(blueprintAuthorContent(preimage)) === stableStringify(blueprintAuthorContent(postimage))
     ? prior.result.status : 'incomplete' };
-  const currentAnswer = asRecord(doc.review_summary)?.questioning;
+  const currentAnswer = stableStringify(asRecord(doc.review_summary)?.questioning);
   const priorAnswer = asRecord(asRecord(preimage.review_summary)?.questioning);
   const currentSha = digest(current.toString('utf8'));
-  if (stableStringify(currentAnswer) === stableStringify(verified)) return { path: relative, pre_sha256: outputSha, post_sha256: currentSha };
-  // Older writers may already have restored the exact preimage answer while leaving its recovery halt in place.
-  if (currentSha !== outputSha && (!priorAnswer || stableStringify(currentAnswer) !== stableStringify({ ...priorAnswer, status: 'incomplete' }))) return null;
+  if (currentAnswer === stableStringify(verified)) return { path: relative, pre_sha256: outputSha, post_sha256: currentSha };
+  // An already restored answer still needs the current author's business changes assessed.
+  const restored = [prior.result, ...(priorAnswer ? [priorAnswer, { ...priorAnswer, status: 'incomplete' }] : [])];
+  if (currentSha !== outputSha && !restored.some(answer => currentAnswer === stableStringify(answer))) return null;
   doc.review_summary = { ...asRecord(doc.review_summary), questioning: verified };
   refreshBlueprintFingerprints(doc);
   writeBackAdmission(doc, { projectRoot, canonicalPath: blueprintPath });
   const written = writeInitialDesignProjection(projectRoot, blueprintPath, current, doc);
-  return { path: relative, pre_sha256: written.before, post_sha256: written.after };
+  return written && { path: relative, pre_sha256: written.before, post_sha256: written.after };
 }
 
 /** Observation only; admission, candidate acceptance and P3 writes remain runtime-owned. */

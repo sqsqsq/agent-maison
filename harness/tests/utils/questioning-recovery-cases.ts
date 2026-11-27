@@ -22,6 +22,15 @@ const test = (name: string, run: () => void) => ({ name, run });
 
 export function questioningRecoveryCases() {
   const results: Array<{ name: string; run(): void }> = [];
+  results.push(test('b42e13ad historical terminology curation conclusion is reusable without a new question', () => {
+    const blueprint = YAML.parse(fs.readFileSync(path.join(FIXTURE_ROOT,
+      '../host-recovery-history/20261019/project/doc/features/bc-openCard-2/blueprint/component-blueprint.yaml'), 'utf8')) as BlueprintRecord;
+    const questioning = asRecord(asRecord(blueprint.review_summary)?.questioning);
+    assert(questioning && asRecords(questioning.items).some(item =>
+      item.scope_ref === 'terminology:current_scope_items' && item.disposition === 'open_decision'), '冻结原件含术语策展开放结论');
+    assert(validateBlueprintQuestioning(blueprint).length === 0, '原答合法并可读取');
+    assert(selectQuestioningScopes(blueprint, blueprint, questioning).length === 0, '同证据不再开启独立质询');
+  }));
   results.push(test('3ec91fa7 reads exactly one complete independent JSON fence, including arrays', () => {
     const items = [{ scope_kind: 'view', scope_ref: 'view:runtime', disposition: 'blocker', answer: '原否定' }];
     const fenced = '独立结论\r\n```json\r\n' + JSON.stringify(items) + '\r\n```\r\n';
@@ -168,8 +177,8 @@ export function questioningRecoveryCases() {
     for (const item of asRecords(result.items)) assert(asRecord(item.review_original)?.path === (selected.includes(String(item.scope_ref)) ? 'next-q.json' : 'original-q.json'), '把复用项冒充本轮新评');
     const missing = mergeIndependentQuestioningResult(current, { items: [] }, 'independent-q', previous, selected);
     assert(validateBlueprintQuestioning({ ...current, review_summary: { ...asRecord(current.review_summary), questioning: missing } }).some(error => error.id === 'blueprint_questioning_coverage_missing'), '缺少本轮复核仍放行');
-    const reopened = clone(previous); asRecords(reopened.items)[0].disposition = 'open_decision';
-    assert(selectQuestioningScopes(before, before, reopened).includes(String(asRecords(reopened.items)[0].scope_ref)), '未决项被复用');
+    const reopened = clone(previous); asRecords(reopened.items)[0].disposition = 'blocker';
+    assert(selectQuestioningScopes(before, before, reopened).includes(String(asRecords(reopened.items)[0].scope_ref)), '真实否决被静默复用');
     const source = String(asRecord(asRecords(previous.items)[0].provenance)?.source_ref);
     assert(selectQuestioningScopes(before, before, previous, [source]).includes(String(asRecords(previous.items)[0].scope_ref)), '证据变更未重开');
     assert(selectQuestioningScopes(before, before, previous, ['new-unmapped-evidence.ts']).length === requiredQuestioningScopes(before).size, '依赖不可证明未变却被复用');
@@ -217,17 +226,17 @@ export function questioningRecoveryCases() {
       ] } };
       const current = clone(before);
       current.review_summary.reader_guide.source_digest = 'after';
-      expect(selectQuestioningScopes(before, current, previous), ['flow:target-flow'], '摘要刷新只保留未决流程');
+      expect(selectQuestioningScopes(before, current, previous), [], '只有摘要刷新可沿用原开放结论');
       current.review_summary.reader_guide.sections[0].prose = '数据流说明改变';
       expect(selectQuestioningScopes(before, current, previous), ['view:runtime', 'flow:target-flow'], '说明变化追加其运行时视图');
     }
     {
       const { before, previous } = sample();
       const finding = asRecords(previous.items).find(item => item.scope_ref === 'flow:target-flow')!;
-      for (const disposition of ['blocker', 'open_decision']) {
-        finding.disposition = disposition;
-        expect(selectQuestioningScopes(before, before, previous), ['flow:target-flow'], '旧问题仍复核，只有事实变化传播给消费者');
-      }
+      finding.disposition = 'blocker';
+      expect(selectQuestioningScopes(before, before, previous), ['flow:target-flow'], '真实否决仍复核');
+      finding.disposition = 'open_decision';
+      expect(selectQuestioningScopes(before, before, previous), [], '同一业务证据的开放结论不要求重签');
       const current = clone(before);
       current.design_views[1].runtime_data_flows[0].description = '本轮修改实际分发触发条件';
       expect(selectQuestioningScopes(before, current, previous), ['view:runtime', 'flow:target-flow', 'app_lens:ui_refresh'], '生产事实变化仍沿显式引用传播');

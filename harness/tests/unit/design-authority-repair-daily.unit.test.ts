@@ -69,8 +69,12 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       assert.equal(check().length, 1);
       joint.expected_port_calls = ['Port.edit', 'Port.load'];
       assert.equal(check().length, 1);
-      row.evidence_refs = ['contract.yaml#/idempotency'];
-      assert.equal(check().length, 0, 'exact contract for both P0 results is interchangeable evidence');
+      row.evidence_refs = ['AC-1', 'contract.yaml#/idempotency'];
+      assert.equal(check().length, 1, 'a general idempotency locator does not sign the other P0 result');
+      row.evidence_refs.push('AC-2');
+      assert.equal(check().length, 0, 'the independent answer can use a contract premise plus both P0 results');
+      row.evidence_refs[2] = '#/design_views/1/nodes/0/use_cases/use_cases/0/branches/1';
+      assert.equal(check().length, 0, 'a uniquely located acceptance branch supplies its P0 result');
       row.evidence_refs = ['AC-1'];
       joint.expected_port_calls = ['Port.edit', 'Port.delete'];
       assert.equal(check().length, 0);

@@ -191,6 +191,21 @@ export function questioningRealReplayCases() {
         assert(!changes.includes(source), 'the shared requirements actually changed');
         assert.deepStrictEqual(before.blueprint.discovery.facts, current.blueprint.discovery.facts, 'original terminology cites these facts');
       }
+      const reusedOpen = first === 15 && revised === 17 ? ['app_lens:initialization'] : [];
+      for (const scope of reusedOpen) {
+        const item = asRecords(before.previous.items).find(row => row.scope_ref === scope)!;
+        assert.equal(item.disposition, 'open_decision');
+        for (const ref of [...asStrings(item.verification_refs), ...asStrings(item.evidence_refs)]) {
+          const fragment = ref.indexOf('#/');
+          if (fragment < 0) assert(!changes.includes(ref), ref);
+          else {
+            const at = ref.slice(fragment + 1);
+            assert(pointer(before.blueprint, at) !== undefined, ref);
+            assert.deepStrictEqual(pointer(current.blueprint, at), pointer(before.blueprint, at), ref);
+          }
+        }
+      }
+      reused.push(...reusedOpen);
       if (first === 10 && revised === 13) {
         const scope = 'view:development';
         const reason = expected.reasons[scope];
@@ -241,14 +256,14 @@ export function questioningRealReplayCases() {
       const oldFacts = scopeFacts(before.blueprint), newFacts = scopeFacts(current.blueprint);
       const pending = asRecords(before.previous.items).filter(item => ['blocker', 'open_decision'].includes(String(item.disposition))).map(item => String(item.scope_ref));
       assert.deepStrictEqual(pending, asRecords(recorded.pendingBefore).map(item => item.scope));
-      for (const scope of pending) assert(selected.includes(scope), 'real unresolved finding was lost: ' + scope);
+      for (const scope of pending) assert(selected.includes(scope) || reusedOpen.includes(scope), 'real unresolved finding was lost: ' + scope);
       for (const scope of required) {
         const reason = expected.reasons[scope];
         verifyReason(scope, expected, before, current, changes, pending, oldFacts, newFacts);
         if (!selected.includes(scope)) {
           assert(reason.kind === 'retained' || reused.includes(scope), scope);
           assert.equal(stableStringify(oldFacts.get(scope)), stableStringify(newFacts.get(scope)), 'retained design fact changed: ' + scope);
-          assert(!pending.includes(scope), 'retained a real unresolved finding: ' + scope);
+          assert(!pending.includes(scope) || reusedOpen.includes(scope), 'retained a real unresolved finding: ' + scope);
           assert.equal(asRecords(before.previous.items).filter(item => item.scope_ref === scope).length, 1, 'retained result is not unique');
         } else assert(reason.kind !== 'retained' || precise.recheck.includes(scope), scope);
       }
@@ -261,8 +276,8 @@ export function questioningRealReplayCases() {
       const retained = [...requiredQuestioningScopes(current.blueprint).keys()].find(scope => !selected.includes(scope))!;
       assert(retained, 'the real pair must exercise retained independent conclusions');
       const reopened = structuredClone(before.previous);
-      asRecords(reopened.items).find(item => item.scope_ref === retained)!.disposition = 'open_decision';
-      assert(selectQuestioningScopes(before.blueprint, current.blueprint, reopened, changes).includes(retained), 'new independent doubt was silently retained');
+      asRecords(reopened.items).find(item => item.scope_ref === retained)!.disposition = 'blocker';
+      assert(selectQuestioningScopes(before.blueprint, current.blueprint, reopened, changes).includes(retained), 'independent denial was silently retained');
       const ambiguous = structuredClone(current.blueprint);
       delete asRecords(ambiguous.contracts)[0].contract_id;
       assert.deepStrictEqual(selectQuestioningScopes(before.blueprint, ambiguous, before.previous, changes),

@@ -21,7 +21,7 @@ import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-
 import { deriveChangeUnitFeatureId, enumerateCanonicalChangeUnits, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { designRepairTarget, designRepairSignature, runUnattendedDesignRepair, type DesignRepairBriefLike, type UnattendedDesignRepairInput } from '../../scripts/utils/design-repair-unattended';
 import { blueprintSourceRefFiles } from '../../scripts/utils/blueprint-skill-projection';
-import { prepareInitialDesignDraft, publishInitialDesignQuestioning, readInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
+import { prepareInitialDesignDraft, publishInitialDesignQuestioning, readInitialDesignDelivery, readInitialDesignQuestioning } from '../../scripts/utils/initial-design-delivery';
 import { readDesignQuestioningOriginal, recordDesignRepairInvocation, reusableDesignQuestioning } from '../../scripts/utils/design-repair-unattended';
 import { fixture } from './blueprint-skill-projection.unit.test';
 import { DISPOSITIONS } from '../../scripts/utils/component-blueprint-model';
@@ -31,6 +31,7 @@ import { validateChangeUnitDesign } from '../../scripts/utils/change-unit-design
 import { diagnoseBlueprintSkillAuthority } from '../../scripts/utils/blueprint-skill-projection';
 import { designWorkSnapshot } from '../../scripts/utils/design-repair-unattended';
 import { inspectGeneratedBlueprintGraphs } from '../../scripts/utils/blueprint-graph-generator';
+import { currentBlueprintSliceId, validateBlueprintAdmission } from '../../scripts/utils/blueprint-admission';
 import type { UnitCaseResult } from '../run-unit';
 type Document = Record<string, any>;
 const requirement = '在已准入账目蓝图的原目标内补齐CU设计引用，再继续账目刷新与恢复的完整交付；不得降低验收或修改框架。';
@@ -284,9 +285,13 @@ function initialMachinePreparation(): void {
     assert.equal(pending.kind, 'questioning', pending.issues.join('\n'));
     assert(pending.blueprintIssues?.some(issue => issue.id === 'blueprint_questioning_provider_missing'));
     assert.equal(fs.readFileSync(f.blueprintFile, 'utf8'), preparedBytes, 'a transient qualification erased original public Q answers');
+    const assessedSha = loadCanonicalBlueprint(f.root, 'ledger-app-blueprint').artifactSha256;
     const unanswered = read(f.blueprintFile);
     delete unanswered.review_summary.questioning;
     write(f.blueprintFile, unanswered);
+    const concurrentlyEdited = fs.readFileSync(f.blueprintFile);
+    assert.equal(publishInitialDesignQuestioning(f.root, 'ledger-app-blueprint', original.review_summary.questioning, assessedSha), 'stale');
+    assert(fs.readFileSync(f.blueprintFile).equals(concurrentlyEdited), 'publication must retain the newer bytes and request re-observation');
     assert(publishInitialDesignQuestioning(f.root, 'ledger-app-blueprint', original.review_summary.questioning));
     const published = fs.readFileSync(f.blueprintFile);
     assert.equal(publishInitialDesignQuestioning(f.root, 'ledger-app-blueprint', original.review_summary.questioning), false);
@@ -374,6 +379,77 @@ function questioningReuseProof(): void {
     fs.unlinkSync(codeFile);
     assert(reusableDesignQuestioning(input), 'a removed external reference does not invalidate unchanged reviewed author content');
   } finally { assert(fs.realpathSync(f.root).startsWith(fs.realpathSync(os.tmpdir()) + path.sep)); fs.rmSync(f.root, { recursive: true, force: true }); clearFrameworkConfigCache(); }
+}
+
+function parkedQuestioningDecisionReuse(): void {
+  const f = fixture();
+  try {
+    const feature = 'ledger-app-blueprint', phase = 'initial-design-questioning';
+    const frameworkRoot = path.resolve(__dirname, '../../..');
+    const manifest = buildInitialDesignGoalManifest({ feature, run_id: 'parked-questioning', adapter: 'claude', requirement,
+      initial_design: { completion_target: 'feature', requested_results: [requirement], requested_phases: [] } }, { projectRoot: f.root });
+    const born = createGoalRun({ projectRoot: f.root, manifest, chain: [] });
+    const runDir = path.dirname(born.manifestPath);
+    const control = ensureRunControl(runDir, manifest.run_id);
+    const owner = casAcquireRunOwner(runDir, manifest.run_id, control.current_epoch, { kind: 'session', owner_id: 'parked-decision', lease_ms: 60_000 });
+    assert(owner.ok);
+    const relativeSource = 'future-policy.md', source = path.join(f.root, relativeSource);
+    const emit = (event: Record<string, unknown>) => fs.appendFileSync(born.eventsPath, JSON.stringify({ ...event, ts: new Date().toISOString() }) + '\n');
+    const doc = read(f.blueprintFile);
+    const answer = structuredClone(doc.review_summary.questioning);
+    const row = answer.items.find((item: Document) => item.scope_ref === 'view:logical');
+    const gapId = 'future-alerting-policy', scope = row.scope_ref;
+    const gap = { gap_id: gapId, status: 'open_decision', owner: row.owner, needed_by: feature + ':future',
+      unlock_condition: 'Original owner confirms alert recipients for the later slice.', verification_refs: [relativeSource], provenance: row.provenance };
+    doc.decisions_and_gaps.gaps.push(gap);
+    row.verification_refs = ['gap:' + gapId, relativeSource];
+    fs.writeFileSync(source, 'Alert recipients are decided in the later slice.\n');
+    write(f.blueprintFile, doc);
+    const boundary = { projectRoot: f.root, protectedRoots: fs.readdirSync(f.root), executionRole: 'verifier', domains: [],
+      diagnostics: [], unresolvedSourcePhases: [], phaseOrder: [], immutableInputPaths: [], feature } satisfies PhaseWriteBoundaryResolution;
+    const snapshotOptions = { runtimeExcluded: [manifest.report_dir] };
+    const observe = () => readInitialDesignQuestioning(f.root, manifest, f.blueprintFile, read(f.blueprintFile));
+    const sign = (attemptId: string, disposition: string) => {
+      row.disposition = disposition;
+      const invokeId = phase + '-' + attemptId;
+      emit({ type: 'agent_invoke_start', phase, invoke_id: invokeId, owner_id: owner.token.owner_id, owner_epoch: owner.token.epoch });
+      const issued = issueSessionExecution({ context: {
+        runId: manifest.run_id, feature, workflowId: 'obligation-driven', track: 'full', chain: [], phase, attemptId,
+        owner: { ...owner.token, kind: 'session' }, projectRoot: f.root, frameworkRoot, runDir, reportDir: manifest.report_dir,
+        adapter: 'claude', runtimeFacts: { receiptRequired: false, resume: false, successor: false }, childEnv: {},
+      }, invokeId, purpose: 'questioning', gateTimeoutMs: 30_000, cleanupReserveMs: 0, writeBoundary: boundary, snapshotOptions,
+      preSnapshot: capturePhaseInvocationSnapshot(boundary, snapshotOptions), emit });
+      acceptSessionExecution({ runDir, issued, report: { phase, status: 'passed', details: JSON.stringify(answer) }, emit });
+      return invokeId;
+    };
+    const first = sign('i1', 'open_decision');
+    const unchanged = observe();
+    assert.equal(unchanged.original?.invokeId, first);
+    assert.deepEqual(unchanged.selectedScopes, [], 'signed future decision on the same facts must not create another Q');
+    assert(unchanged.questioningCurrent && unchanged.questioningResult);
+    assert.deepEqual(observe().selectedScopes, []);
+    fs.appendFileSync(source, 'A new recipient constraint applies.\n');
+    const changed = observe();
+    assert.deepEqual(changed.selectedScopes, [scope]);
+    assert(!changed.questioningCurrent);
+    const second = sign('i2', 'blocker');
+    const rejected = observe();
+    assert.equal(rejected.original?.invokeId, second);
+    assert(rejected.questioningCurrent && (rejected.questioningResult?.items as Document[]).some(item =>
+      item.scope_ref === scope && item.disposition === 'blocker'), 'current true denial must remain available to the author');
+
+    gap.needed_by = currentBlueprintSliceId(doc)!;
+    write(f.blueprintFile, doc);
+    sign('i3', 'open_decision');
+    const current = observe();
+    assert(current.questioningCurrent && current.selectedScopes?.length === 0, 'an unchanged signed answer remains current');
+    assert(validateBlueprintAdmission(doc).some(issue => issue.id === 'blueprint_current_unknown_not_blocking'),
+      'only current design authority can resolve a decision needed for the present slice');
+  } finally {
+    clearFrameworkConfigCache();
+    assert(fs.realpathSync(f.root).startsWith(fs.realpathSync(os.tmpdir()) + path.sep));
+    fs.rmSync(f.root, { recursive: true, force: true });
+  }
 }
 
 async function rebindQuestioningAfterSignedDrift(): Promise<void> {
@@ -475,6 +551,7 @@ export function getCases() { return [
   { name: 'a18 questioning rebinds changed signed source in the same repair session without dispatching an author', run: rebindQuestioningAfterSignedDrift },
   { name: 'P2 initial design machine preparation preserves original Q and reports current full disposition', run: initialMachinePreparation },
   { name: 'e2a4145e Q admission requires completed clean originals and unchanged author candidates', run: questioningReuseProof },
+  { name: 'b42e13ad signed future questioning decision reuses unchanged evidence and reopens only on new facts', run: parkedQuestioningDecisionReuse },
   { name: '9f6c2e41 repair candidate sets use actual transaction authority and reject canonical foreign CU and product writes', run: candidateWriteContract },
   { name: 'd18f6c42 machine admission preserves old IDs real gaps and public Q without false admission', run: machineAdmissionCompatibility },
   { name: 'd18f6c42 actual candidate comparison ignores machine metadata and preserves known missing files', run: actualWorkComparison },
