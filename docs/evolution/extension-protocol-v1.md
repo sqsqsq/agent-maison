@@ -63,7 +63,7 @@ description: 在允许写入的蓝图目录中记录设计前核对结果。
 回读笔记，核对每条约束的来源位置及待确认问题所影响的设计决定。按实际结果在原作者交回中记录产物路径。缺少需求原件或写入授权时记录 `skipped` 及原因。
 ```
 
-清单相对路径使用扩展根，安装归属和 MCP 产物使用宿主工程根。使用 `/` 分隔各段，路径须在相应目录内。普通 Skill 及随附资源也可以直接交付，一个有有效 `SKILL.md` 的裸目录首次安装只公布手动入口。同一来源重装保留宿主已接受的声明。
+清单相对路径使用扩展根，安装归属和 MCP 产物使用宿主工程根。使用 `/` 分隔各段，路径须在相应目录内。普通 Skill 及随附资源也可以直接交付，一个有有效 `SKILL.md` 的裸目录首次安装只公布手动入口。导入随附资源时跳过 `.git` 元数据。同一来源重装保留宿主已接受的声明。
 
 字段表由随包的 [扩展清单 schema](../../specs/instance-extension-manifest.schema.yaml) 生成。必填性针对所属条目，版本列给出字段起点。
 
@@ -241,7 +241,7 @@ npx ts-node scripts/extension.ts disable design-notes --project-root "<宿主根
 npm run check:component-blueprint -- --project-root "<宿主根>" --blueprint demo --requirement-source design-notes-requirement.md --prepare-design --json
 ```
 
-再次准备应撤下两条绑定，旧笔记仍在。动态版本还可在启用后移走一份本次生成物，并用 `inspect` 确认漂移、受影响绑定和修复入口。只读 `verify` 也会报告漂移。运行 `enable` 恢复缺项后，再核对下一次准备交付。检视分别呈现支持时点、宿主当前选择和请求证据。`available`、`scheduled` 和 `evidenced` 分别表示资源可用、配置已调度和已有实际证据。
+再次准备应撤下两条绑定，旧笔记仍在。动态版本还可在启用后移走一份本次生成物，并用 `inspect` 确认漂移、受影响绑定和修复入口。只读 `verify` 也会报告漂移。产物缺失时可运行 `enable` 恢复。发现内容改写或无法核实时，保留现有文件，由维护者核对冲突。有待清理操作时，先按回执重试原命令。检视分别呈现支持时点、宿主当前选择和请求证据。`available`、`scheduled` 和 `evidenced` 分别表示资源可用、配置已调度和已有实际证据。
 
 ## 版本史
 

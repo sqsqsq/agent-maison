@@ -628,14 +628,32 @@ const cases: Case[] = [
           JSON.stringify(inspection.installations));
         assert(inspection.rows.some(row => row.bindingId === 'guide' && row.phase === 'review' && row.state !== 'scheduled'),
           JSON.stringify(inspection.rows));
-        assert(inspection.findings.some(item => item.code === 'extension_activation_drift' && item.message.includes('guide')), JSON.stringify(inspection.findings));
+        assert(inspection.findings.some(item => item.code === 'extension_activation_drift'
+          && item.message.includes('guide') && item.message.includes('extension enable generator')), JSON.stringify(inspection.findings));
         assert(fs.readFileSync(manifest, 'utf8') === text && !fs.existsSync(path.join(root, ref)), 'inspect read-only');
+        write(path.join(root, ref), 'host edits\n');
+        const changed = inspectInstanceExtensions(project, FRAMEWORK_DIR, { ability: 'generator' });
+        assert(changed.installations[0]?.drift?.[0]?.kind === 'changed', JSON.stringify(changed.installations));
+        assert(changed.findings.some(item => item.code === 'extension_activation_drift'
+          && item.message.includes('保留当前内容') && !item.message.includes('extension enable')), JSON.stringify(changed.findings));
+        assert(fs.readFileSync(path.join(root, ref), 'utf8') === 'host edits\n', 'inspect preserves manual edits');
+        fs.unlinkSync(path.join(root, ref));
+        const alternate = path.join(root, 'manual.md');
+        write(alternate, 'original\n');
+        fs.linkSync(alternate, path.join(root, ref));
+        const unverifiable = inspectInstanceExtensions(project, FRAMEWORK_DIR, { ability: 'generator' });
+        assert(unverifiable.installations[0]?.drift?.[0]?.kind === 'unverifiable', JSON.stringify(unverifiable.installations));
+        assert(unverifiable.findings.some(item => item.code === 'extension_activation_drift'
+          && item.message.includes('无法核实') && item.message.includes('保留当前内容') && !item.message.includes('extension enable')), JSON.stringify(unverifiable.findings));
+        fs.unlinkSync(path.join(root, ref));
         const pendingText = text + '\n    pending_cleanup: {operation: disable, binding: guide, command: [disable, generator, guide]}';
         write(manifest, pendingText);
         const pending = inspectInstanceExtensions(project, FRAMEWORK_DIR, { ability: 'generator' });
         assert(pending.installations[0]?.state === 'pending_cleanup' && pending.installations[0].pendingCleanup?.requestIds.length === 0,
           JSON.stringify(pending.installations));
-        assert(formatExtensionInspection(pending).includes('占用已解除，待清理'), 'state remains pending until command retried');
+        const pendingReport = formatExtensionInspection(pending);
+        assert(pendingReport.includes('占用已解除，待清理') && pendingReport.includes('重试原操作') && !pendingReport.includes('extension enable'),
+          'state remains pending and recommends its original command');
         assert(fs.readFileSync(manifest, 'utf8') === pendingText, 'inspect preserves cleanup');
       } finally {
         fs.rmSync(project, { recursive: true, force: true });

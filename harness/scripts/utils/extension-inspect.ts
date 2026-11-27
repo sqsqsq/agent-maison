@@ -126,11 +126,19 @@ export function inspectInstanceExtensions(
       : installation.enabled && (!bundle.activations[ability] || activation?.status === 'enabled') ? 'enabled' : 'installed';
     installations.push({ ability, source, version, state, bindingOverrides: installation.binding_overrides, activation, pendingCleanup,
       ...(drift.length ? { drift } : {}) });
+    if (!drift.length) continue;
+    const affected = bundle.bindings.filter(binding => binding.ability === ability && binding.selected).map(binding => binding.id);
+    const hasConflict = drift.some(item => item.kind !== 'missing');
+    const driftReasons = { missing: '产物缺失', changed: '当前内容与生成指纹不符', unverifiable: '无法核实当前产物' };
     for (const item of drift) {
-      const affected = bundle.bindings.filter(binding => binding.ability === ability && binding.selected).map(binding => binding.id);
+      const preserve = item.kind === 'missing' ? '' : '保留当前内容。';
+      const advice = pendingCleanup ? '请按待清理回执重试原操作。'
+        : item.kind !== 'missing' ? '请维护者核对并处理冲突。'
+        : hasConflict ? '请先处理本能力的其他产物冲突。'
+        : `运行 extension enable ${ability} 修复。`;
       findings.push({ code: 'extension_activation_drift', ability,
         path: bundle.rootDir ? path.posix.join(rel(projectRoot, bundle.rootDir), item.path) : item.path,
-        message: `${ability} 启用效果漂移：${item.kind}${item.reason ? `（${item.reason}）` : ''}。${affected.length ? `所选绑定：${affected.join(', ')}。` : ''}运行 extension enable ${ability} 修复。` });
+        message: `${ability} 启用效果漂移：${driftReasons[item.kind]}${item.reason ? `（${item.reason}）` : ''}。${affected.length ? `所选绑定：${affected.join(', ')}。` : ''}${preserve}${advice}` });
     }
   }
   const scanned = bundle.manifestUsable ? scanExtensionSkills(projectRoot, extensionDir) : [];
@@ -276,7 +284,9 @@ export function formatExtensionInspection(inspection: ExtensionInspection): stri
     const states = { installed: '已安装未启用', enabled: '已启用', failed: '启用失败', pending_cleanup: '已停止目标的新调度，待清理' };
     for (const item of inspection.installations) {
       lines.push(`- ${item.ability}${item.version ? ` ${item.version}` : ''}：${states[item.state]}`);
-      if (item.activation?.status === 'running') lines.push(`  - 启用步骤尚未完成。恢复时运行 extension enable ${item.ability}。`);
+      if (item.activation?.status === 'running') {
+        lines.push(`  - 启用步骤尚未完成。${item.pendingCleanup ? '' : `恢复时运行 extension enable ${item.ability}。`}`);
+      }
       if (item.activation?.failure) lines.push(`  - 失败：${item.activation.failure}`);
       for (const step of item.activation?.steps ?? []) {
         lines.push(`  - ${step.id} · ${step.status}${step.outputs.length ? ` · 产物 ${step.outputs.map(out => out.path).join(', ')}` : ''}${step.failure ? ` · ${step.failure}` : ''}`);
