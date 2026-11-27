@@ -46,6 +46,7 @@ import { resolveTaskAutomationPolicy } from './utils/runtime-policy';
 import { createIdentityNeutralDigestReaders, type IdentityNeutralDigestReaders } from './utils/identity-neutral-digest';
 import { parseVerifierRequest, parseVerifierRequestFromInstruction, canonicalRequestInput } from './utils/verifier-request';
 import { signedExtensionResourcePaths } from './utils/extension-requests';
+import { captureExtensionAuthorSelection, EXTENSION_AUTHOR_ISSUANCE_WAIT, publishExtensionAuthorRequest } from './utils/extension-author-issuance';
 import { validateProjectRelativePath, isInsideProjectRoot } from './utils/project-relative-path';
 import { loadVerifierEvidence, verifierDiagnosisRequired, verifierReportItemGaps } from './utils/verifier-evidence';
 import { readVerifierMaterialOrNull } from './utils/verifier-material';
@@ -4480,17 +4481,24 @@ export class GoalPhaseRuntime {
     const eventsPath = path.join(runDir, 'events.jsonl');
     const history = (): GoalRunEvent[] => loadEventsJsonlStrict(eventsPath).events;
     let completedProjection: InitialDesignDeliveryProjection | undefined;
-    const emit = (event: Record<string, unknown>): InitialDesignDeliveryProjection | undefined => {
+    const appendDesignEvent = (event: Record<string, unknown>): void => {
       const line = JSON.stringify({ ...event, ts: new Date().toISOString(), run_id: manifest.run_id }) + '\n';
       fs.appendFileSync(eventsPath, line);
       eventLineRecorder?.(eventsPath, line);
       if (event.type === 'run_end') runConcluded = true;
+    };
+    const refreshDesignProgress = (): InitialDesignDeliveryProjection | undefined => {
       let snapshot: InitialDesignDeliveryProjection | undefined;
       try {
         snapshot = projectInitialDesignDelivery({ projectRoot, frameworkRoot, manifest });
         writeProgressSnapshotAtomic(projectRoot, manifest.report_dir, snapshot);
       }
       catch { /* A progress projection never replaces authoritative events or blocks recovery. */ }
+      return snapshot;
+    };
+    const emit = (event: Record<string, unknown>): InitialDesignDeliveryProjection | undefined => {
+      appendDesignEvent(event);
+      const snapshot = refreshDesignProgress();
       if (event.type === 'run_end') completedProjection = event.status === 'COMPLETED' && snapshot?.complete ? snapshot : undefined;
       return snapshot;
     };
@@ -4678,6 +4686,7 @@ export class GoalPhaseRuntime {
       if (transport === 'process' && process.platform === 'win32' && recoverRuntimeGuardians(history(), manifest.run_id, Boolean(argv['force-resume']), emit, conclude)) return 1;
       const inheritedWriteEvents = readInitialDesignWriteEvents(projectRoot, manifest, []);
       const writeHistory = (events = history()) => [...inheritedWriteEvents, ...events];
+      let extensionSelectionRetries = 0;
       currentDesignWork: for (;;) {
         const state = { blueprintPath: componentBlueprintPath(projectRoot, manifest.feature) };
         const prior = history();
@@ -5036,6 +5045,8 @@ export class GoalPhaseRuntime {
         const invocationDir = path.join(runDir, 'phases', label, invokeId);
         const checkerResultPath = path.join(invocationDir, 'checker-result.json');
         const segments: unknown[] = [];
+        const extensionSelection = label === 'initial-design-author' && purpose === 'author'
+          ? captureExtensionAuthorSelection(projectRoot, frameworkRoot) : undefined;
         const prompt = initialDesignAuthorInstruction({ projectRoot, frameworkRoot, manifest, observation: observed, autonomyAuthorized: automaticDesignRepair,
           deliveryRuns: 'runs' in spent ? spent.runs : undefined, material: segments, checkerResultPath })
           + (purpose !== 'questioning' && observed.disposition ? `\n当前全部未完项（方法不是写权限；原授权及未恢复写入仍有效）：\n${renderCurrentDisposition(observed.disposition)}` : '');
@@ -5117,15 +5128,30 @@ export class GoalPhaseRuntime {
         const issuedAt = new Date().toISOString();
         const materialInput = { context, invokeId, purpose, issuedAt, timeoutMs, gateTimeoutMs: 0, cleanupReserveMs: 0,
           preSnapshot: pre, writeBoundary, snapshotOptions };
-        const original = !this.options.sessionHandoff ? writePhaseExecutionRequestMaterial(materialInput) : undefined;
-        emit({ type: 'agent_invoke_start', ts: issuedAt, phase: label, purpose, invoke_id: invokeId, owner_id: token.owner_id, owner_epoch: token.epoch,
-          ...(original ? { handoff_request: original.reference, attempt_id: context.attemptId } : {}),
-          command: transport === 'session' ? 'phase_execute_request' : 'headless', effective_timeout_ms: timeoutMs });
-        if (this.options.sessionHandoff) {
-          const issued = issueSessionExecution({ context, invokeId, purpose, timeoutMs, gateTimeoutMs: 0, cleanupReserveMs: 0,
-            preSnapshot: pre, writeBoundary, snapshotOptions, emit });
-          preserveOwner = true; this.options.sessionHandoff.onRequest(issued); runConcluded = true; return 3;
+        const invocationOwner = token;
+        const publish = () => {
+          const original = !this.options.sessionHandoff ? writePhaseExecutionRequestMaterial(materialInput) : undefined;
+          const emitInvocation = extensionSelection ? appendDesignEvent : emit;
+          emitInvocation({ type: 'agent_invoke_start', ts: issuedAt, phase: label, purpose, invoke_id: invokeId,
+            owner_id: invocationOwner.owner_id, owner_epoch: invocationOwner.epoch,
+            ...(original ? { handoff_request: original.reference, attempt_id: context.attemptId } : {}),
+            command: transport === 'session' ? 'phase_execute_request' : 'headless', effective_timeout_ms: timeoutMs });
+          const issued = this.options.sessionHandoff ? issueSessionExecution({ ...materialInput, emit: emitInvocation }) : undefined;
+          return { original, issued };
+        };
+        const publication = extensionSelection ? await publishExtensionAuthorRequest(extensionSelection, publish)
+          : { kind: 'issued' as const, value: publish() };
+        if (publication.kind !== 'issued') {
+          if (publication.kind === 'changed' && extensionSelectionRetries++ < 2) {
+            resumeDesignWork = explicitlyContinued;
+            continue currentDesignWork;
+          }
+          return conclude('executor_waiting', EXTENSION_AUTHOR_ISSUANCE_WAIT, { run_disposition: 'WAITING', run_wait_kind: 'external' });
         }
+        extensionSelectionRetries = 0;
+        if (extensionSelection) refreshDesignProgress();
+        const { original, issued } = publication.value;
+        if (issued) return exposeRequest(issued);
         let containmentError: string | undefined;
         let containmentStillAlive = false;
         let childExited = false;
@@ -7872,7 +7898,10 @@ Goal runner — original request design and construction runtime
         return false;
       }
     };
-    const invokeWork = async (label: string, text: string, verifierReport?: string, purpose?: string, explicitlyContinued = false, workInput?: WorkUnitInput, deviceEnv?: Record<string, string>, testingTargets?: readonly string[]) => {
+    let extensionSelectionRetries = 0;
+    const invokeWork = async (label: string, text: string, verifierReport?: string, purpose?: string,
+      explicitlyContinued = false, workInput?: WorkUnitInput, deviceEnv?: Record<string, string>, testingTargets?: readonly string[],
+      extensionSelection?: ReturnType<typeof captureExtensionAuthorSelection>) => {
       const history = loadAuthoritativeEvents(eventsPath);
       const attemptId = `i${countAgentInvokeStarts(history) + 1}`;
       const invokeId = `${label}-${attemptId}`;
@@ -7955,32 +7984,48 @@ Goal runner — original request design and construction runtime
       const issuedAt = new Date().toISOString();
       const materialInput = { context, invokeId, issuedAt, ...(purpose ? { purpose } : {}),
         gateTimeoutMs: 0, cleanupReserveMs: 0, preSnapshot: pre, writeBoundary: boundary, snapshotOptions };
-      const original = !options.sessionHandoff ? writePhaseExecutionRequestMaterial(materialInput) : undefined;
-      goalEvents.emit({ type: 'agent_invoke_start', ts: issuedAt, phase: label, invoke_id: invokeId, command: plan.label, purpose,
-        ...(original ? { handoff_request: original.reference, attempt_id: context.attemptId } : {}),
-        ...(runControl ? { owner_id: runControl.token.owner_id, owner_epoch: runControl.token.epoch } : {}),
-        ...(factsContext ? { facts_context: factsContext } : {}) });
-      emitMilestone(`GOAL_WORK event=invoke role=${role} label=${label} invoke_id=${invokeId}`);
-      if (options.sessionHandoff) {
-        try {
-          const issued = issueSessionExecution({ ...materialInput, emit: goalEvents.emit });
-          preserveSessionOwner = true; options.sessionHandoff.onRequest(issued); return 3 as const;
-        } catch (error) {
-          try {
-            const records = loadAuthoritativeEvents(eventsPath);
-            const pending = undeliveredSessionInvocation(records);
-            const saved = executionRequestForInvoke(runDir, invokeId);
-            const current = capturePhaseInvocationSnapshot(boundary, snapshotOptions);
-            if (pending?.invoke_id === invokeId && saved?.request.issued_at === issuedAt
-              && saved.request.context.runId === manifest.run_id && saved.request.context.feature === manifest.feature
-              && saved.request.context.owner.owner_id === context.owner.owner_id && saved.request.context.owner.epoch === context.owner.epoch
-              && pending.owner_id === context.owner.owner_id && pending.owner_epoch === context.owner.epoch
-              && !records.some(event => event.invoke_id === invokeId && ['agent_process_bound', 'agent_process_settled', 'harness_start',
-                'phase_write_observed', 'phase_write_violation', 'agent_invoke_end'].includes(event.type ?? ''))
-              && !current.failureReason && current.sha256 === pre.sha256) preserveSessionOwner = true;
-          } catch { /* Unverifiable preparation cannot retain the old owner or replace the original failure. */ }
-          throw error;
+      const publish = () => {
+        const original = !options.sessionHandoff ? writePhaseExecutionRequestMaterial(materialInput) : undefined;
+        goalEvents.emit({ type: 'agent_invoke_start', ts: issuedAt, phase: label, invoke_id: invokeId, command: plan.label, purpose,
+          ...(original ? { handoff_request: original.reference, attempt_id: context.attemptId } : {}),
+          ...(runControl ? { owner_id: runControl.token.owner_id, owner_epoch: runControl.token.epoch } : {}),
+          ...(factsContext ? { facts_context: factsContext } : {}) });
+        const issued = options.sessionHandoff ? issueSessionExecution({ ...materialInput, emit: goalEvents.emit }) : undefined;
+        return { original, issued };
+      };
+      let original: ReturnType<typeof writePhaseExecutionRequestMaterial> | undefined;
+      try {
+        const publication = extensionSelection ? await publishExtensionAuthorRequest(extensionSelection, publish)
+          : { kind: 'issued' as const, value: publish() };
+        if (publication.kind !== 'issued') {
+          if (publication.kind === 'changed' && extensionSelectionRetries++ < 2) return null;
+          wait(label, EXTENSION_AUTHOR_ISSUANCE_WAIT);
+          return null;
         }
+        extensionSelectionRetries = 0;
+        original = publication.value.original;
+        emitMilestone(`GOAL_WORK event=invoke role=${role} label=${label} invoke_id=${invokeId}`);
+        if (publication.value.issued) {
+          preserveSessionOwner = true;
+          options.sessionHandoff!.onRequest(publication.value.issued);
+          return 3 as const;
+        }
+      } catch (error) {
+        if (!options.sessionHandoff) throw error;
+        try {
+          const records = loadAuthoritativeEvents(eventsPath);
+          const pending = undeliveredSessionInvocation(records);
+          const saved = executionRequestForInvoke(runDir, invokeId);
+          const current = capturePhaseInvocationSnapshot(boundary, snapshotOptions);
+          if (pending?.invoke_id === invokeId && saved?.request.issued_at === issuedAt
+            && saved.request.context.runId === manifest.run_id && saved.request.context.feature === manifest.feature
+            && saved.request.context.owner.owner_id === context.owner.owner_id && saved.request.context.owner.epoch === context.owner.epoch
+            && pending.owner_id === context.owner.owner_id && pending.owner_epoch === context.owner.epoch
+            && !records.some(event => event.invoke_id === invokeId && ['agent_process_bound', 'agent_process_settled', 'harness_start',
+              'phase_write_observed', 'phase_write_violation', 'agent_invoke_end'].includes(event.type ?? ''))
+            && !current.failureReason && current.sha256 === pre.sha256) preserveSessionOwner = true;
+        } catch { /* Unverifiable preparation cannot retain the old owner or replace the original failure. */ }
+        throw error;
       }
       let childExited = false;
       const started = Date.now();
@@ -8126,6 +8171,7 @@ Goal runner — original request design and construction runtime
             onInvocation: invocation => goalEvents.emit({ ...buildVisualProviderInvokeEvent(invocation) }) });
         } catch (error) { console.warn(`[visual observation] 当前观察工具缺口：${(error as Error).message}；保留其它授权工作。`); }
       }
+      const extensionSelection = captureExtensionAuthorSelection(projectRoot, frameworkRoot);
       const extensionInputs = work.input.chain.map(family => prepareExtensionInputsForPhase(projectRoot, family,
         { frameworkRoot, feature: manifest.feature, runId: manifest.run_id, requirement: manifest.requirement }));
       const knowledgeInputs = [...new Set(extensionInputs.map(input => input.instruction).filter(Boolean))];
@@ -8154,10 +8200,11 @@ Goal runner — original request design and construction runtime
       ...(knowledgeInputs.length ? ["Before writing this work unit's artifacts, read the knowledge inputs below that apply to this work unit.", ...knowledgeInputs] : []),
       '当前全部未完项与真实证据：',
       ];
-      return buildWorkUnitAuthorInput({ projectRoot, frameworkRoot, feature: manifest.feature, disposition: work.disposition,
+      const prepared = buildWorkUnitAuthorInput({ projectRoot, frameworkRoot, feature: manifest.feature, disposition: work.disposition,
         instructions: parts, extensionBindings: extensionInputs.flatMap(input => input.bindings ? [input.bindings] : []),
         evaluation: { ...work.evaluation, disposition: work.disposition },
         repairNotes: repairNotesInput, designDeclineFeedback, designDeclines });
+      return { ...prepared, extensionSelection };
     };
 
     if (entryAuthorization && entryAuthorization.mode !== 'goal_mode' && entryAuthorization.autonomyAuthorized !== true) {
@@ -8489,8 +8536,10 @@ Goal runner — original request design and construction runtime
           problems: before.disposition.problems.filter(problem => !preparation.problems.includes(problem)),
           completionBlocking: before.disposition.completionBlocking.filter(problem => !preparation.problems.includes(problem)) } } : before;
         const prepared = await authorInstruction(authorWork, designDeclineFeedback, designDeclineCandidates);
-        const invoked = await invokeWork('work-unit-author', prepared.instruction, undefined, undefined, explicitlyContinued, prepared.workInput);
+        const invoked = await invokeWork('work-unit-author', prepared.instruction, undefined, undefined, explicitlyContinued,
+          prepared.workInput, undefined, undefined, prepared.extensionSelection);
         if (invoked === 3) return 3;
+        if (!invoked && !halted) continue;
         if (!invoked || halted) break;
         if (invoked.rebuild) continue;
         if (writeConflicts().size) continue;

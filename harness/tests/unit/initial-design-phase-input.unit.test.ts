@@ -7,12 +7,14 @@ import * as path from 'path';
 import { createHash } from 'crypto';
 import { gunzipSync } from 'zlib';
 import { spawnSync } from 'child_process';
+import { mock } from 'node:test';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { writeLocalConfig } from '../../scripts/utils/framework-local-config';
 import { loadGoalManifestDefinition, isInitialDesignManifest } from '../../scripts/utils/goal-manifest';
 import { initialRequestWriteTargets, prepareInitialDesignRun, projectInitialDesignDelivery } from '../../scripts/utils/initial-design-delivery';
 import { executionRequestForInvoke } from '../../scripts/utils/session-execution-handoff';
+import { changeExtension, ExtensionWriteBusyError, withExtensionWrite } from '../../scripts/utils/extension-lifecycle';
 import { GoalPhaseRuntime } from '../../scripts/goal-phase-runtime';
 import { withRuntimeTest } from '../utils/runtime-test-control';
 import { runStatusWatchLoop } from '../../scripts/utils/goal-progress';
@@ -162,6 +164,60 @@ const cases:Array<{name:string;run():Promise<void>}>= [{
     }).run());
     assert.equal(calls,1);assert.notEqual(exit,0);
   });},
+},{
+  name: 'initial design handoff signs under the manager lock and the subsequent stop sees the original request',
+  async run() { await withEmpty(async root => {
+    const feature = 'design-extension-issuance';
+    const extensionRoot = path.join(root, 'doc/extensions');
+    const skill = path.join(extensionRoot, 'skills/design-action/SKILL.md');
+    fs.mkdirSync(path.dirname(skill), { recursive: true });
+    fs.writeFileSync(skill, '# Extension action in the first signed design request\n');
+    fs.writeFileSync(path.join(extensionRoot, 'manifest.yaml'), YAML.stringify({
+      schema_version: '2.0', name: 'design-extension', provides: { skills: ['design-action'] },
+      bindings: { 'design-action': {
+        action: { at: 'component-design.before_discovery@1', kind: 'action', ref: 'design-action', enabled_by_default: true },
+      } },
+    }));
+    const input = definition(root, feature);
+    let starts = 0;
+    let deliveries = 0;
+    const append = fs.appendFileSync;
+    const observeAppend = mock.method(require('fs') as typeof fs, 'appendFileSync', (...args: Parameters<typeof append>) => {
+      append(...args);
+      const [file, data] = args;
+      const line = String(data);
+      if (typeof file === 'string' && path.basename(file) === 'events.jsonl'
+        && line.includes('"type":"agent_invoke_start"') && line.includes('"phase":"initial-design-author"')) {
+        starts++;
+        assert.throws(() => withExtensionWrite(root, FRAMEWORK, () => assert.fail('management entered during issuance')),
+          ExtensionWriteBusyError);
+      }
+    });
+    try {
+      const exit = await withRuntimeTest({ root }, () => new GoalPhaseRuntime({
+        args: ['--manifest', input, '--project-root', root, '--framework-root', FRAMEWORK, '--foreground-ok', '--authorize-autonomy'],
+        authorization,
+        sessionHandoff: { onRequest: issued => {
+          deliveries++;
+          assert.equal(starts, 1);
+          const { context } = issued.request;
+          assert.equal(context.phase, 'initial-design-author');
+          assert(context.instruction?.includes('doc/extensions/skills/design-action/SKILL.md'));
+          const original = executionRequestForInvoke(context.runDir, issued.request.invoke_id);
+          assert.equal(original?.reference.sha256, issued.reference.sha256);
+          assert.equal(original?.event.type, 'phase_start');
+          const closed = withExtensionWrite(root, FRAMEWORK, () => changeExtension('disable', {
+            projectRoot: root, frameworkRoot: FRAMEWORK, ability: 'design-action',
+          }));
+          assert.equal(closed.outcomes[0]?.state, 'pending');
+          assert.deepEqual(closed.requestIds, [issued.request.invoke_id]);
+          assert(fs.existsSync(skill));
+        } },
+      }).run());
+      assert.equal(exit, 3);
+      assert.equal(deliveries, 1);
+    } finally { observeAppend.mock.restore(); }
+  }); },
 },{
   name:'new roots preserve explicit requested work while historical phase bounds do not restrict the unit author',
   async run(){await withEmpty(root=>{
