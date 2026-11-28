@@ -259,7 +259,7 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
       refreshBlueprintFingerprints(blueprint);
       write(fixture.blueprintFile, blueprint);
       const unit = YAML.parse(fs.readFileSync(fixture.cuFile, 'utf8').split(oldFingerprint).join(blueprint.source_fingerprint));
-      unit.touches[0].write_refs = [source, authority, dualUse].map(file => 'planned:' + file);
+      unit.touches[0].write_refs = [source + '#Feature', 'planned:' + authority, 'planned:' + dualUse, 'workflow:' + external];
       write(fixture.cuFile, unit);
       fixture.bind();
       const active = read(fixture.cuFile);

@@ -414,8 +414,7 @@ function delegatedQuestioningOutputs(projectRoot: string, blueprint: BlueprintRe
           if (ref.target.kind !== 'node' || ref.target.view_id !== 'development') continue;
           const module = asRecord(target)?.module;
           for (const write of touch.write_refs) {
-            if (!write.startsWith('planned:')) continue;
-            const source = write.slice('planned:'.length).split('#')[0];
+            const source = write.replace(/^planned:/, '').split('#')[0];
             if (source.includes(':')) continue;
             const relative = normalizeContractFilePath(projectRoot, source, 'CU write ref');
             if (modules.some(item => item.name === module && relative.startsWith(item.package_path + '/'))) files.add(relative);
