@@ -40,7 +40,7 @@ import { describeQuestioningChanges, renderQuestioningResultInstructions } from 
 import { extractProviderFinalText } from './codex-terminal-events';
 import { invocationCompleted } from './invocation-completion';
 import { dispositionFacts } from './goal-failure-classifier';
-import { assessDesignQuestioning, renderDesignAuthorityBoundary, writeBackAdmission, refreshBlueprintFingerprints, questioningRunInputs, latestUsableDesignQuestioning } from './design-repair-unattended';
+import { assessDesignQuestioning, renderDesignAuthorityBoundary, writeBackAdmission, refreshBlueprintFingerprints, questioningRunInputs, latestUsableDesignQuestioning, publishedDesignQuestioning } from './design-repair-unattended';
 import { currentBlueprintSliceId } from './blueprint-admission';
 import type { ProviderRef } from './types';
 import { prepareBlueprintDesignDraft, prepareBlueprintSourceItems } from './blueprint-discovery';
@@ -294,19 +294,19 @@ export interface InitialDesignQuestioning {
 export function readInitialDesignQuestioning(projectRoot: string, manifest: InitialDesignGoalManifest,
   blueprintPath: string, blueprint: BlueprintRecord, runs: readonly DeliveryRunFacts[] = readOriginalDeliveryRuns(projectRoot, manifest)): InitialDesignQuestioning {
   let unavailable = false;
-  let usable: (QuestioningHistory & { run: DeliveryRunFacts }) | undefined;
+  let usable: (QuestioningHistory & { run: DeliveryRunFacts; publishedRepair?: ReturnType<typeof publishedDesignQuestioning> }) | undefined;
   for (const run of runs.filter(run => isInitialDesignManifest(run.manifest))) {
     const runDir = path.resolve(projectRoot, run.manifest.report_dir);
     const initial = latestUsableDesignQuestioning(runDir, ['initial-design-questioning'], projectRoot, run.events);
     const repair = latestUsableDesignQuestioning(runDir, ['design-repair-questioning'], projectRoot, run.events);
     unavailable ||= initial.unavailable;
-    const publishedRepair = repair.result && repair.original?.beforeDocument
+    const publishedRepair = repair.result && repair.original
       && !independentQuestioningBlockers({ review_summary: { questioning: repair.result } }).length
-      && stableStringify(blueprintAuthorContent(repair.original.beforeDocument)) === stableStringify(blueprintAuthorContent(blueprint));
+      ? publishedDesignQuestioning(runDir, run.events, repair.original, blueprintPath, blueprint, projectRoot) : undefined;
     const position = (row: QuestioningHistory) => run.events.findIndex(event => event.type === 'agent_invoke_start' && event.invoke_id === row.original?.invokeId);
     const candidate = publishedRepair && position(repair) > position(initial) ? repair : initial;
     if (candidate.original && candidate.result) {
-      usable = { run, ...candidate };
+      usable = { run, ...candidate, publishedRepair };
       break;
     }
   }
@@ -321,7 +321,7 @@ export function readInitialDesignQuestioning(projectRoot: string, manifest: Init
   })();
   const assessment = original && previous ? assessDesignQuestioning({ projectRoot, blueprintPath, blueprint,
     beforeDocument: original.beforeDocument, beforeSnapshot: original.preSnapshot, previous, signedBoundary: original.signedBoundary,
-    snapshotOptions: original.snapshotOptions, revisitFindings: !denied }) : undefined;
+    snapshotOptions: original.snapshotOptions, revisitFindings: !denied, publishedRepair: usable?.publishedRepair }) : undefined;
   const selectedScopes = assessment?.selectedScopes;
   // A denial is feedback to the author. Ask again once that author has changed its basis.
   const questioningCurrent = !!previous && (denied && !authorReturned || selectedScopes?.length === 0);
@@ -798,10 +798,10 @@ function questioningReadingInstruction(blueprintPath: string, recheck: boolean, 
   const reference = lines.findIndex(line => line === '## 技术与追溯参考');
   const range = reference > 0 ? `当前正文仅为 ${review} 第1–${reference}行；第${reference + 1}行“技术与追溯参考”起为参考区。`
     : `评审文档：${review}；正文止于“技术与追溯参考”入口。当前未定位到准确截止行，先在该现有文档定位边界，不猜测读取整篇。`;
-  const verification = '正文阅读后再读取以下来源位置、当前YAML/schema及必要源码核源，按当前必答scope完成实质质询；特别核实每个gap.needed_by按真实业务属于当前切片还是受控远期，机器编号不改变原gap.status，仍不明确或原blocker未解除就否定并交作者澄清业务gap；前次结论不能代替本轮核验。';
+  const verification = '正文阅读后再读取以下来源位置、当前YAML/schema及必要源码，实质核验本轮指派的scope。未变且未指派的scope沿用原题原答。本轮涉及gap时，核实其needed_by按真实业务属于当前切片还是受控远期；机器编号不改变原gap.status，仍不明确或原blocker未解除就否定并交作者澄清业务gap。';
   material.push(review, verification);
   return `${range}\n${recheck
-    ? '这是修订后的独立复核：按P1 §4/§5核本轮指定scope、既有意见、修法直接影响及相关跨段一致性；按变更位置读相关正文，再定向核原文、事实与精确验收。不重做完整八问、全需求/全源码或架构评审，不仅看diff或凭初稿记忆。'
+    ? '这是修订后的独立复核：按P1 §4/§5核本轮指定scope所涉既有意见、修法直接影响及相关跨段一致性；按变更位置读相关正文，再定向核原文、事实与精确验收。不重做完整八问、全需求/全源码或架构评审，不仅看diff或凭初稿记忆。'
     : '这是首次独立阅读：先只读首屏和上述正文范围，按P1 §5逐题回答八问并定位仍看不懂之处；完成前不读参考区、YAML、需求原文或项目源码，不用作者解释替正文补全含义。'}\n${verification}`;
 }
 

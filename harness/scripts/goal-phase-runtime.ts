@@ -1,4 +1,5 @@
 #!/usr/bin/env ts-node
+import { setTimeout as pause } from 'node:timers/promises';
 import { goalStatusWaitCommand, DEFAULT_GOAL_WAIT_TIMEOUT_MS } from './utils/goal-status-wait';
 import { canReconcileTestingReport } from './utils/testing-report-reconcile';
 import { adapterModelBinding, freezeModelPin, launchModelPin, parseAdapterModelBinding, modelMismatchInEvents, rebindTaskModel } from './utils/adapter-model';
@@ -284,6 +285,8 @@ import {
 } from './utils/product-selection-bridge';
 import { runDeviceReadinessGate, selectDeviceExecutionTarget } from './utils/device-readiness-gate';
 import {
+  CONDITION_WAIT_MAX_MS,
+  CONDITION_WAIT_POLL_MS,
   runConditionProbe,
   waitForConditionRecovery,
   type ConditionProbeResult,
@@ -3998,8 +4001,8 @@ export interface GoalPhaseRuntimeLaunchOptions {
   leaseMs?: number;
   /** Maximum number of phase boundaries this invocation may start. */
   /**
-   * plan 4e6fb3b6 §5.1：带探针停机的进程内有界等待。缺省（生产 CLI）取 waitForConditionRecovery
-   * 的默认上限 15 分钟、间隔 30 秒与共享的真实探针；嵌入调用方（测试）可把上限/间隔调小或换探针。
+   * 进程内有界等待。缺省上限 15 分钟、间隔 30 秒；嵌入调用方可缩短等待。
+   * 带探针停机沿用共享真实探针，测试可替换。
    */
   conditionWait?: {
     maxWaitMs?: number;
@@ -4663,7 +4666,7 @@ export class GoalPhaseRuntime {
       const designEvaluations: CompletionEvaluation[] = [];
       let currentQuestioningInvokeId: string | undefined;
       let processAuthorWait: { phase: string; detail: string } | undefined;
-      let reconsideredQuestioningWrite = false;
+      let questioningWriteRetryUntil: number | undefined;
       const questioningObservation = () => {
         try {
           const loaded = loadCanonicalBlueprint(projectRoot, manifest.feature);
@@ -4806,8 +4809,19 @@ export class GoalPhaseRuntime {
         if (!restoration.size && !observed.request && !observed.designRepair && currentQuestioning?.questioningResult) {
           const publication = publishInitialDesignQuestioning(projectRoot, manifest.feature, currentQuestioning.questioningResult, currentQuestioning.blueprintSha);
           if (publication === 'stale') {
-            if (reconsideredQuestioningWrite) return conclude('executor_waiting', '蓝图在消费独立质询期间再次变化，已保留当前材料，沿当前输入继续核实。');
-            reconsideredQuestioningWrite = true;
+            const now = Date.now();
+            if (questioningWriteRetryUntil === undefined) {
+              questioningWriteRetryUntil = now + Math.min(this.options.conditionWait?.maxWaitMs ?? CONDITION_WAIT_MAX_MS, CONDITION_WAIT_MAX_MS);
+              continue currentDesignWork;
+            }
+            const signal = this.options.executionControls?.signal;
+            const remaining = (manifest.user_deadline_at ? Date.parse(manifest.user_deadline_at) : Infinity) - now;
+            if (remaining <= 0 || signal?.aborted) continue currentDesignWork;
+            const retryRemaining = questioningWriteRetryUntil - now;
+            if (retryRemaining <= 0) return conclude('executor_waiting', '蓝图在消费独立质询期间持续变化，已保留当前材料，沿当前输入继续核实。');
+            try { await pause(Math.min(remaining, retryRemaining, Math.max(1, this.options.conditionWait?.pollMs ?? CONDITION_WAIT_POLL_MS)), undefined, { signal }); }
+            catch (error) { if (!signal?.aborted) throw error; }
+            assertFencedOwner(runDir, token!, 'initial_design_questioning_retry');
             continue currentDesignWork;
           }
           if (publication) {
@@ -4826,7 +4840,7 @@ export class GoalPhaseRuntime {
           observed = readInitialDesignDelivery({ projectRoot, frameworkRoot, manifest, questioning: currentQuestioning,
             ...(!currentQuestioning ? { questioningResult: null } : {}) });
         }
-        reconsideredQuestioningWrite = false;
+        questioningWriteRetryUntil = undefined;
         if (restoration.size) observed = { ...observed, kind: 'author', progression: undefined, designRepair: undefined,
           issues: [...observed.issues, buildPhaseWriteRecoveryContextBlock({ sourcePhase: 'initial-design-author', targetPhase: 'initial-design-author', files: [...restoration.keys()], preimages: Object.fromEntries(restoration) })] };
         if (!restoration.size && observed.progression?.action === 'blocked') {

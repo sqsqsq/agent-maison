@@ -1,17 +1,18 @@
 import { runUnitCasesAsync } from '../utils/unit-cases';
 import '../utils/transpile-only-env';
 import assert from 'assert';
+import { createHash } from 'crypto';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import * as YAML from 'yaml';
 import { clearFrameworkConfigCache, featureFilePath } from '../../config';
 import { loadCanonicalBlueprint } from '../../scripts/utils/component-blueprint-path';
-import { deriveChangeUnitFeatureId } from '../../scripts/utils/change-unit-path';
+import { deriveChangeUnitFeatureId, loadCanonicalChangeUnit } from '../../scripts/utils/change-unit-path';
 import { reconcileChangeUnitBlueprintRefs, BLUEPRINT_RECONCILE_LOCK_NAME } from '../../scripts/utils/change-unit-design-preparation';
 import { diagnoseBlueprintSkillAuthority, deriveBlueprintSkillInput } from '../../scripts/utils/blueprint-skill-projection';
-import { assessDesignQuestioning, writeBackAdmission, reusableDesignQuestioning, questioningDependencyChanges, questioningRunInputs } from '../../scripts/utils/design-repair-unattended';
-import { mergeIndependentQuestioningResult, selectQuestioningScopes, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
+import { assessDesignQuestioning, writeBackAdmission, reusableDesignQuestioning, questioningDependencyChanges, questioningRunInputs, publishedDesignQuestioning } from '../../scripts/utils/design-repair-unattended';
+import { applyIndependentQuestioningOutput, hasQuestioningCounterexampleSourceRule, mergeIndependentQuestioningResult, renderQuestioningResultInstructions, selectQuestioningScopes, validateBlueprintQuestioning } from '../../scripts/utils/blueprint-questioning';
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots } from '../../scripts/utils/phase-write-boundary';
 import { tryAcquireLock, releaseLock, FEATURE_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
 import { fixture as projectionFixture } from './blueprint-skill-projection.unit.test';
@@ -111,19 +112,94 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
   },
   {
     name: 'daily design Q: receipt outside a requested scope cannot erase a negative and a second counterexample retains both',
-    run: async () => {
+    run: () => withProject(root => {
       const doc = { design_views: [{ view_id: 'runtime', applicability: 'applicable', evolution_impact: 'changed',
         runtime_data_flows: [{ flow_id: 'flow' }] }] };
+      fs.writeFileSync(path.join(root, 'source.ets'), 'begin\nflush\nend\n');
+      fs.writeFileSync(path.join(root, 'unrelated.ets'), 'unrelated\n');
+      const evidence = { projectRoot: root, readSignedFile: (file: string) => path.relative(root, file) === 'source.ets' ? 'begin\nflush\nend\n' : undefined };
       const row = { scope_kind: 'flow', scope_ref: 'flow:flow', question: 'Lost result', answer: 'Late first completion', disposition: 'blocker',
         verification_refs: ['source.ets#L3'], review_original: { path: 'old-q.json', sha256: '7'.repeat(64) } };
       const old = { items: [row] };
-      const apply = (result: typeof row) => mergeIndependentQuestioningResult(doc, { items: [result] }, 'independent', old, []).items as Json[];
+      const apply = (result: typeof row, selected: string[] = []) => mergeIndependentQuestioningResult(doc, { items: [result] },
+        'independent', old, selected, undefined, undefined, evidence).items as Json[];
       const [unchanged] = apply({ ...row, disposition: 'answered_with_evidence', question: 'New wording', answer: 'Everything passes' });
       assert.equal(unchanged.answer, row.answer);
-      const [both] = apply({ ...row, question: 'Wrong persistent value', answer: 'Delete overtaken at flush' });
+      const invalid = { ...row, question: 'Suggested change', answer: 'Prefer a different persistence approach',
+        verification_refs: ['flow:flow', '#/design_views/0/runtime_data_flows/0', 'source.ets'],
+        evidence_refs: ['source.ets#L100', 'unrelated.ets#L1'] };
+      assert.equal(apply(invalid)[0].answer, row.answer);
+      assert.equal(apply(invalid, ['flow:flow'])[0].answer, invalid.answer, 'assigned scopes retain their existing independent decision path');
+      const supported = { ...row, question: 'Wrong persistent value', answer: 'Delete overtaken at flush',
+        verification_refs: ['flow:flow'], evidence_refs: ['source.ets#L2'] };
+      assert.equal(apply({ ...supported, verification_refs: [] })[0].answer, row.answer);
+      const [both] = apply(supported);
       assert(both.answer.includes(row.answer) && both.answer.includes('Delete overtaken at flush') && both.answer.includes('old-q.json'));
       assert.equal(both.disposition, 'blocker');
-    },
+    }),
+  },
+  {
+    name: 'daily design Q: a signed late denial stays open after its source changes or disappears',
+    run: () => withProject(root => {
+      const { canonicalPath, blueprint } = loadCanonicalBlueprint(root, BLUEPRINT);
+      const file = path.join(root, 'late-source.ets');
+      fs.writeFileSync(file, 'prepare\ncomplete\n');
+      const signedBoundary = { projectRoot: root, protectedRoots: fs.readdirSync(root), executionRole: 'verifier' as const,
+        immutableInputPaths: [], feature: BLUEPRINT, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] };
+      const preSnapshot = capturePhaseInvocationSnapshot(signedBoundary);
+      const previous = (blueprint as Json).review_summary.questioning;
+      const selected = previous.items.find((item: Json) => item.scope_ref === 'view:development');
+      const prior = previous.items.find((item: Json) => item.scope_ref === 'view:logical');
+      const late = { ...prior, disposition: 'blocker', answer: 'Late completion overwrites the committed result.',
+        verification_refs: [prior.scope_ref], evidence_refs: ['late-source.ets#L2'] };
+      const input = { projectRoot: root, blueprintPath: canonicalPath, blueprint, previous, signedBoundary, preSnapshot, postSnapshot: preSnapshot,
+        beforeBlueprint: fs.readFileSync(canonicalPath, 'utf8'), providerId: 'initial-design-questioning', completed: true,
+        signedScopes: new Map([[selected.scope_ref, { kind: selected.scope_kind, questionId: selected.question_id }]]),
+        output: JSON.stringify({ items: [selected, late] }) };
+      const replay = (override: Partial<typeof input> & { requireCounterexampleSources?: boolean } = {}) => reusableDesignQuestioning({ ...input, ...override })?.items as Json[];
+      const outputWith = (item: Json) => JSON.stringify({ items: [selected, item] });
+      const denial = (result: Json[]) => result.find(item => item.scope_ref === prior.scope_ref);
+      const issued = renderQuestioningResultInstructions(blueprint, input.providerId, [selected.scope_ref]);
+      assert(hasQuestioningCounterexampleSourceRule(issued));
+      const rule = issued.find(line => line.startsWith('已签范围以外的 blocker'))!;
+      assert(!hasQuestioningCounterexampleSourceRule([rule, 'quote only', ...issued.filter(line => line !== rule)]));
+      const original = denial(replay());
+      assert.equal(original?.disposition, 'blocker');
+      const absolute = { ...late, evidence_refs: [`${file}#L2`] };
+      assert.equal(denial(replay({ output: outputWith(absolute) }))?.disposition, 'blocker');
+      const pastEnd = { ...late, evidence_refs: ['late-source.ets#L999999'] };
+      assert.equal(denial(replay({ output: outputWith(pastEnd) }))?.disposition, 'answered_with_evidence');
+      fs.writeFileSync(path.join(root, 'not-signed.ets'), 'complete\n');
+      const unsupported = { ...late, question: 'A different claim', answer: 'Suggested rewrite', evidence_refs: ['not-signed.ets#L1'] };
+      assert.equal(denial(replay({ output: outputWith(unsupported) }))?.disposition, 'answered_with_evidence');
+      assert.deepEqual(denial(replay({ output: outputWith(unsupported), previous: { items: replay() } })), original);
+      for (const update of [() => fs.writeFileSync(file, 'fixed\n'), () => fs.unlinkSync(file)]) {
+        update();
+        const result = replay();
+        assert.deepEqual(denial(result), original);
+        assert.deepEqual(assessDesignQuestioning({ projectRoot: root, blueprintPath: canonicalPath, blueprint, beforeDocument: blueprint,
+          beforeSnapshot: preSnapshot, previous: { items: result }, signedBoundary, revisitFindings: false }).selectedScopes, [prior.scope_ref]);
+      }
+      const legacy = { ...late, verification_refs: ['late-source.ets'], evidence_refs: [] };
+      assert.equal(denial(replay({ output: outputWith(legacy) }))?.disposition, 'answered_with_evidence');
+      assert.equal(denial(replay({ output: outputWith(legacy), requireCounterexampleSources: false }))?.disposition, 'blocker');
+      const phase = 'design-repair-questioning', invoke = 'q-managed';
+      const run = path.join(root, 'goal-runs', 'managed');
+      const invocation = path.join('phases', phase, invoke);
+      const request = path.join(invocation, 'request-e1.json');
+      fs.mkdirSync(path.join(run, invocation), { recursive: true });
+      const requestText = JSON.stringify({ invoke_id: invoke, purpose: 'questioning', write_boundary: signedBoundary,
+        context: { phase, workInput: { material: { segments: issued } } } });
+      fs.writeFileSync(path.join(run, request), requestText);
+      fs.writeFileSync(path.join(run, 'events.jsonl'), JSON.stringify({ type: 'agent_invoke_start', phase, invoke_id: invoke,
+        handoff_request: { path: request, sha256: createHash('sha256').update(requestText).digest('hex') } }) + '\n');
+      const beforeApply = fs.readFileSync(canonicalPath, 'utf8');
+      assert.throws(() => applyIndependentQuestioningOutput(canonicalPath, path.join(run, invocation, 'questioning-output.json'),
+        outputWith(unsupported), input.providerId, root), /缺少可核原件/);
+      assert.equal(fs.readFileSync(canonicalPath, 'utf8'), beforeApply, 'the managed receipt cannot fall back to the whole unverified answer');
+      const legacyResult = applyIndependentQuestioningOutput(canonicalPath, path.join(root, 'legacy-output.json'), outputWith(legacy), input.providerId);
+      assert.equal(denial(legacyResult.items as Json[])?.disposition, 'blocker');
+    }),
   },
   {
     name: 'daily design Q: directory comparison uses snapshot members, with exact scope for addition and deletion',
@@ -162,6 +238,76 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         assert.deepEqual(assessDesignQuestioning({ ...args, beforeSnapshot: initial, observedSnapshot: initial }).selectedScopes, []);
         assert.equal(enumerations, 1, 'use supplied snapshot without enumerating again');
       } finally { native.readdirSync = readdir; }
+    }),
+  },
+  {
+    name: 'daily design Q: publish changes the draft receipt, while signed CU content stays observable',
+    run: () => withProject(root => {
+      const { canonicalPath, blueprint } = loadCanonicalBlueprint(root, BLUEPRINT);
+      const unit = loadCanonicalChangeUnit(root, BLUEPRINT, 'ledger-refresh');
+      const run = path.join(path.dirname(path.dirname(canonicalPath)), 'goal-runs', 'r1');
+      const draft = path.join(run, 'design-repair', 'component-blueprint.yaml'), cu = path.join(path.dirname(draft), 'change-unit.yaml');
+      const architecture = path.join(path.dirname(draft), 'architecture.json');
+      const relative = (file: string) => path.relative(root, file).replace(/\\/g, '/');
+      const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+      const before = structuredClone(blueprint) as Json, current = structuredClone(blueprint) as Json;
+      current.review_summary.admission = { status: 'pass' };
+      const previous = structuredClone(before.review_summary.questioning);
+      previous.items.find((item: Json) => item.scope_ref === 'view:logical').evidence_refs.push(relative(draft));
+      previous.items.find((item: Json) => item.scope_ref === 'view:development').evidence_refs.push(relative(cu));
+      previous.items.find((item: Json) => item.scope_ref === 'app_lens:module_boundaries').evidence_refs.push(relative(architecture));
+      write(draft, before);
+      fs.writeFileSync(cu, unit.bytes);
+      const beforeArchitecture = JSON.stringify({ controls: ['current'] });
+      fs.writeFileSync(architecture, beforeArchitecture);
+      const context = JSON.stringify({ baseline: fs.readFileSync(canonicalPath).toString('base64') });
+      fs.writeFileSync(path.join(run, 'design-repair/original-context.json'), context);
+      const signedBoundary = { projectRoot: root, protectedRoots: fs.readdirSync(root), executionRole: 'verifier' as const,
+        immutableInputPaths: [relative(path.dirname(draft))], feature: BLUEPRINT, phaseOrder: [], domains: [], diagnostics: [], unresolvedSourcePhases: [] };
+      const pre = capturePhaseInvocationSnapshot(signedBoundary);
+      const identity = { type: 'design_authority_repair', phase: 'initial-design', signature: 'repair', blueprint_id: BLUEPRINT };
+      const original = { invokeId: 'q1', completed: true, output: '', source: '', beforeSource: '', providerId: 'design-repair-questioning', beforeDocument: before, requireCounterexampleSources: false,
+        beforeBlueprint: fs.readFileSync(draft, 'utf8'), preSnapshot: pre, signedBoundary,
+        additionalInputs: { [cu]: unit.bytes.toString('utf8'), [architecture]: beforeArchitecture } };
+      const attempted = { ...identity, stage: 'attempted', preauthorization: `${relative(run)}/manifest.json#requirement`,
+        handoff_context: { path: 'design-repair/original-context.json', sha256: hash(context) } };
+      const invoked = { type: 'agent_invoke_start', phase: 'design-repair-questioning', invoke_id: 'q1', handoff_request: { path: 'request.json', sha256: hash('signed') } };
+      const completed = { type: 'agent_invoke_end', phase: invoked.phase, invoke_id: invoked.invoke_id };
+      const published = { ...identity, stage: 'published', new_revision: current.revision, admission_after_questioning: 'pass', files: [relative(canonicalPath)] };
+      const events = [attempted, invoked, completed, published];
+      const proof = publishedDesignQuestioning(run, events, original, canonicalPath, current, root);
+      assert(proof?.changeUnit, 'signed publisher connects the candidate CU and its canonical authority');
+      assert.equal(publishedDesignQuestioning(run, events.slice(0, -1), original, canonicalPath, current, root), undefined);
+      const unrelatedPublication = { ...published, signature: 'different' };
+      assert.equal(publishedDesignQuestioning(run, [attempted, invoked, completed, unrelatedPublication], original, canonicalPath, current, root), undefined);
+      write(draft, current);
+      write(canonicalPath, current);
+      write(unit.canonicalPath, { ...unit.changeUnit, revision: Number(unit.changeUnit.revision) + 1 });
+      const input = { projectRoot: root, blueprintPath: canonicalPath, blueprint: current, beforeDocument: before, beforeSnapshot: pre,
+        previous, signedBoundary, revisitFindings: false };
+      assert.deepEqual(assessDesignQuestioning(input).selectedScopes, ['view:logical']);
+      assert.deepEqual(assessDesignQuestioning({ ...input, publishedRepair: proof }).selectedScopes, []);
+      const initialBoundary = { ...signedBoundary, immutableInputPaths: [] };
+      const snapshotOptions = { runtimeExcluded: [relative(run)] };
+      const observedInitial = capturePhaseInvocationSnapshot(initialBoundary, snapshotOptions);
+      const observedLater = capturePhaseInvocationSnapshot(signedBoundary);
+      assert.deepEqual(assessDesignQuestioning({ ...input, publishedRepair: proof, observedSnapshot: observedInitial,
+        observedSnapshotBoundary: initialBoundary, observedSnapshotOptions: snapshotOptions }).selectedScopes, []);
+      fs.writeFileSync(architecture, JSON.stringify({ controls: ['changed'] }));
+      assert.deepEqual(assessDesignQuestioning({ ...input, publishedRepair: proof, observedSnapshot: observedInitial,
+        observedSnapshotBoundary: initialBoundary, observedSnapshotOptions: snapshotOptions }).selectedScopes, ['app_lens:module_boundaries']);
+      fs.writeFileSync(architecture, beforeArchitecture);
+      const initial = { ...input, signedBoundary: initialBoundary, snapshotOptions, beforeSnapshot: observedInitial, observedSnapshot: observedLater,
+        previous: { items: previous.items.filter((item: Json) => item.scope_ref === 'view:development') } };
+      assert.deepEqual(assessDesignQuestioning(initial).selectedScopes, ['view:development']);
+      assert.deepEqual(assessDesignQuestioning({ ...initial, publishedRepair: proof }).selectedScopes, []);
+      write(unit.canonicalPath, { ...unit.changeUnit, safe_intermediate_state: 'changed official CU commitment' });
+      assert.deepEqual(assessDesignQuestioning({ ...input, publishedRepair: proof }).selectedScopes, ['view:development']);
+      write(unit.canonicalPath, unit.changeUnit);
+      fs.appendFileSync(cu, '\n# actual changes must remain observable\n');
+      assert.deepEqual(assessDesignQuestioning({ ...input, publishedRepair: proof }).selectedScopes, ['view:development']);
+      write(draft, { ...current, component_id: 'not-the-published-blueprint' });
+      assert.deepEqual(assessDesignQuestioning({ ...input, publishedRepair: proof }).selectedScopes, ['view:logical', 'view:development']);
     }),
   },
   {

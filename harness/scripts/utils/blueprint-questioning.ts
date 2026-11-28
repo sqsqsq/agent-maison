@@ -95,7 +95,13 @@ function questioningId(kind: unknown, ref: unknown): string {
 }
 
 const QUESTIONING_SCOPE_HEADING = '## 必答范围（每个恰好一项）';
+const QUESTIONING_COUNTEREXAMPLE_RULE = '已签范围以外的 blocker 只用于可复现的新反例。由独立质询判断它是否有确定性正确性、真实授权、硬预算或已承诺完成与自动恢复的后果。在 answer 写清原承诺、可达触发和具体后果，用 verification_refs 标明要核的义务，用 evidence_refs 或 verification_refs 指向具体稳定地址、蓝图字段指针（如 #/design_views/…）、唯一的 acceptance:ID 或已签发文件的路径#L行。';
 type SignedQuestioningScopes = ReadonlyMap<string, { kind: string; questionId: string }>;
+
+export function hasQuestioningCounterexampleSourceRule(segments?: readonly unknown[]): boolean {
+  const at = segments?.indexOf(QUESTIONING_SCOPE_HEADING) ?? -1;
+  return !!segments && at > 0 && at === segments.lastIndexOf(QUESTIONING_SCOPE_HEADING) && segments[at - 1] === QUESTIONING_COUNTEREXAMPLE_RULE;
+}
 
 /** Read the scope lines already frozen in the independent request material. */
 export function readSignedQuestioningScopes(segments?: readonly unknown[]): SignedQuestioningScopes | undefined {
@@ -165,7 +171,7 @@ function questioningFact(value: unknown, field = ''): unknown {
 const sameQuestioningFact = (before: unknown, after: unknown, field?: string): boolean =>
   stableStringify(questioningFact(before, field)) === stableStringify(questioningFact(after, field));
 
-function questioningEvidenceMatches(declared: string, evidence: string, projectRoot?: string): boolean {
+function questioningEvidenceMatches(declared: string, evidence: string, projectRoot?: string, originalSource?: string | null): boolean {
   const parse = (value: string) => {
     const at = value.search(/#|:(?=\d)/);
     const location = at < 0 ? '' : value.slice(at + 1);
@@ -180,10 +186,10 @@ function questioningEvidenceMatches(declared: string, evidence: string, projectR
   if (!given.lines && declared === evidence) return true;
   if (!need.file || need.file !== given.file) return false;
   if (given.lines?.some(line => line.end < line.start)) return false;
-  if (given.lines && projectRoot) {
+  if (given.lines && projectRoot && originalSource !== null) {
     try {
       if (!isInsideProjectRoot(projectRoot, given.file)) return false;
-      const source = fs.readFileSync(realProjectPath(projectRoot, path.relative(projectRoot, given.file), 'questioning evidence lines'), 'utf8');
+      const source = originalSource ?? fs.readFileSync(realProjectPath(projectRoot, path.relative(projectRoot, given.file), 'questioning evidence lines'), 'utf8');
       const last = source ? source.split(/\r\n?|\n/).length - (/\r$|\n$/.test(source) ? 1 : 0) : 0;
       if (given.lines.some(line => line.end > last)) return false;
     } catch { return false; }
@@ -729,10 +735,11 @@ export function renderQuestioningResultInstructions(blueprint: BlueprintRecord, 
     renderBlueprintFieldResponsibilities(),
     `disposition只能使用以下合法值：${DISPOSITIONS.join(' / ')}；不要用open等其它拼写。`,
     '',
+    QUESTIONING_COUNTEREXAMPLE_RULE,
     QUESTIONING_SCOPE_HEADING,
     ...scopes,
     ...(lens.length ? [`首审用这些 App 视角查漏：${lens.join('、')}。相关义务已有独立结论时可省略重复行；发现实际反例仍交回该 scope 及具体依据。`] : []),
-    '适用视图、流程、关系、具体承诺和未闭合发现逐项实答。通用 app_lens 行用于定位与查漏，相关实际义务已有独立结论时可省略重复行。只交回本轮实际复核的范围；未选中的旧结论沿用原题、原答与原件。同引未变的需求文档不能证明受影响。用具体决定、稳定地址或精确字段指针定位依据。已签答复之外发现可复现的实质反例，可在对应 scope 交回，并在 answer 与 verification_refs 明确原承诺、可达触发、后果与来源。同一 scope 的仍开放旧反例和独立新反例写在同一条内。用紧凑JSON返回，不写临时结果或复述完整材料。',
+    '适用视图、流程、关系、具体承诺和未闭合发现逐项实答。通用 app_lens 行用于定位与查漏，相关实际义务已有独立结论时可省略重复行。只交回本轮实际复核的范围；未选中的旧结论沿用原题、原答与原件。同引未变的需求文档不能证明受影响。同一 scope 的仍开放旧反例和独立新反例写在同一条内。用紧凑JSON返回，不写临时结果或复述完整材料。',
     '用原需求逐项核对预期结果、独立验收 ID 和适用观察通道。以反例判断设计是否允许违反当前已授权行为，例如生产者交出的对象与消费者需要的本次对象不一致。失败返回落点依据原文及既有路由解释；参考图按既有来源核验并保留到施工/视觉验收。',
     '当实际写入与清空作用于同一持久状态、分别承担本次用户承诺时，核对操作开始和完成允许的顺序、实际落盘与结果消费者。沿当前 flow 的具体 mutation、对应验收与用例分支，或同一现有合同中的明确顺序保证给出独立裁决。若引用合同，给出能证明有关操作先后的具体原文，并在回执引用两侧各自的 P0 或可定位的验收分支。重复同一操作的幂等与不同操作间的顺序是两项承诺。若两操作不可能冲突，引用各操作和相关验收位置说明约束来源。只核对真实触发或承诺的生命周期；没有正向依据的通用事件由独立方判断是否适用。',
     '同一通道可以承担不同义务。按原需求分别核对输入映射和默认值、生产写入与读回、外部界面与导航、可见时间变化和真实调用次数。逐项核对 P0 的动作和断言，多个 UI 义务可以共用同一动作，各自的预期结果须有可观察的断言。结果页出现可以证明导航；持久状态和调用次数须由能读取实际值的应用内测试承担，应用内测试即使在真机执行也归 unit。不同 CU 的局部同号及多个目标共用同一完整定义可按实际消费范围保留。',
@@ -826,16 +833,50 @@ export function independentQuestioningEnvelope(result: BlueprintRecord, provider
   return { ...result, items, status: 'complete', provider_id: providerId, isolated_context: true, writes_ssot: false };
 }
 
+function counterexampleSourceExists(blueprint: BlueprintRecord, item: BlueprintRecord, evidence?: {
+  projectRoot: string; readSignedFile: (file: string) => string | null | undefined;
+} | null): boolean {
+  const verificationRefs = asStrings(item.verification_refs);
+  if (!verificationRefs.some(nonEmptyString)) return false;
+  // Earlier signed requests allowed a nonempty verification reference without a specific locator.
+  if (evidence === null) return true;
+  const content = blueprintAuthorContent(blueprint);
+  let addresses: Map<string, BlueprintRecord>;
+  try { addresses = stableAddressIndex(content); } catch { return false; }
+  return [...verificationRefs, ...asStrings(item.evidence_refs)].some(ref => {
+    if (ref === item.scope_ref || ref.startsWith('blueprint:') && !ref.startsWith('blueprint:/')) return false;
+    const isScope = (row: unknown) => row === addresses.get(String(item.scope_ref))
+      || item.scope_kind === 'flow' && `flow:${String(asRecord(row)?.flow_id)}` === item.scope_ref;
+    if (addresses.has(ref) && !isScope(addresses.get(ref))) return true;
+    const pointer = ref.replace(/^(?:blueprint:|#)(?=\/)/, '');
+    const source = pointer.startsWith('/') && resolveBlueprintReaderSource(content, pointer);
+    if (source && !isScope(source.value)) return true;
+    if (ref.startsWith('acceptance:')) {
+      const id = ref.slice('acceptance:'.length);
+      const matches = [...addresses.values()].flatMap(row => ['criteria', 'boundaries', 'performance']
+        .flatMap(key => asRecords(asRecord(row.acceptance)?.[key])).filter(criterion => criterion.id === id));
+      if (matches.length === 1) return true;
+    }
+    const file = evidence && questioningEvidencePath(ref, evidence.projectRoot);
+    if (!file || !/#L?\d|:\d/i.test(ref)) return false;
+    const original = evidence.readSignedFile(file);
+    return original !== undefined && questioningEvidenceMatches(file, ref, evidence.projectRoot, original);
+  });
+}
+
 export function mergeIndependentQuestioningResult(blueprint: BlueprintRecord, result: BlueprintRecord, providerId: string,
   previous?: BlueprintRecord, selected: readonly string[] = [...requiredQuestioningScopes(blueprint).keys()],
-  original?: { path: string; sha256: string }, signed?: SignedQuestioningScopes): BlueprintRecord {
+  original?: { path: string; sha256: string }, signed?: SignedQuestioningScopes,
+  evidence?: Parameters<typeof counterexampleSourceExists>[2]): BlueprintRecord {
   const prior = asRecords(previous?.items);
+  const scopes = requiredQuestioningScopes(blueprint);
   const fresh = normalizeQuestioningItems(blueprint, asRecords(result.items), signed).flatMap(item => {
     const old = prior.find(row => row.scope_ref === item.scope_ref && row.scope_kind === item.scope_kind);
-    const outside = old && !selected.includes(String(item.scope_ref));
-    if (outside && (item.disposition !== 'blocker' || !nonEmptyString(item.answer) || !asStrings(item.verification_refs).length)) return [];
+    const outside = scopes.get(String(item.scope_ref)) === item.scope_kind && !selected.includes(String(item.scope_ref));
+    if (outside && item.disposition === 'blocker' && (!nonEmptyString(item.answer) || !counterexampleSourceExists(blueprint, item, evidence))) return [];
+    if (outside && old && item.disposition !== 'blocker') return [];
     const copy = { ...item }; delete copy.review_original;
-    if (outside && old.disposition === 'blocker') {
+    if (outside && old?.disposition === 'blocker') {
       if (old.question === item.question && old.answer === item.answer) return [];
       const oldSource = asRecord(old.review_original)?.path;
       copy.answer = [`仍开放的原质询：${String(old.question)}`, String(old.answer ?? ''), oldSource, `本次反例：${String(item.answer)}`].filter(nonEmptyString).join('\n');
@@ -845,7 +886,6 @@ export function mergeIndependentQuestioningResult(blueprint: BlueprintRecord, re
     return [original ? { ...copy, review_original: original } : copy];
   });
   const current = new Set(fresh.map(item => String(item.scope_ref)));
-  const scopes = requiredQuestioningScopes(blueprint);
   const retained = prior.filter(item => scopes.get(String(item.scope_ref)) === item.scope_kind
     && !selected.includes(String(item.scope_ref)) && !current.has(String(item.scope_ref)));
   const positions = new Map(prior.map((item, index) => [item.scope_ref, index]));
@@ -877,13 +917,17 @@ export function applyIndependentQuestioningOutput(
   const invocationDir = path.dirname(outputPath), phasesDir = path.dirname(path.dirname(invocationDir));
   if (projectRoot && path.basename(phasesDir) === 'phases') {
     const runDir = path.dirname(phasesDir);
-    const { readDesignQuestioningOriginal, reusableDesignQuestioning } = require('./design-repair-unattended') as typeof import('./design-repair-unattended');
-    const { sessionEvents } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
+    const { readDesignQuestioningOriginal, reusableDesignQuestioning, signedDesignQuestioningMaterial } = require('./design-repair-unattended') as typeof import('./design-repair-unattended');
+    const { readExecutionRequestOriginal, sessionEvents } = require('./session-execution-handoff') as typeof import('./session-execution-handoff');
     const events = sessionEvents(runDir);
     const start = events.find(event => event.type === 'agent_invoke_start' && event.invoke_id === path.basename(invocationDir));
     const original = start && readDesignQuestioningOriginal(runDir, start, events, projectRoot);
     const verified = original && reusableDesignQuestioning({ ...original, projectRoot, blueprintPath, blueprint });
     if (verified) questioning = verified;
+    else if (original?.requireCounterexampleSources ?? (start?.handoff_request && hasQuestioningCounterexampleSourceRule(
+      signedDesignQuestioningMaterial(readExecutionRequestOriginal(runDir, start.invoke_id, events))))) {
+      throw new Error('本次已签质询缺少可核原件，按原质询责任重新核验。');
+    }
   }
   if (projectRoot && typeof blueprint.blueprint_id === 'string') {
     const { componentBlueprintPath } = require('./component-blueprint-path') as typeof import('./component-blueprint-path');

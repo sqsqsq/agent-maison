@@ -191,7 +191,7 @@ export function questioningRecoveryCases() {
     const consumers = selectQuestioningScopes(dependencyBefore, dependencyAfter, previous);
     assert(consumers.includes(`flow:${flow.flow_id}`) && consumers.includes('view:runtime') && consumers.includes('app_lens:ui_refresh'), '显式关联消费者没有纳入复核');
     const extra = asRecords(previous.items).find(item => !selected.includes(String(item.scope_ref)))!;
-    const withNewEvidence = mergeIndependentQuestioningResult(current, { items: [...fresh, { ...extra, disposition: 'blocker', answer: '本轮具体新证据', verification_refs: ['src/new-evidence.ts'] }] }, 'independent-q', previous, selected);
+    const withNewEvidence = mergeIndependentQuestioningResult(current, { items: [...fresh, { ...extra, disposition: 'blocker', answer: '本轮具体新证据', verification_refs: ['#/design_views/1/evolution_impact'] }] }, 'independent-q', previous, selected);
     assert(independentQuestioningBlockers({ review_summary: { questioning: withNewEvidence } }).length === 1, '新独立异议没有重开');
   }));
 

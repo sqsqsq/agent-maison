@@ -20,7 +20,7 @@ import * as YAML from 'yaml';
 import { deriveBlueprintAdmission, currentBlueprintSliceId } from './blueprint-admission';
 import { evaluateCompletionProgress, compareRelatedInputSnapshots, type CompletionEvaluation, type ArtifactSnapshot } from './goal-failure-classifier';
 import { reconcileP1DerivedResults } from './blueprint-reconciliation';
-import { describeQuestioningChanges, renderQuestioningResultInstructions, independentQuestioningBlockers, applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, normalizeQuestioningItems, readSignedQuestioningScopes, requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning, questioningEvidencePath } from './blueprint-questioning';
+import { describeQuestioningChanges, renderQuestioningResultInstructions, independentQuestioningBlockers, applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, normalizeQuestioningItems, readSignedQuestioningScopes, hasQuestioningCounterexampleSourceRule, requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning, questioningEvidencePath } from './blueprint-questioning';
 import { resolveBlueprintReaderSource } from './blueprint-reader-guide';
 import { resolveBlueprintTarget } from './blueprint-addressing';
 import { blueprintDeclaredAcceptanceIssues, blueprintCandidateAuthorityFindings, blueprintSourceRefFiles, deriveBlueprintCandidateSkillInput, checkAuthoritativeContentAligned,
@@ -224,6 +224,7 @@ export function reusableDesignQuestioning(input: {
   afterBlueprint?: string;
   additionalInputs?: Readonly<Record<string, string>>;
   signedScopes?: ReturnType<typeof readSignedQuestioningScopes>;
+  requireCounterexampleSources?: boolean;
   signedBoundary?: import('./phase-write-boundary').PhaseWriteBoundaryResolution;
   snapshotOptions?: Parameters<typeof capturePhaseInvocationSnapshot>[1];
 }): BlueprintRecord | null {
@@ -253,13 +254,25 @@ export function reusableDesignQuestioning(input: {
     const parsed = parseIndependentQuestioningOutput(input.output);
     const review = asRecord(before.review_summary) ?? {};
     // Replay the work requested in this original. Today's selector governs the next request.
-    const selected = input.signedScopes && input.previous && input.previousBlueprint && input.previousSnapshot ? [...input.signedScopes.keys()]
+    const selected = input.signedScopes ? [...input.signedScopes.keys()]
       : assessDesignQuestioning({ projectRoot: input.projectRoot, blueprintPath: input.blueprintPath, blueprint: before,
         beforeDocument: input.previousBlueprint, beforeSnapshot: input.previousSnapshot,
         previous: input.previous, observedSnapshot: input.preSnapshot }).selectedScopes;
+    const readSignedFile = (file: string): string | null | undefined => {
+      if (!isInsideProjectRoot(input.projectRoot, file)) return undefined;
+      const relative = path.relative(input.projectRoot, file).replace(/\\/g, '/');
+      const expected = input.preSnapshot?.entries.find(entry => entry.path === relative && entry.kind === 'file')?.sha256;
+      if (!expected) return undefined;
+      try {
+        const bytes = readPhaseRecoveryFile(input.projectRoot, file).bytes;
+        if (bytes && sha256Hex(bytes) === expected) return bytes.toString('utf8');
+      } catch { /* The original file remains signed even when the current path cannot be read safely. */ }
+      return null;
+    };
     const result = mergeIndependentQuestioningResult(before, parsed, input.providerId, input.previous, selected,
       input.source ? { path: path.relative(input.projectRoot, input.source).replace(/\\/g, '/'),
-        sha256: sha256Hex(fs.existsSync(input.source) ? fs.readFileSync(input.source) : Buffer.from(input.output)) } : undefined, input.signedScopes);
+        sha256: sha256Hex(fs.existsSync(input.source) ? fs.readFileSync(input.source) : Buffer.from(input.output)) } : undefined,
+      input.signedScopes, input.requireCounterexampleSources === false ? null : { projectRoot: input.projectRoot, readSignedFile });
     const errors = validateBlueprintQuestioning({ ...before, review_summary: { ...review, questioning: result } }, input.projectRoot);
     // Preserve the usable independent items and exact local gaps; the normal validator still denies admission.
     const local = new Set(['blueprint_admission_false_pass', 'blueprint_questioning_scope_invalid', 'blueprint_questioning_scope_duplicate',
@@ -360,9 +373,15 @@ function verifiedQuestioningProjection(projectRoot: string, file: string, artifa
   } catch { return false; }
 }
 
+interface QuestioningComparisonBoundary extends Pick<QuestioningOriginal, 'signedBoundary' | 'snapshotOptions'> {
+  observedSnapshotBoundary?: QuestioningOriginal['signedBoundary'];
+  observedSnapshotOptions?: QuestioningOriginal['snapshotOptions'];
+  publishedRepair?: PublishedQuestioningDraft;
+}
+
 export function questioningDependencyChanges(projectRoot: string, blueprint: BlueprintRecord, pre?: ReturnType<typeof capturePhaseInvocationSnapshot>, ownPath?: string,
   observed?: ReturnType<typeof capturePhaseInvocationSnapshot>, previous?: BlueprintRecord,
-  boundary?: Pick<QuestioningOriginal, 'signedBoundary' | 'snapshotOptions'>): QuestioningDependency[] {
+  boundary?: QuestioningComparisonBoundary): QuestioningDependency[] {
   const beforeFiles = new Map((pre?.failureReason ? [] : pre?.entries ?? []).map(entry => [entry.path, entry]));
   const afterFiles = observed && new Map(observed.entries.map(entry => [entry.path, entry]));
   const filePaths = new Set([...beforeFiles.keys(), ...(afterFiles?.keys() ?? [])]);
@@ -412,12 +431,14 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
       } catch { failedDirectories.add(relative); }
     }
   }
-  const snapshotCovers = (relative: string): boolean => {
-    if (!pre || pre.failureReason || !boundary?.signedBoundary) return false;
-    const contains = (prefix: string) => relative === prefix || relative.startsWith(prefix + '/');
-    const opts = boundary.snapshotOptions, signed = boundary.signedBoundary;
+  const snapshotCovers = (relative: string, signed?: QuestioningOriginal['signedBoundary'], opts?: QuestioningOriginal['snapshotOptions']): boolean => {
+    if (!signed) return false;
+    const contains = (prefix: string) => {
+      const normalized = prefix.replace(/\\/g, '/');
+      return relative === normalized || relative.startsWith(normalized + '/');
+    };
     if (relative.split('/').some(segment => ['.git', '.idea', '.hvigor', 'node_modules', 'oh_modules', 'build', 'dist'].includes(segment))) return false;
-    const included = opts?.includeFiles?.includes(relative) || signed.immutableInputPaths?.some(contains);
+    const included = opts?.includeFiles?.some(file => file.replace(/\\/g, '/') === relative) || signed.immutableInputPaths?.some(contains);
     if (included) return true;
     if (opts?.runtimeExcluded?.some(contains)) return false;
     if (/(?:^|\/)(?:goal-runs|context)(?:\/|$)/.test(relative) && !opts?.ownedPrefixes?.some(contains)) return false;
@@ -425,6 +446,36 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
   };
   const canonicalPath = componentBlueprintPath(projectRoot, String(blueprint.blueprint_id));
   const review = path.join(path.dirname(canonicalPath), 'component-blueprint.review.md');
+  const publishedRepair = boundary?.publishedRepair;
+  const publishedCu = publishedRepair?.changeUnit;
+  const canonicalSha = (): string | undefined => {
+    if (afterFiles) {
+      const canonical = afterFiles.get(relativePath(canonicalPath));
+      return canonical?.kind === 'file' ? canonical.sha256 : undefined;
+    }
+    try {
+      const bytes = readPhaseRecoveryFile(projectRoot, canonicalPath).bytes;
+      if (bytes && stableStringify(YAML.parse(bytes.toString('utf8'))) === stableStringify(blueprint)) return sha256Hex(bytes);
+    } catch { /* The draft keeps ordinary dependency comparison if its current canonical cannot be verified. */ }
+  };
+  const publishedCuCurrent = publishedCu && (() => {
+    let compared: { aligned: boolean; sha?: string } | undefined;
+    return () => {
+      if (compared) return compared;
+      try {
+        const bytes = readPhaseRecoveryFile(projectRoot, publishedCu.canonicalPath).bytes;
+        if (!bytes) return compared = { aligned: false };
+        const sha = sha256Hex(bytes), relative = relativePath(publishedCu.canonicalPath);
+        const observedCanonical = afterFiles?.get(relative);
+        if (afterFiles && (observedCanonical?.kind !== 'file' || observedCanonical.sha256 !== sha)) return compared = { aligned: false };
+        const previousCanonical = beforeFiles.get(relative);
+        const aligned = previousCanonical?.kind === 'file' && (previousCanonical.sha256 === publishedCu.beforeCanonicalSha256
+          ? changeUnitPublicationContent(asChangeUnitArtifact(YAML.parse(bytes.toString('utf8')))) === publishedCu.content
+          : previousCanonical.sha256 === sha);
+        return compared = { aligned, sha };
+      } catch { return compared = { aligned: false }; }
+    };
+  })();
   return unique(expandedFiles).flatMap<QuestioningDependency>(file => {
     // Both candidate and canonical references identify the blueprint facts already compared by stable scope.
     if (questioningEvidencePath(file) === questioningEvidencePath(canonicalPath)
@@ -446,9 +497,18 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
     if (observed?.failureReason) return [unknown(file, '现有快照不能证明引用来源。')];
     const original = originals.get(file);
     const old = beforeFiles.get(relative);
-    const expected = !observed && original ? original : old?.sha256;
+    const isPublishedCuDraft = publishedCu?.draftPath === file;
+    const signedDraftInput = publishedRepair?.draftInputs.get(file);
+    const wasCovered = pre && !pre.failureReason && snapshotCovers(relative, boundary?.signedBoundary, boundary?.snapshotOptions);
+    const expected = !observed && original ? original : old?.sha256
+      ?? (!wasCovered ? signedDraftInput : undefined);
+    const outsideObservation = afterFiles && !afterFiles.has(relative) && boundary?.observedSnapshotBoundary
+      && !snapshotCovers(relative, boundary.observedSnapshotBoundary, boundary.observedSnapshotOptions);
+    if (outsideObservation && !signedDraftInput && publishedRepair?.draftPath !== file) {
+      return [unknown(file, '该引用未纳入当前签发采集，不能据此判为删除。', !!expected)];
+    }
     let exists = false, sha256: string | null = null, kind: 'file' | 'symlink' | undefined;
-    if (afterFiles || liveMembers.has(relative)) {
+    if (afterFiles && !outsideObservation || liveMembers.has(relative)) {
       const entry = afterFiles?.get(relative) ?? liveMembers.get(relative);
       sha256 = entry?.sha256 ?? null; kind = entry?.kind; exists = !!entry;
     } else {
@@ -465,9 +525,20 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
         }
       } catch { return [unknown(file, '来源当前不可读取，需按原依据复核。', !!expected)]; }
     }
-    if (expected && sha256 === expected && (!old || old.kind === kind)) return [];
+    if (expected && sha256 === expected && (old ? old.kind === kind : !signedDraftInput || kind === 'file')) {
+      const canonicalCu = isPublishedCuDraft && publishedCuCurrent?.();
+      if (canonicalCu && !canonicalCu.aligned) return [canonicalCu.sha
+        ? { path: file, exists: true, sha256: canonicalCu.sha, role: 'artifact', recorded: true,
+          detail: `草稿引用对应的正式 CU 已变化：${relativePath(publishedCu.canonicalPath)}` }
+        : unknown(file, `草稿引用对应的正式 CU 无法复核：${relativePath(publishedCu.canonicalPath)}`, true)];
+      return [];
+    }
+    // The verified repair published these same facts to both paths and only the canonical bytes gained the review result.
+    if (publishedRepair && file === publishedRepair.draftPath && old?.kind === 'file' && old.sha256 === publishedRepair.beforeSha256
+      && kind === 'file' && sha256 && sha256 === canonicalSha()) return [];
+    if (publishedCu?.canonicalPath === file && publishedCuCurrent?.().aligned) return [];
     if (!expected && !exists && directories.has(file)) return [];
-    if (!expected && !exists) return snapshotCovers(relative) ? []
+    if (!expected && !exists) return wasCovered ? []
       : [unknown(file, '引用未记录为文件，历史采集范围或源位置不能证明。')];
     // A legacy request did not snapshot its own derived Q files. Other run evidence keeps ordinary content comparison.
     const artifact = questioningProcessArtifact(relative);
@@ -476,10 +547,10 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
   });
 }
 
-export function assessDesignQuestioning(input: {
+export function assessDesignQuestioning(input: QuestioningComparisonBoundary & {
   projectRoot: string; blueprintPath: string; blueprint: BlueprintRecord; beforeDocument?: BlueprintRecord;
   beforeSnapshot?: PhaseInvocationSnapshot; previous?: BlueprintRecord; observedSnapshot?: PhaseInvocationSnapshot;
-  signedBoundary?: QuestioningOriginal['signedBoundary']; snapshotOptions?: QuestioningOriginal['snapshotOptions']; revisitFindings?: boolean;
+  revisitFindings?: boolean;
 }): { selectedScopes: string[]; affectedDependencies: QuestioningDependency[] } {
   const affectedDependencies = questioningDependencyChanges(input.projectRoot, input.blueprint, input.beforeSnapshot, input.blueprintPath,
     input.observedSnapshot, input.previous, input);
@@ -581,6 +652,7 @@ type QuestioningOriginal = {
   previous?: BlueprintRecord; previousBlueprint?: BlueprintRecord;
   previousSnapshot?: ReturnType<typeof capturePhaseInvocationSnapshot>; additionalInputs: Record<string, string>;
   signedScopes?: ReturnType<typeof readSignedQuestioningScopes>;
+  requireCounterexampleSources: boolean;
   signedBoundary?: import('./phase-write-boundary').PhaseWriteBoundaryResolution;
   snapshotOptions?: Parameters<typeof capturePhaseInvocationSnapshot>[1];
 };
@@ -610,6 +682,11 @@ export function openDesignQuestioningHistory(runDir: string, events: readonly Go
     return current;
   }
   return view(events.length);
+}
+
+export function signedDesignQuestioningMaterial(issued: ReturnType<typeof readExecutionRequestOriginal>) {
+  return issued && issued.event.handoff_request?.sha256 === issued.reference.sha256 && issued.request.purpose === 'questioning'
+    && issued.request.write_boundary?.executionRole === 'verifier' ? issued.request.context.workInput?.material.segments : undefined;
 }
 
 /** Project the existing invocation originals; no Q validity record is written. */
@@ -680,9 +757,8 @@ function loadQuestioningOriginal(runDir: string, start: GoalRunEvent, history: Q
     let previousBlueprint: BlueprintRecord | undefined, previousSnapshot: ReturnType<typeof capturePhaseInvocationSnapshot> | undefined;
     // Only partial returns need the earlier original chain; full legacy results retain their existing cost.
     const root = projectRoot ?? issued?.request.write_boundary?.projectRoot;
-    const signedScopes = issued && issued.event.handoff_request?.sha256 === issued.reference.sha256 && issued.request.purpose === 'questioning'
-      && issued.request.write_boundary?.executionRole === 'verifier'
-      ? readSignedQuestioningScopes(issued.request.context.workInput?.material.segments) : undefined;
+    const signedMaterial = signedDesignQuestioningMaterial(issued);
+    const signedScopes = readSignedQuestioningScopes(signedMaterial);
     const returned = doc && normalizeQuestioningItems(doc, asRecords(parseIndependentQuestioningOutput(output).items), signedScopes);
     if (root && doc && returned && [...requiredQuestioningScopes(doc).keys()].some(ref => returned.filter(item => item.scope_ref === ref).length !== 1)) {
       const sources = [root === projectRoot ? history.before(position)
@@ -716,6 +792,7 @@ function loadQuestioningOriginal(runDir: string, start: GoalRunEvent, history: Q
       preSnapshot: issued?.request.pre_snapshot ?? (initial ? undefined : outcome?.preSnapshot), postSnapshot: saved.post_snapshot ?? outcome?.postSnapshot,
       ...(issued?.request.write_boundary ? { signedBoundary: issued.request.write_boundary, snapshotOptions: issued.request.snapshot_options } : {}),
       ...(afterBlueprint ? { afterBlueprint } : {}), previous, previousBlueprint, previousSnapshot, signedScopes,
+      requireCounterexampleSources: hasQuestioningCounterexampleSourceRule(signedMaterial),
       additionalInputs: Object.fromEntries(['change-unit.yaml', 'change-unit-candidates.json', 'architecture.json'].filter(name => typeof outputs[name] === 'string')
         .map(name => [path.join(runDir, 'design-repair', name), Buffer.from(outputs[name], 'base64').toString('utf8')])),
     };
@@ -728,6 +805,64 @@ function questioningOriginal(runDir: string, start: GoalRunEvent, originalEvents
 }
 
 export { questioningOriginal as readDesignQuestioningOriginal };
+
+interface PublishedQuestioningDraft {
+  draftPath: string;
+  beforeSha256: string;
+  draftInputs: ReadonlyMap<string, string>;
+  changeUnit?: { draftPath: string; draftSha256: string; canonicalPath: string; beforeCanonicalSha256: string; content: string };
+}
+
+/** Connect an already verified independent answer to its transaction's canonical publication. */
+export function publishedDesignQuestioning(runDir: string, events: readonly GoalRunEvent[], original: QuestioningOriginal,
+  blueprintPath: string, blueprint: BlueprintRecord, projectRoot: string): PublishedQuestioningDraft | undefined {
+  const before = original.beforeDocument;
+  if (!original.completed || original.providerId !== DESIGN_REPAIR_QUESTIONING_PROVIDER || !before || !original.preSnapshot
+    || original.signedBoundary?.executionRole !== 'verifier' || before.revision !== blueprint.revision
+    || stableStringify(blueprintAuthorContent(before)) !== stableStringify(blueprintAuthorContent(blueprint))) return;
+  const relative = (file: string) => path.relative(projectRoot, file).replace(/\\/g, '/');
+  const canonicalPath = componentBlueprintPath(projectRoot, String(blueprint.blueprint_id));
+  if (path.relative(canonicalPath, blueprintPath) !== '') return;
+  const invoke = events.findIndex(event => event.type === 'agent_invoke_start' && event.phase === designRepairInvokeLabel('questioning')
+    && event.invoke_id === original.invokeId && !!event.handoff_request);
+  if (invoke < 0) return;
+  const attempted = events.slice(0, invoke).reverse().find(event => event.type === 'design_authority_repair' && 'stage' in event && event.stage === 'attempted');
+  if (!attempted || !('signature' in attempted) || !('handoff_context' in attempted) || !attempted.handoff_context
+    || !('blueprint_id' in attempted) || attempted.blueprint_id !== blueprint.blueprint_id || !('preauthorization' in attempted)
+    || ![DESIGN_REPAIR_PREAUTH_KEY, `${relative(runDir)}/manifest.json#requirement`].includes(String(attempted.preauthorization).replace(/\\/g, '/'))) return;
+  const end = events.findIndex((event, index) => index > invoke && event.type === 'agent_invoke_end' && event.invoke_id === original.invokeId);
+  if (end < 0) return;
+  const next = events.slice(invoke + 1).find(event => event.type === 'agent_invoke_start'
+    && [designRepairInvokeLabel('author'), designRepairInvokeLabel('questioning')].includes(String(event.phase))
+    || event.type === 'design_authority_repair' && 'stage' in event && ['attempted', 'published'].includes(String(event.stage)));
+  if (!next || events.indexOf(next) <= end || next.type !== 'design_authority_repair' || !('stage' in next) || next.stage !== 'published'
+    || next.phase !== attempted.phase || !('signature' in next) || next.signature !== attempted.signature
+    || !('blueprint_id' in next) || next.blueprint_id !== blueprint.blueprint_id || !('new_revision' in next) || next.new_revision !== blueprint.revision
+    || !('admission_after_questioning' in next) || next.admission_after_questioning !== 'pass'
+    || !('files' in next) || !asStrings(next.files).some(file => file.replace(/\\/g, '/') === relative(canonicalPath))) return;
+  try {
+    const context = readHandoffMaterial<{ baseline: string }>(runDir, attempted.handoff_context as HandoffReference);
+    const draftPath = path.join(runDir, 'design-repair', path.basename(canonicalPath));
+    const beforeSha256 = sha256Hex(Buffer.from(original.beforeBlueprint));
+    const recorded = (file: string) => original.preSnapshot!.entries.find(entry => entry.path === relative(file) && entry.kind === 'file')?.sha256;
+    if (recorded(draftPath) !== beforeSha256 || recorded(canonicalPath) !== sha256Hex(Buffer.from(context.baseline, 'base64'))) return;
+    const draftInputs = new Map<string, string>();
+    const proof: PublishedQuestioningDraft = { draftPath, beforeSha256, draftInputs };
+    for (const [file, text] of Object.entries(original.additionalInputs)) {
+      if (path.dirname(file) !== path.dirname(draftPath)) continue;
+      const draftSha256 = recorded(file);
+      if (!draftSha256 || draftSha256 !== sha256Hex(Buffer.from(text))) continue;
+      draftInputs.set(file, draftSha256);
+      if (path.basename(file) !== 'change-unit.yaml') continue;
+      const candidate = asChangeUnitArtifact(YAML.parse(text));
+      if (candidate.blueprint_id !== blueprint.blueprint_id || candidate.component_id !== blueprint.component_id) continue;
+      const canonicalPath = changeUnitPath(projectRoot, candidate.blueprint_id, candidate.change_unit_id);
+      const beforeCanonicalSha256 = recorded(canonicalPath);
+      if (beforeCanonicalSha256) proof.changeUnit = { draftPath: file, draftSha256, canonicalPath, beforeCanonicalSha256, content: changeUnitPublicationContent(candidate) };
+    }
+    return proof;
+  } catch { /* Missing transaction material cannot prove draft publication. */ }
+}
 
 /** Latest completed usable original, with unavailable returns kept out of public business context. */
 export function latestUsableDesignQuestioning(runDir: string, phases: readonly string[], projectRoot: string, originalEvents?: readonly GoalRunEvent[]) {
