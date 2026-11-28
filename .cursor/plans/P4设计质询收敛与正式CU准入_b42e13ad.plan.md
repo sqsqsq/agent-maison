@@ -29,13 +29,13 @@ todos:
     status: completed
   - id: scope-and-counterexamples
     content: 统一选择与复用的事实变化口径，按承诺保留原答和开放反例，收紧证据定位及局部复核的传播。
-    status: in_progress
+    status: completed
   - id: entry-and-depth
     content: 前门区分可见取舍与局部实现，按已声明的适用事实与用户后果确定首审深度，退役重复的模板补项。
     status: completed
   - id: developer-acceptance
     content: 用银行正反例与三次开卡冻结原件核实正式消费及返修交接，独立检视后跑并行根全量，按实测登记模型调用。
-    status: in_progress
+    status: completed
   - id: joint-host
     content: 在干净发布件宿主完成开卡原请求，记录正式 CU 接受、施工出生及真实交付时刻，交回 P4 的联合验收。
     status: pending
@@ -111,3 +111,5 @@ todos:
 | 11 月 27 日 `d2797b / 5461fd` | 对 11 个同稿时刻逐项列出旧签发、本次实际选择及保留原因。重点核 i18→19、i25→26、i29→30、i40→41：只有发布派生差异时，正式消费应为零新增质询；真实 UT 或其它权威依据改变时，只核直接受影响项。对照真实 CU／业务字段改变与外部新反例。相同蓝图不授予自动通过。 |
 
 同机证据位于 `D:/1.code/maison-plan-reviews/b42e13ad/open-card-followup/`。冻结原件无法恢复到某一层时标明缺件及实际验证层，完整干净宿主仍由联合验收待办管理。
+
+本节的分支开发验收通过。生产提交 `078462a9` 在 11 月 27 日四次交接选出 0、0、0、2 项；最后两项均直接引用了实际变化的首页 UT。11 个同稿时刻的签发快照与隔离读取逐项一致。最终根全量 5,755/5,755 通过，测试包正式签发复核了 i19、i41 和 i42。P4 干净宿主联合验收仍为待办。[三日原件、独立检视和测试包](<D:/1.code/maison-plan-reviews/b42e13ad/open-card-followup/验收.md>)
