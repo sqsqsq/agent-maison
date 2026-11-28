@@ -34,7 +34,7 @@ import {
   acceptChangeUnitDecomposition,
   type ChangeUnitContentRevision,
 } from './change-unit-design-preparation';
-import { changeUnitDirectory, changeUnitPath, enumerateCanonicalChangeUnits, parseChangeUnitFeatureId, loadCanonicalChangeUnit, createChangeUnitRef, asChangeUnitArtifact, resolveChangeUnitRefFromLoaded } from './change-unit-path';
+import { changeUnitDirectory, changeUnitPath, enumerateCanonicalChangeUnitIds, enumerateCanonicalChangeUnits, parseChangeUnitFeatureId, loadCanonicalChangeUnit, createChangeUnitRef, asChangeUnitArtifact, resolveChangeUnitRefFromLoaded, type LoadedChangeUnit } from './change-unit-path';
 import { LIVENESS_BEACON_FILENAME } from './liveness-beacon';
 import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRefFromLoaded, resolveBlueprintCandidateRefFromLoaded } from './component-blueprint-path';
 import type { ChangeUnitArtifact, ChangeUnitRef } from './change-unit-model';
@@ -44,6 +44,8 @@ import { blueprintIdentityPointers, currentBlueprintIdentity } from './change-un
 import { validateChangeUnitDesign, readChangeUnitDesignOwnership } from './change-unit-design-gate';
 import { evaluateChangeUnitCarryForward } from './change-unit-reconciliation';
 import { validateChangeUnit } from './change-unit-validator';
+import { projectImplementationModules } from './diff-scope';
+import { normalizeContractFilePath } from './contract-reference-closure';
 import { publishArchitectureRevision } from './init-task-executor';
 import { clearFrameworkConfigCache, validateArchitectureDsl, catalogPath, glossaryPath, architectureMdPath, conventionsPath, componentCatalogPath, type ArchitectureDsl } from '../../config';
 import { fingerprintDiscoverySources, prepareBlueprintDesignDraft, prepareBlueprintSourceItems } from './blueprint-discovery';
@@ -72,7 +74,7 @@ import {
 import { stableStringify } from './phase-evidence-manifest';
 import { readableIssueEvidence, verifiedDeclineBasis } from './repair-candidates';
 import { isInitialDesignManifest, loadGoalRunManifestFromRun } from './goal-manifest';
-import { readOriginalDeliveryActivity } from './delivery-origin';
+import { readOriginalDeliveryActivity, type DeliveryRunFacts } from './delivery-origin';
 import { readSupersededAncestorRuns, type GoalRunEvent } from './goal-runner-phase';
 import { relFeaturesDir } from '../../config';
 import { retiredChangeUnitIds } from './component-closure-inputs';
@@ -377,6 +379,90 @@ interface QuestioningComparisonBoundary extends Pick<QuestioningOriginal, 'signe
   observedSnapshotBoundary?: QuestioningOriginal['signedBoundary'];
   observedSnapshotOptions?: QuestioningOriginal['snapshotOptions'];
   publishedRepair?: PublishedQuestioningDraft;
+  beforeDocument?: BlueprintRecord;
+  delivery?: { runs: readonly DeliveryRunFacts[]; after: string };
+}
+
+/** Scope handback can outlive the child run directory; both routes identify the same canonical CU. */
+function hasConstructionHandoff(projectRoot: string, cu: LoadedChangeUnit, delivery: NonNullable<QuestioningComparisonBoundary['delivery']>): boolean {
+  const blueprintId = String(cu.changeUnit.blueprint_id), id = String(cu.changeUnit.change_unit_id);
+  const feature = deriveChangeUnitFeatureId(blueprintId, id);
+  const relative = (file: string) => path.relative(projectRoot, file).replace(/\\/g, '/');
+  const canonical = relative(cu.canonicalPath);
+  const declaration = relative(featureFilePath(projectRoot, feature, 'feature.yaml'));
+  const hasIssued = (run: DeliveryRunFacts, phaseMatches: (phase: string) => boolean, scope: boolean): boolean => {
+    const runDir = path.resolve(projectRoot, run.manifest.report_dir);
+    return run.events.some(start => {
+      if (start.type !== 'agent_invoke_start' || !start.invoke_id || !start.ts || start.ts < delivery.after
+        || !phaseMatches(String(start.phase))) return false;
+      try {
+        const issued = readExecutionRequestOriginal(runDir, start.invoke_id, run.events);
+        if (!issued || issued.event.handoff_request?.sha256 !== issued.reference.sha256
+          || issued.request.context.feature !== run.manifest.feature || issued.request.context.runId !== run.manifest.run_id
+          || issued.request.write_boundary?.executionRole !== 'author'
+          || (!scope && issued.request.purpose === 'testing-preparation')) return false;
+        const pre = issued.request.pre_snapshot;
+        if (!pre || pre.failureReason || !pre.entries.some(entry =>
+          entry.path === canonical && entry.kind === 'file' && 'sha256:' + entry.sha256 === cu.artifactSha256)) return false;
+        if (!scope) return true;
+        const end = run.events.find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
+        return !!end && handbackInvocationCompleted(runDir, issued, end, run.events) && run.events.some(event =>
+          event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id && event.phase === start.phase
+          && 'pre_snapshot' in event && event.pre_snapshot === pre.sha256 && 'owned' in event
+          && asRecords(event.owned).some(row => row.path === declaration && /^[a-f0-9]{64}$/.test(String(row.post_sha256))));
+      } catch { return false; }
+    });
+  };
+  return delivery.runs.some(run => isInitialDesignManifest(run.manifest) && run.manifest.feature === blueprintId
+    && hasIssued(run, phase => phase === 'initial-design-scope-' + id, true))
+    || delivery.runs.some(run => !isInitialDesignManifest(run.manifest) && run.manifest.feature === feature
+      && run.manifest.delivery_origin?.feature === blueprintId
+      && delivery.runs.some(parent => isInitialDesignManifest(parent.manifest) && parent.manifest.feature === blueprintId
+        && parent.manifest.run_id === run.manifest.delivery_origin?.run_id)
+      && hasIssued(run, phase => phase === 'work-unit-author' || phase === 'coding', false));
+}
+
+/** The signed parent input and completed handoff delegate these exact product paths to the CU. */
+function delegatedQuestioningOutputs(projectRoot: string, blueprint: BlueprintRecord, canonicalPath: string,
+  readUnchanged: (file: string) => Buffer | undefined, delivery: NonNullable<QuestioningComparisonBoundary['delivery']>): Set<string> {
+  const files = new Set<string>();
+  const blueprintId = String(blueprint.blueprint_id);
+  try {
+    const bytes = readUnchanged(canonicalPath);
+    if (!bytes) return files;
+    const signed = asRecord(YAML.parse(bytes.toString('utf8')));
+    if (!signed || asRecord(asRecord(signed.review_summary)?.admission)?.status !== 'pass'
+      || stableStringify(blueprintAuthorContent(signed)) !== stableStringify(blueprintAuthorContent(blueprint))
+      || signed.revision !== blueprint.revision) return files;
+    const original = { canonicalPath, blueprint: signed, bytes, artifactSha256: 'sha256:' + sha256Hex(bytes) };
+    const retired = retiredChangeUnitIds(projectRoot, blueprintId);
+    const modules = projectImplementationModules(projectRoot);
+    for (const id of enumerateCanonicalChangeUnitIds(projectRoot, blueprintId)) {
+      if (retired.has(id)) continue;
+      try {
+        const canonicalCu = changeUnitPath(projectRoot, blueprintId, id);
+        const signedCu = readUnchanged(canonicalCu);
+        if (!signedCu) continue;
+        const cu = loadCanonicalChangeUnit(projectRoot, blueprintId, id, signedCu);
+        if (!hasConstructionHandoff(projectRoot, cu, delivery)) continue;
+        const { changeUnit } = cu;
+        if (validateChangeUnit(changeUnit, { projectRoot, canonicalPath: canonicalCu }).some(issue => issue.severity === 'BLOCKER')) continue;
+        resolveComponentBlueprintRefFromLoaded(original, changeUnit.component_blueprint_ref);
+        for (const touch of asChangeUnitArtifact(changeUnit).touches) {
+          const { ref, target } = resolveComponentBlueprintRefFromLoaded(original, touch.design_ref);
+          if (ref.target.kind !== 'node' || ref.target.view_id !== 'development') continue;
+          const module = asRecord(target)?.module;
+          for (const write of touch.write_refs) {
+            const source = write.replace(/^planned:/, '').split('#')[0];
+            if (source.includes(':')) continue;
+            const relative = normalizeContractFilePath(projectRoot, source, 'CU write ref');
+            if (modules.some(item => item.name === module && relative.startsWith(item.package_path + '/'))) files.add(relative);
+          }
+        }
+      } catch { /* A CU without a comparable canonical identity cannot delegate source evidence. */ }
+    }
+  } catch { /* Without an admitted signed parent, keep ordinary questioning. */ }
+  return files;
 }
 
 export function questioningDependencyChanges(projectRoot: string, blueprint: BlueprintRecord, pre?: ReturnType<typeof capturePhaseInvocationSnapshot>, ownPath?: string,
@@ -391,8 +477,10 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
       ? [[path.resolve(projectRoot, ref.path), ref.sha256] as const] : [];
   }));
   const unique = (files: Iterable<string>) => [...new Map([...files].map(file => [questioningEvidencePath(file), file])).values()];
-  const files = unique([...blueprintSourceRefFiles(projectRoot, blueprintAuthorContent(blueprint), true, ref => !isQuestioningPointer(projectRoot, blueprint, filePaths, ref)),
-    ...questioningKnowledgeFiles(projectRoot, blueprint), ...questioningItemFiles(projectRoot, blueprint, previous, filePaths),
+  const authorContent = blueprintAuthorContent(blueprint);
+  const authorSources = blueprintSourceRefFiles(projectRoot, authorContent, true, ref => !isQuestioningPointer(projectRoot, blueprint, filePaths, ref));
+  const knowledge = questioningKnowledgeFiles(projectRoot, blueprint);
+  const files = unique([...authorSources, ...knowledge, ...questioningItemFiles(projectRoot, blueprint, previous, filePaths),
     ...(!observed ? originals.keys() : [])]);
   const relativePath = (file: string) => path.relative(projectRoot, file).replace(/\\/g, '/');
   const unknown = (file: string, detail: string, recorded = false): QuestioningDependency => ({
@@ -448,6 +536,35 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
   const review = path.join(path.dirname(canonicalPath), 'component-blueprint.review.md');
   const publishedRepair = boundary?.publishedRepair;
   const publishedCu = publishedRepair?.changeUnit;
+  let delegated: Set<string> | undefined;
+  const isDelegatedOutput = (relative: string): boolean => {
+    if (boundary?.signedBoundary?.executionRole !== 'verifier' || boundary.signedBoundary.feature !== blueprint.blueprint_id
+      || !ownPath || path.relative(canonicalPath, ownPath) || !boundary.beforeDocument || !boundary.delivery || !previous) return false;
+    if (!delegated) {
+      const authorityRefs = (value: unknown): string[] => {
+        if (Array.isArray(value)) return value.flatMap(authorityRefs);
+        return Object.entries(asRecord(value) ?? {}).flatMap(([key, child]) =>
+          key === 'current_state_ref' ? [String(child)]
+            : ['source_refs', 'evidence_refs', 'design_basis_refs'].includes(key) ? asStrings(child) : authorityRefs(child));
+      };
+      const authorities = [...authorSources, ...knowledge, ...authorityRefs(authorContent)
+        .map(ref => questioningEvidencePath(ref, projectRoot)).filter((file): file is string => !!file)]
+        .map(file => path.relative(projectRoot, file).replace(/\\/g, '/'));
+      const readUnchanged = (file: string): Buffer | undefined => {
+        const name = relativePath(file);
+        const original = beforeFiles.get(name), current = afterFiles?.get(name);
+        if (original?.kind !== 'file' || afterFiles && (current?.kind !== 'file' || current.sha256 !== original.sha256)) return;
+        const bytes = readPhaseRecoveryFile(projectRoot, file).bytes;
+        if (bytes && sha256Hex(bytes) === original.sha256) return bytes;
+      };
+      delegated = stableStringify(blueprintAuthorContent(boundary.beforeDocument)) === stableStringify(authorContent)
+        ? delegatedQuestioningOutputs(projectRoot, blueprint, canonicalPath, readUnchanged, boundary.delivery) : new Set();
+      for (const file of delegated) {
+        if (authorities.some(source => file === source || file.startsWith(source + '/'))) delegated.delete(file);
+      }
+    }
+    return delegated.has(relative);
+  };
   const canonicalSha = (): string | undefined => {
     if (afterFiles) {
       const canonical = afterFiles.get(relativePath(canonicalPath));
@@ -537,6 +654,7 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
     if (publishedRepair && file === publishedRepair.draftPath && old?.kind === 'file' && old.sha256 === publishedRepair.beforeSha256
       && kind === 'file' && sha256 && sha256 === canonicalSha()) return [];
     if (publishedCu?.canonicalPath === file && publishedCuCurrent?.().aligned) return [];
+    if (kind === 'file' && (old ? old.kind === 'file' : wasCovered) && isDelegatedOutput(relative)) return [];
     if (!expected && !exists && directories.has(file)) return [];
     if (!expected && !exists) return wasCovered ? []
       : [unknown(file, '引用未记录为文件，历史采集范围或源位置不能证明。')];
@@ -548,7 +666,7 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
 }
 
 export function assessDesignQuestioning(input: QuestioningComparisonBoundary & {
-  projectRoot: string; blueprintPath: string; blueprint: BlueprintRecord; beforeDocument?: BlueprintRecord;
+  projectRoot: string; blueprintPath: string; blueprint: BlueprintRecord;
   beforeSnapshot?: PhaseInvocationSnapshot; previous?: BlueprintRecord; observedSnapshot?: PhaseInvocationSnapshot;
   revisitFindings?: boolean;
 }): { selectedScopes: string[]; affectedDependencies: QuestioningDependency[] } {

@@ -16,6 +16,7 @@ import { applyIndependentQuestioningOutput, hasQuestioningCounterexampleSourceRu
 import { capturePhaseInvocationSnapshot, diffPhaseInvocationSnapshots } from '../../scripts/utils/phase-write-boundary';
 import { tryAcquireLock, releaseLock, FEATURE_LOCK_NAME } from '../../scripts/utils/goal-run-lock';
 import { fixture as projectionFixture } from './blueprint-skill-projection.unit.test';
+import type { DeliveryRunFacts } from '../../scripts/utils/delivery-origin';
 
 type Json = Record<string, any>;
 const FRAMEWORK = path.resolve(__dirname, '../../..'), BLUEPRINT = 'ledger-app-blueprint';
@@ -238,6 +239,59 @@ const cases: Array<{ name: string; run: () => Promise<void> }> = [
         assert.deepEqual(assessDesignQuestioning({ ...args, beforeSnapshot: initial, observedSnapshot: initial }).selectedScopes, []);
         assert.equal(enumerations, 1, 'use supplied snapshot without enumerating again');
       } finally { native.readdirSync = readdir; }
+    }),
+  },
+  {
+    name: 'daily design Q: only handed-off CU outputs leave the parent source comparison',
+    run: () => withProject((root, fixture) => {
+      const source = 'src/ledger/Feature.ts', other = 'src/ledger/Other.ts', authority = 'src/ledger/Schema.yaml';
+      for (const file of [source, other, authority]) fs.writeFileSync(path.join(root, file), 'before');
+      const blueprint = read(fixture.blueprintFile);
+      blueprint.discovery.inputs.knowledge_assets = [...blueprint.discovery.inputs.knowledge_assets ?? [], authority];
+      blueprint.app_lens.module_boundaries.evidence_refs = ['src/ledger/ClosureFixture.ts'];
+      write(fixture.blueprintFile, blueprint);
+      const unit = read(fixture.cuFile);
+      unit.touches[0].write_refs = ['planned:' + source, 'planned:' + authority];
+      write(fixture.cuFile, unit);
+      fixture.bind();
+      const active = read(fixture.cuFile);
+      write(path.join(path.dirname(path.dirname(fixture.cuFile)), 'other-cu/change-unit.yaml'),
+        { ...active, change_unit_id: 'other-cu', touches: [{ ...active.touches[0], write_refs: ['planned:' + other] }] });
+      const previous = structuredClone(blueprint.review_summary.questioning);
+      const development = previous.items.find((item: Json) => item.scope_ref === 'view:development');
+      development.evidence_refs.push(source + '#L1', other + '#L1');
+      const signedBoundary = { projectRoot: root, protectedRoots: fs.readdirSync(root), executionRole: 'verifier' as const,
+        feature: BLUEPRINT, phaseOrder: [], domains: [], diagnostics: [], immutableInputPaths: [], unresolvedSourcePhases: [] };
+      const beforeSnapshot = capturePhaseInvocationSnapshot(signedBoundary);
+      const ts = '2026-11-27T15:13:08.405Z', phase = 'initial-design-scope-ledger-refresh', invokeId = phase + '-i1';
+      const reportDir = path.relative(root, path.join(path.dirname(path.dirname(fixture.blueprintFile)), 'goal-runs', 'original'));
+      const runDir = path.join(root, reportDir);
+      const request = JSON.stringify({ context: { phase, feature: BLUEPRINT, runId: 'original' }, invoke_id: invokeId,
+        pre_snapshot: beforeSnapshot, write_boundary: { ...signedBoundary, executionRole: 'author' } });
+      fs.mkdirSync(runDir, { recursive: true });
+      fs.writeFileSync(path.join(runDir, 'request.json'), request);
+      const declaration = path.relative(root, featureFilePath(root, FEATURE, 'feature.yaml')).replace(/\\/g, '/');
+      const run = { manifest: { feature: BLUEPRINT, run_id: 'original', report_dir: reportDir, initial_design: {} }, events: [
+        { type: 'agent_invoke_start', ts, phase, invoke_id: invokeId, handoff_request: { path: 'request.json', sha256: createHash('sha256').update(request).digest('hex') } },
+        { type: 'agent_invoke_end', phase, invoke_id: invokeId, status: 'passed', completion_observed: true, exit_code: 0 },
+        { type: 'phase_write_observed', phase, invoke_id: invokeId, pre_snapshot: beforeSnapshot.sha256,
+          owned: [{ path: declaration, post_sha256: 'a'.repeat(64) }] },
+      ] } as DeliveryRunFacts;
+      const input = { projectRoot: root, blueprintPath: fixture.blueprintFile, blueprint, beforeDocument: blueprint,
+        previous, beforeSnapshot, signedBoundary, revisitFindings: false, delivery: { runs: [run], after: ts } };
+      fs.writeFileSync(path.join(root, source), 'built');
+      assert.deepEqual(assessDesignQuestioning(input).selectedScopes, []);
+      assert.deepEqual(assessDesignQuestioning({ ...input, observedSnapshot: capturePhaseInvocationSnapshot(signedBoundary) }).selectedScopes, []);
+      assert(assessDesignQuestioning({ ...input, delivery: undefined }).selectedScopes.includes('view:development'));
+      fs.writeFileSync(path.join(root, other), 'external change');
+      fs.writeFileSync(path.join(root, authority), 'changed authority');
+      const changed = assessDesignQuestioning(input);
+      const affected = changed.affectedDependencies.map(item => item.path);
+      assert(affected.includes(path.join(root, other)));
+      assert(affected.includes(path.join(root, authority)));
+      assert(!affected.includes(path.join(root, source)));
+      write(fixture.cuFile, { ...active, revision: Number(active.revision) + 1 });
+      assert(assessDesignQuestioning(input).affectedDependencies.some(item => item.path === path.join(root, source)));
     }),
   },
   {
