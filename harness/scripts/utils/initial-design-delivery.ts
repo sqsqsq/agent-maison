@@ -319,11 +319,9 @@ export function readInitialDesignQuestioning(projectRoot: string, manifest: Init
       && event.phase === 'initial-design-author' && String(event.ts) > String(answer?.ts)
       && invocationCompleted({ ...event, exitCode: event.exit_code })));
   })();
-  const before = usable?.run.events.find(event => event.type === 'agent_invoke_start' && event.invoke_id === original?.invokeId);
   const assessment = original && previous ? assessDesignQuestioning({ projectRoot, blueprintPath, blueprint,
     beforeDocument: original.beforeDocument, beforeSnapshot: original.preSnapshot, previous, signedBoundary: original.signedBoundary,
-    snapshotOptions: original.snapshotOptions, revisitFindings: !denied, publishedRepair: usable?.publishedRepair,
-    ...(before?.ts ? { delivery: { runs, after: before.ts } } : {}) }) : undefined;
+    snapshotOptions: original.snapshotOptions, revisitFindings: !denied, publishedRepair: usable?.publishedRepair }) : undefined;
   const selectedScopes = assessment?.selectedScopes;
   // A denial is feedback to the author. Ask again once that author has changed its basis.
   const questioningCurrent = !!previous && (denied && !authorReturned || selectedScopes?.length === 0);

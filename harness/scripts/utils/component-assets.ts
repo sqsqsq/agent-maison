@@ -206,7 +206,10 @@ export function selectionShapeIssues(value: unknown): string[] {
 export function readComponentIndex(root: string): ComponentIndex | null {
   const file = componentIndexPath(root);
   if (!fs.existsSync(file)) return null;
-  const value: unknown = YAML.parse(fs.readFileSync(file, 'utf8'));
+  return parseComponentIndex(root, YAML.parse(fs.readFileSync(file, 'utf8')));
+}
+
+export function parseComponentIndex(root: string, value: unknown): ComponentIndex {
   if (!isRecord(value) || value.schema_version !== '1.0' || !Array.isArray(value.components)
     || Object.keys(value).some(k => !['schema_version', 'components'].includes(k))) throw new Error('component-index 根结构非法');
   const catalog = loadCatalog(root);

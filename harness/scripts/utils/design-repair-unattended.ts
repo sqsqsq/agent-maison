@@ -20,7 +20,7 @@ import * as YAML from 'yaml';
 import { deriveBlueprintAdmission, currentBlueprintSliceId } from './blueprint-admission';
 import { evaluateCompletionProgress, compareRelatedInputSnapshots, type CompletionEvaluation, type ArtifactSnapshot } from './goal-failure-classifier';
 import { reconcileP1DerivedResults } from './blueprint-reconciliation';
-import { describeQuestioningChanges, renderQuestioningResultInstructions, independentQuestioningBlockers, applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, normalizeQuestioningItems, readSignedQuestioningScopes, hasQuestioningCounterexampleSourceRule, requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning, questioningEvidencePath } from './blueprint-questioning';
+import { describeQuestioningChanges, renderQuestioningResultInstructions, independentQuestioningBlockers, applyIndependentQuestioningOutput, parseIndependentQuestioningOutput, mergeIndependentQuestioningResult, normalizeQuestioningItems, readSignedQuestioningScopes, hasQuestioningCounterexampleSourceRule, requiredQuestioningScopes, selectQuestioningScopes, validateBlueprintQuestioning, questioningEvidencePath, type QuestioningDependencyChange } from './blueprint-questioning';
 import { resolveBlueprintReaderSource } from './blueprint-reader-guide';
 import { resolveBlueprintTarget } from './blueprint-addressing';
 import { blueprintDeclaredAcceptanceIssues, blueprintCandidateAuthorityFindings, blueprintSourceRefFiles, deriveBlueprintCandidateSkillInput, checkAuthoritativeContentAligned,
@@ -34,7 +34,7 @@ import {
   acceptChangeUnitDecomposition,
   type ChangeUnitContentRevision,
 } from './change-unit-design-preparation';
-import { changeUnitDirectory, changeUnitPath, enumerateCanonicalChangeUnitIds, enumerateCanonicalChangeUnits, parseChangeUnitFeatureId, loadCanonicalChangeUnit, createChangeUnitRef, asChangeUnitArtifact, resolveChangeUnitRefFromLoaded, type LoadedChangeUnit } from './change-unit-path';
+import { changeUnitDirectory, changeUnitPath, enumerateCanonicalChangeUnitIds, enumerateCanonicalChangeUnits, parseChangeUnitFeatureId, loadCanonicalChangeUnit, createChangeUnitRef, asChangeUnitArtifact, resolveChangeUnitRefFromLoaded } from './change-unit-path';
 import { LIVENESS_BEACON_FILENAME } from './liveness-beacon';
 import { componentBlueprintPath, loadCanonicalBlueprint, resolveComponentBlueprintRefFromLoaded, resolveBlueprintCandidateRefFromLoaded } from './component-blueprint-path';
 import type { ChangeUnitArtifact, ChangeUnitRef } from './change-unit-model';
@@ -46,8 +46,9 @@ import { evaluateChangeUnitCarryForward } from './change-unit-reconciliation';
 import { validateChangeUnit } from './change-unit-validator';
 import { projectImplementationModules } from './diff-scope';
 import { normalizeContractFilePath } from './contract-reference-closure';
+import { isComponentId, parseComponentIndex, scanComponentIndex, serializeComponentIndex, type ComponentAsset } from './component-assets';
 import { publishArchitectureRevision } from './init-task-executor';
-import { clearFrameworkConfigCache, validateArchitectureDsl, catalogPath, glossaryPath, architectureMdPath, conventionsPath, componentCatalogPath, type ArchitectureDsl } from '../../config';
+import { clearFrameworkConfigCache, validateArchitectureDsl, catalogPath, glossaryPath, architectureMdPath, conventionsPath, componentCatalogPath, componentIndexPath, type ArchitectureDsl } from '../../config';
 import { fingerprintDiscoverySources, prepareBlueprintDesignDraft, prepareBlueprintSourceItems } from './blueprint-discovery';
 import { currentScopeItems } from './blueprint-requirement-traceability';
 import { headlessLedgerPath } from './headless-assumptions';
@@ -74,7 +75,7 @@ import {
 import { stableStringify } from './phase-evidence-manifest';
 import { readableIssueEvidence, verifiedDeclineBasis } from './repair-candidates';
 import { isInitialDesignManifest, loadGoalRunManifestFromRun } from './goal-manifest';
-import { readOriginalDeliveryActivity, type DeliveryRunFacts } from './delivery-origin';
+import { readOriginalDeliveryActivity } from './delivery-origin';
 import { readSupersededAncestorRuns, type GoalRunEvent } from './goal-runner-phase';
 import { relFeaturesDir } from '../../config';
 import { retiredChangeUnitIds } from './component-closure-inputs';
@@ -309,7 +310,9 @@ function questioningKnowledgeFiles(projectRoot: string, blueprint: BlueprintReco
 }
 
 /** Existing Q input hashes identify affected files; missing originals are explicit, never guessed as unchanged. */
-export type QuestioningDependency = Omit<ResolutionDependency, 'exists'> & { exists?: boolean; recorded?: true; state?: 'unknown'; detail?: string };
+export type QuestioningDependency = Omit<ResolutionDependency, 'exists'> & {
+  exists?: boolean; recorded?: true; state?: 'unknown'; detail?: string; references?: readonly string[]; authorOnly?: true;
+};
 function questioningProcessArtifact(relative: string): string | undefined {
   return /(?:^|\/)goal-runs\/[^/]+\/phases\/(?:initial-design-questioning|design-repair-questioning)\/[^/]+\/(questioning-output\.json|checker-result\.json|blueprint-before\.yaml)$/.exec(relative)?.[1]
     ?? (/(?:^|\/)goal-runs\/[^/]+\/design-repair\/checker-result\.json$/.test(relative) ? 'checker-result.json' : undefined);
@@ -380,51 +383,11 @@ interface QuestioningComparisonBoundary extends Pick<QuestioningOriginal, 'signe
   observedSnapshotOptions?: QuestioningOriginal['snapshotOptions'];
   publishedRepair?: PublishedQuestioningDraft;
   beforeDocument?: BlueprintRecord;
-  delivery?: { runs: readonly DeliveryRunFacts[]; after: string };
 }
 
-/** Scope handback can outlive the child run directory; both routes identify the same canonical CU. */
-function hasConstructionHandoff(projectRoot: string, cu: LoadedChangeUnit, delivery: NonNullable<QuestioningComparisonBoundary['delivery']>): boolean {
-  const blueprintId = String(cu.changeUnit.blueprint_id), id = String(cu.changeUnit.change_unit_id);
-  const feature = deriveChangeUnitFeatureId(blueprintId, id);
-  const relative = (file: string) => path.relative(projectRoot, file).replace(/\\/g, '/');
-  const canonical = relative(cu.canonicalPath);
-  const declaration = relative(featureFilePath(projectRoot, feature, 'feature.yaml'));
-  const hasIssued = (run: DeliveryRunFacts, phaseMatches: (phase: string) => boolean, scope: boolean): boolean => {
-    const runDir = path.resolve(projectRoot, run.manifest.report_dir);
-    return run.events.some(start => {
-      if (start.type !== 'agent_invoke_start' || !start.invoke_id || !start.ts || start.ts < delivery.after
-        || !phaseMatches(String(start.phase))) return false;
-      try {
-        const issued = readExecutionRequestOriginal(runDir, start.invoke_id, run.events);
-        if (!issued || issued.event.handoff_request?.sha256 !== issued.reference.sha256
-          || issued.request.context.feature !== run.manifest.feature || issued.request.context.runId !== run.manifest.run_id
-          || issued.request.write_boundary?.executionRole !== 'author'
-          || (!scope && issued.request.purpose === 'testing-preparation')) return false;
-        const pre = issued.request.pre_snapshot;
-        if (!pre || pre.failureReason || !pre.entries.some(entry =>
-          entry.path === canonical && entry.kind === 'file' && 'sha256:' + entry.sha256 === cu.artifactSha256)) return false;
-        if (!scope) return true;
-        const end = run.events.find(event => event.type === 'agent_invoke_end' && event.invoke_id === start.invoke_id);
-        return !!end && handbackInvocationCompleted(runDir, issued, end, run.events) && run.events.some(event =>
-          event.type === 'phase_write_observed' && event.invoke_id === start.invoke_id && event.phase === start.phase
-          && 'pre_snapshot' in event && event.pre_snapshot === pre.sha256 && 'owned' in event
-          && asRecords(event.owned).some(row => row.path === declaration && /^[a-f0-9]{64}$/.test(String(row.post_sha256))));
-      } catch { return false; }
-    });
-  };
-  return delivery.runs.some(run => isInitialDesignManifest(run.manifest) && run.manifest.feature === blueprintId
-    && hasIssued(run, phase => phase === 'initial-design-scope-' + id, true))
-    || delivery.runs.some(run => !isInitialDesignManifest(run.manifest) && run.manifest.feature === feature
-      && run.manifest.delivery_origin?.feature === blueprintId
-      && delivery.runs.some(parent => isInitialDesignManifest(parent.manifest) && parent.manifest.feature === blueprintId
-        && parent.manifest.run_id === run.manifest.delivery_origin?.run_id)
-      && hasIssued(run, phase => phase === 'work-unit-author' || phase === 'coding', false));
-}
-
-/** The signed parent input and completed handoff delegate these exact product paths to the CU. */
+/** An admitted and unchanged canonical CU already owns its planned product outputs. */
 function delegatedQuestioningOutputs(projectRoot: string, blueprint: BlueprintRecord, canonicalPath: string,
-  readUnchanged: (file: string) => Buffer | undefined, delivery: NonNullable<QuestioningComparisonBoundary['delivery']>): Set<string> {
+  readUnchanged: (file: string) => Buffer | undefined): Set<string> {
   const files = new Set<string>();
   const blueprintId = String(blueprint.blueprint_id);
   try {
@@ -443,9 +406,7 @@ function delegatedQuestioningOutputs(projectRoot: string, blueprint: BlueprintRe
         const canonicalCu = changeUnitPath(projectRoot, blueprintId, id);
         const signedCu = readUnchanged(canonicalCu);
         if (!signedCu) continue;
-        const cu = loadCanonicalChangeUnit(projectRoot, blueprintId, id, signedCu);
-        if (!hasConstructionHandoff(projectRoot, cu, delivery)) continue;
-        const { changeUnit } = cu;
+        const { changeUnit } = loadCanonicalChangeUnit(projectRoot, blueprintId, id, signedCu);
         if (validateChangeUnit(changeUnit, { projectRoot, canonicalPath: canonicalCu }).some(issue => issue.severity === 'BLOCKER')) continue;
         resolveComponentBlueprintRefFromLoaded(original, changeUnit.component_blueprint_ref);
         for (const touch of asChangeUnitArtifact(changeUnit).touches) {
@@ -453,7 +414,8 @@ function delegatedQuestioningOutputs(projectRoot: string, blueprint: BlueprintRe
           if (ref.target.kind !== 'node' || ref.target.view_id !== 'development') continue;
           const module = asRecord(target)?.module;
           for (const write of touch.write_refs) {
-            const source = write.replace(/^planned:/, '').split('#')[0];
+            if (!write.startsWith('planned:')) continue;
+            const source = write.slice('planned:'.length).split('#')[0];
             if (source.includes(':')) continue;
             const relative = normalizeContractFilePath(projectRoot, source, 'CU write ref');
             if (modules.some(item => item.name === module && relative.startsWith(item.package_path + '/'))) files.add(relative);
@@ -465,13 +427,61 @@ function delegatedQuestioningOutputs(projectRoot: string, blueprint: BlueprintRe
   return files;
 }
 
+function changedComponentIndexReferences(projectRoot: string, file: string, currentSha: string, originalSha: string,
+  refs: readonly string[], originalSourceHash: (file: string) => string | undefined,
+  readUnchanged: (file: string) => Buffer | undefined,
+  isDelegatedSource: (file: string, fingerprint: string) => boolean): readonly string[] {
+  try {
+    const bytes = readPhaseRecoveryFile(projectRoot, file).bytes;
+    if (!bytes || sha256Hex(bytes) !== currentSha) return refs;
+    const index = parseComponentIndex(projectRoot, YAML.parse(bytes.toString('utf8')));
+    // A regenerated inventory often changed only because its items record whole-source hashes.
+    // Match the reconstructed bytes to the signed digest before using their other fields.
+    const candidate = { ...index, components: index.components.map(asset => ({
+      ...asset, source_fingerprint: 'sha256:' + originalSourceHash(asset.file),
+    })) };
+    const inventory = ({ source_fingerprint: _, ...asset }: ComponentAsset) => asset;
+    const exactOriginal = sha256Hex(Buffer.from(serializeComponentIndex(candidate))) === originalSha ? candidate.components : undefined;
+    let sources: ComponentAsset[] | undefined;
+    const fromUnchangedSources = (): ComponentAsset[] => {
+      if (!sources) {
+        const read = (relative: string): string | null => {
+          try { return readUnchanged(path.resolve(projectRoot, relative))?.toString('utf8') ?? null; }
+          catch { return null; }
+        };
+        sources = read('framework.config.json') !== null && read(path.relative(projectRoot, catalogPath(projectRoot))) !== null
+          ? scanComponentIndex(projectRoot, read).index.components : [];
+      }
+      return sources;
+    };
+    const target = (assets: readonly ComponentAsset[], id: string): ComponentAsset | undefined => {
+      const matches = assets.filter(asset => asset.id === id || asset.file + '#' + asset.symbol === id);
+      return matches.length === 1 ? matches[0] : undefined;
+    };
+    return refs.filter(ref => {
+      const separator = ref.indexOf('#');
+      if (separator < 0) return true;
+      const id = ref.slice(separator + 1);
+      if (id === 'components') return !exactOriginal; // Exact reconstruction proves identical inventory shape.
+      if (!isComponentId(id)) return true;
+      const current = target(index.components, id);
+      const before = current && target(exactOriginal ?? fromUnchangedSources(), id);
+      if (!before || !current) return true;
+      if (stableStringify(before) === stableStringify(current)) return false;
+      return !exactOriginal || !isDelegatedSource(current.file, current.source_fingerprint)
+        || stableStringify(inventory(before)) !== stableStringify(inventory(current));
+    });
+  } catch { return refs; }
+}
+
 export function questioningDependencyChanges(projectRoot: string, blueprint: BlueprintRecord, pre?: ReturnType<typeof capturePhaseInvocationSnapshot>, ownPath?: string,
   observed?: ReturnType<typeof capturePhaseInvocationSnapshot>, previous?: BlueprintRecord,
   boundary?: QuestioningComparisonBoundary): QuestioningDependency[] {
   const beforeFiles = new Map((pre?.failureReason ? [] : pre?.entries ?? []).map(entry => [entry.path, entry]));
   const afterFiles = observed && new Map(observed.entries.map(entry => [entry.path, entry]));
   const filePaths = new Set([...beforeFiles.keys(), ...(afterFiles?.keys() ?? [])]);
-  const originals = new Map(asRecords(previous?.items).flatMap(item => {
+  const items = asRecords(previous?.items);
+  const originals = new Map(items.flatMap(item => {
     const ref = asRecord(item.review_original);
     return typeof ref?.path === 'string' && typeof ref.sha256 === 'string'
       ? [[path.resolve(projectRoot, ref.path), ref.sha256] as const] : [];
@@ -536,34 +546,49 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
   const review = path.join(path.dirname(canonicalPath), 'component-blueprint.review.md');
   const publishedRepair = boundary?.publishedRepair;
   const publishedCu = publishedRepair?.changeUnit;
+  // Code provenance on a discovery fact records the pre-change state. Other occurrences
+  // of the same path still carry their own authority, including unchanged-view evidence.
+  const discovery = asRecord(authorContent.discovery);
+  const authorityContent = { ...authorContent, discovery: { ...discovery,
+    facts: asRecords(discovery?.facts).map(fact => {
+      const { provenance, ...content } = fact;
+      return asRecord(provenance)?.source_kind === 'code' ? content : fact;
+    }),
+  } };
+  const authorRefs = (value: unknown): string[] => {
+    if (Array.isArray(value)) return value.flatMap(authorRefs);
+    return Object.entries(asRecord(value) ?? {}).flatMap(([key, child]) =>
+      ['source_ref', 'current_state_ref'].includes(key) && typeof child === 'string' ? [child]
+        : ['source_refs', 'evidence_refs', 'design_basis_refs', 'verification_refs'].includes(key) ? asStrings(child)
+          : authorRefs(child));
+  };
+  const entryAt = (entries: typeof beforeFiles, name: string) => {
+    const exact = entries.get(name);
+    if (exact || process.platform !== 'win32') return exact;
+    const matches = [...entries.values()].filter(entry => entry.path.toLowerCase() === name.toLowerCase());
+    return matches.length === 1 ? matches[0] : undefined;
+  };
+  const readUnchanged = (file: string): Buffer | undefined => {
+    const name = relativePath(file);
+    const original = entryAt(beforeFiles, name), current = afterFiles && entryAt(afterFiles, name);
+    if (original?.kind !== 'file' || afterFiles && (current?.kind !== 'file' || current.sha256 !== original.sha256)) return;
+    const bytes = readPhaseRecoveryFile(projectRoot, file).bytes;
+    if (bytes && sha256Hex(bytes) === original.sha256) return bytes;
+  };
   let delegated: Set<string> | undefined;
-  const isDelegatedOutput = (relative: string): boolean => {
+  let authorities: Array<{ ref: string; relative: string }> | undefined;
+  const delegatedAuthorities = (relative: string): string[] | undefined => {
     if (boundary?.signedBoundary?.executionRole !== 'verifier' || boundary.signedBoundary.feature !== blueprint.blueprint_id
-      || !ownPath || path.relative(canonicalPath, ownPath) || !boundary.beforeDocument || !boundary.delivery || !previous) return false;
-    if (!delegated) {
-      const authorityRefs = (value: unknown): string[] => {
-        if (Array.isArray(value)) return value.flatMap(authorityRefs);
-        return Object.entries(asRecord(value) ?? {}).flatMap(([key, child]) =>
-          key === 'current_state_ref' ? [String(child)]
-            : ['source_refs', 'evidence_refs', 'design_basis_refs'].includes(key) ? asStrings(child) : authorityRefs(child));
-      };
-      const authorities = [...authorSources, ...knowledge, ...authorityRefs(authorContent)
-        .map(ref => questioningEvidencePath(ref, projectRoot)).filter((file): file is string => !!file)]
-        .map(file => path.relative(projectRoot, file).replace(/\\/g, '/'));
-      const readUnchanged = (file: string): Buffer | undefined => {
-        const name = relativePath(file);
-        const original = beforeFiles.get(name), current = afterFiles?.get(name);
-        if (original?.kind !== 'file' || afterFiles && (current?.kind !== 'file' || current.sha256 !== original.sha256)) return;
-        const bytes = readPhaseRecoveryFile(projectRoot, file).bytes;
-        if (bytes && sha256Hex(bytes) === original.sha256) return bytes;
-      };
-      delegated = stableStringify(blueprintAuthorContent(boundary.beforeDocument)) === stableStringify(authorContent)
-        ? delegatedQuestioningOutputs(projectRoot, blueprint, canonicalPath, readUnchanged, boundary.delivery) : new Set();
-      for (const file of delegated) {
-        if (authorities.some(source => file === source || file.startsWith(source + '/'))) delegated.delete(file);
-      }
-    }
-    return delegated.has(relative);
+      || !ownPath || path.relative(canonicalPath, ownPath) || !boundary.beforeDocument || !previous) return;
+    delegated ??= stableStringify(blueprintAuthorContent(boundary.beforeDocument)) === stableStringify(authorContent)
+      ? delegatedQuestioningOutputs(projectRoot, blueprint, canonicalPath, readUnchanged) : new Set();
+    if (!delegated.has(relative)) return;
+    authorities ??= [...new Set([...knowledge, ...authorRefs(authorityContent)])].flatMap(ref => {
+      const file = questioningEvidencePath(ref, projectRoot);
+      return file ? [{ ref, relative: relativePath(file) }] : [];
+    });
+    return authorities.filter(source => relative === source.relative || relative.startsWith(source.relative + '/'))
+      .map(source => source.ref);
   };
   const canonicalSha = (): string | undefined => {
     if (afterFiles) {
@@ -654,7 +679,28 @@ export function questioningDependencyChanges(projectRoot: string, blueprint: Blu
     if (publishedRepair && file === publishedRepair.draftPath && old?.kind === 'file' && old.sha256 === publishedRepair.beforeSha256
       && kind === 'file' && sha256 && sha256 === canonicalSha()) return [];
     if (publishedCu?.canonicalPath === file && publishedCuCurrent?.().aligned) return [];
-    if (kind === 'file' && (old ? old.kind === 'file' : wasCovered) && isDelegatedOutput(relative)) return [];
+    if (file === componentIndexPath(projectRoot) && old?.kind === 'file' && kind === 'file' && sha256) {
+      const refs = [...new Set([...authorRefs(authorContent), ...knowledge, ...items.flatMap(item => authorRefs(item))]
+        .filter(ref => questioningEvidencePath(ref, projectRoot) === questioningEvidencePath(file)))];
+      if (refs.length) {
+        const references = changedComponentIndexReferences(projectRoot, file, sha256, old.sha256, refs, source => {
+          const entry = entryAt(beforeFiles, source);
+          return entry?.kind === 'file' ? entry.sha256 : undefined;
+        }, readUnchanged, (source, fingerprint) => {
+          if (delegatedAuthorities(source)?.length !== 0) return false;
+          if (afterFiles) {
+            const entry = entryAt(afterFiles, source);
+            return entry?.kind === 'file' && 'sha256:' + entry.sha256 === fingerprint;
+          }
+          const bytes = readPhaseRecoveryFile(projectRoot, path.resolve(projectRoot, source)).bytes;
+          return !!bytes && 'sha256:' + sha256Hex(bytes) === fingerprint;
+        });
+        return references.length ? [{ path: file, exists, sha256, role: 'artifact', recorded: true, references }] : [];
+      }
+    }
+    const references = kind === 'file' && (old ? old.kind === 'file' : wasCovered) ? delegatedAuthorities(relative) : undefined;
+    if (references) return references.length
+      ? [{ path: file, exists, sha256, role: 'artifact', recorded: true, references, authorOnly: true }] : [];
     if (!expected && !exists && directories.has(file)) return [];
     if (!expected && !exists) return wasCovered ? []
       : [unknown(file, '引用未记录为文件，历史采集范围或源位置不能证明。')];
@@ -674,7 +720,10 @@ export function assessDesignQuestioning(input: QuestioningComparisonBoundary & {
     input.observedSnapshot, input.previous, input);
   const unverifiable = input.previous && (!input.beforeSnapshot || input.beforeSnapshot.failureReason || input.observedSnapshot?.failureReason);
   const selectedScopes = selectQuestioningScopes(unverifiable ? undefined : input.beforeDocument, input.blueprint, input.previous,
-    affectedDependencies.filter(item => item.state !== 'unknown' || item.recorded).map(item => item.path), input.projectRoot, input.revisitFindings);
+    affectedDependencies.filter(item => item.state !== 'unknown' || item.recorded)
+      .flatMap<QuestioningDependencyChange>(item => item.references
+        ? item.references.map(reference => ({ reference, authorOnly: item.authorOnly })) : [item.path]),
+    input.projectRoot, input.revisitFindings);
   return { selectedScopes, affectedDependencies };
 }
 

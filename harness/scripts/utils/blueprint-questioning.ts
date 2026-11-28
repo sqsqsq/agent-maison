@@ -320,9 +320,12 @@ export function describeQuestioningChanges(before: BlueprintRecord, current: Blu
     ...(truncated ? { more: '其余变更核对原件' } : {}) });
 }
 
+export type QuestioningDependencyChange = string | { reference: string; authorOnly?: true };
+
 /** Scope facts and explicit references, rather than shared business nouns, establish the reuse boundary. */
 export function selectQuestioningScopes(before: BlueprintRecord | undefined, current: BlueprintRecord,
-  previous?: BlueprintRecord, changedDependencies: readonly string[] = [], projectRoot?: string, revisitFindings = true): string[] {
+  previous?: BlueprintRecord, changedDependencies: readonly QuestioningDependencyChange[] = [],
+  projectRoot?: string, revisitFindings = true): string[] {
   const required = requiredQuestioningScopes(current);
   if (!before || !previous) return [...new Set([...mandatoryQuestioningScopes(current), ...asRecords(previous?.items)
     .filter(item => item.disposition === 'blocker' || item.disposition === 'open_decision')
@@ -579,6 +582,11 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
   }
   const knownIds = new Set([...allIds, ...required.keys()]);
   const stableReferences = new Set([...beforeAddresses.values(), ...currentAddresses.values()]);
+  const sourceKey = (ref: string): string => {
+    const separator = ref.indexOf('#');
+    return String(questioningEvidencePath(ref, projectRoot)) + (separator < 0 ? '' : ref.slice(separator));
+  };
+  const preciseSources = new Set(changedDependencies.flatMap(dep => typeof dep === 'string' ? [] : [sourceKey(dep.reference)]));
   let unresolved = false;
   const references = (value: unknown, doc: BlueprintRecord, resolvePointers = false, precise = false): Set<string> => {
     const refs = new Set<string>();
@@ -613,6 +621,10 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
           } else if ((/^(?:source|evidence|verification|knowledge)_refs?$/.test(field) || field === 'files')
             && questioningEvidencePath(input) && /[\\/]|\.[A-Za-z0-9]+(?:#|:|$)/.test(input)) {
             local.add('source:' + questioningEvidencePath(input, projectRoot));
+          }
+          if (preciseSources.size && /^(?:source|evidence|verification|design_basis|current_state)_refs?$/.test(field)) {
+            const key = sourceKey(input);
+            if (preciseSources.has(key)) local.add('source-ref:' + key);
           }
           const matches = rawIds.get(input);
           const kind = field.replace(/_refs?$/, '').replace(/^(?:logical|external)_/, '').replace(/_/g, '-');
@@ -678,15 +690,18 @@ export function selectQuestioningScopes(before: BlueprintRecord | undefined, cur
     return reached;
   };
   for (const dependency of changedDependencies) {
-    const file = questioningEvidencePath(dependency, projectRoot);
+    const file = typeof dependency === 'string' ? questioningEvidencePath(dependency, projectRoot) : undefined;
+    const exact = typeof dependency === 'string' ? undefined : sourceKey(dependency.reference);
     const matches = (source?: string) => !!source && !!file && (source === file || file.startsWith(source + '/'));
     const related = new Set<string>();
-    for (const item of items) {
+    if (typeof dependency === 'string' || !dependency.authorOnly) for (const item of items) {
       if ([...originalRefs(item), String(asRecord(item.review_original)?.path ?? '')].some(ref =>
         !(resolveBlueprintReaderSource(before, ref) && resolveBlueprintReaderSource(current, ref))
-        && matches(questioningEvidencePath(ref, projectRoot)))) related.add(String(item.scope_ref));
+        && (exact ? exact === sourceKey(ref) : matches(questioningEvidencePath(ref, projectRoot))))) related.add(String(item.scope_ref));
     }
-    const located = [...preciseRefs].filter(([, refs]) => [...refs].some(ref => ref.startsWith('source:') && matches(ref.slice('source:'.length))));
+    const located = [...preciseRefs].filter(([, refs]) => [...refs].some(ref => exact
+      ? ref === 'source-ref:' + exact
+      : ref.startsWith('source:') && matches(ref.slice('source:'.length))));
     scopesReached(located.map(([ref]) => ref)).forEach(scope => related.add(scope));
     if (!related.size) return [...required.keys()];
     related.forEach(scope => affected.add(scope));

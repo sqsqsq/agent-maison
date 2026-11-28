@@ -45,6 +45,8 @@ import { resolveSkillPath } from '../../scripts/utils/resolve-skill-path';
 import { validateChangeUnitDesign, deriveClosure } from '../../scripts/utils/change-unit-design-gate';
 import { resolveModulePathPrefixes } from '../../scripts/utils/diff-scope';
 import { renderBlueprintReviewMarkdown } from '../../scripts/utils/blueprint-review-projection';
+import { assessDesignQuestioning } from '../../scripts/utils/design-repair-unattended';
+import { capturePhaseInvocationSnapshot } from '../../scripts/utils/phase-write-boundary';
 
 const FRAMEWORK = DEFAULT_LAYOUT.frameworkRoot;
 const ID = 'SharedUi/src/SettingRow.ets#SettingRow';
@@ -94,6 +96,38 @@ function setup(run: (root: string) => void) {
   } finally { clearFrameworkConfigCache(); fs.rmSync(root, { recursive: true, force: true }); }
 }
 function generate(root: string) { const scan = scanComponentIndex(root); write(root, relComponentIndex(root), serializeComponentIndex(scan.index)); return scan; }
+test('design Q compares component selections at their own references', () => setup(root => {
+  generate(root);
+  const snapshot = () => capturePhaseInvocationSnapshot({ projectRoot: root,
+    protectedRoots: ['framework.config.json', 'doc', 'knowledge', '04-BusinessBase'], executionRole: 'verifier' });
+  const beforeSnapshot = snapshot();
+  const index = relComponentIndex(root);
+  const blueprint = { blueprint_id: 'demo', design_views: ['development', 'runtime', 'logical'].map(view_id =>
+    ({ view_id, applicability: 'applicable', evolution_impact: 'changed' })) };
+  const previous = { items: ['development', 'runtime', 'logical'].map((view, i) => ({
+    scope_kind: 'view', scope_ref: 'view:' + view, disposition: 'answered_with_evidence',
+    evidence_refs: [index + ['#' + ID, '#components', ''][i]],
+  })) };
+  const input = { projectRoot: root, blueprintPath: componentBlueprintPath(root, 'demo'), blueprint,
+    beforeDocument: blueprint, beforeSnapshot, previous, revisitFindings: false };
+  const current = () => assessDesignQuestioning(input).selectedScopes;
+  const other = '04-BusinessBase/OtherUi/Index.ets';
+  const originalOther = '@Builder\nexport function Small() { Divider() }';
+  write(root, other, originalOther + '\n// implementation changed');
+  generate(root);
+  assert.deepEqual(current(), ['view:logical']);
+  assert.deepEqual(assessDesignQuestioning({ ...input, observedSnapshot: snapshot() }).selectedScopes, ['view:logical']);
+  write(root, other, originalOther + '\n@Builder\nexport function Added() { Divider() }');
+  generate(root);
+  assert.deepEqual(current(), ['view:runtime', 'view:logical']);
+  const source = '04-BusinessBase/SharedUi/src/SettingRow.ets';
+  for (const changed of [SOURCE.replace('@Prop title', '@Prop renamed'), '/** @deprecated New component available */\n' + SOURCE, '']) {
+    write(root, source, changed);
+    generate(root);
+    assert.deepEqual(current(), ['view:development', 'view:runtime', 'view:logical']);
+  }
+}));
+
 function commitSourceBaseline(root: string) {
   const git = (...args: string[]) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
   git('init'); git('add', '04-BusinessBase', '02-Feature');
